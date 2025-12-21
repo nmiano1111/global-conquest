@@ -2,7 +2,6 @@ package game
 
 import (
 	"backend/internal/proto/wsmsg"
-	"backend/internal/wsconn"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -27,7 +26,7 @@ type Client struct {
 }
 
 type Outbound interface {
-	Send(env wsconn.Envelope) bool
+	Send(env wsmsg.Envelope) bool
 }
 
 type Game struct {
@@ -43,7 +42,7 @@ type Register struct{ C *Client }
 type Unregister struct{ ClientID string }
 type Incoming struct {
 	ClientID string
-	Env      wsconn.Envelope
+	Env      wsmsg.Envelope
 }
 
 func NewServer() *Server {
@@ -86,7 +85,7 @@ func (s *Server) handleDisconnect(clientID string) {
 	delete(s.clients, clientID)
 }
 
-func (s *Server) handleIncoming(clientID string, env wsconn.Envelope) {
+func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 	c, ok := s.clients[clientID]
 	if !ok {
 		return
@@ -258,9 +257,9 @@ func snapshot(g *Game) map[string]any {
 
 // --- helpers ---
 
-func envelope(t, id, corr, gameID string, payload any) wsconn.Envelope {
-	env := wsconn.Envelope{
-		Type:          t,
+func envelope(t, id, corr, gameID string, payload any) wsmsg.Envelope {
+	env := wsmsg.Envelope{
+		Type:          wsmsg.Type(t),
 		ID:            id,
 		CorrelationID: corr,
 		GameID:        gameID,
@@ -277,7 +276,7 @@ func envelope(t, id, corr, gameID string, payload any) wsconn.Envelope {
 
 	return env
 }
-func errEnv(corrID, code, msg string) wsconn.Envelope {
+func errEnv(corrID, code, msg string) wsmsg.Envelope {
 	return envelope("error", newID("s"), corrID, "", map[string]any{
 		"code":    code,
 		"message": msg,

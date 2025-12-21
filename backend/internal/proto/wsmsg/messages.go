@@ -30,6 +30,15 @@ type Envelope struct {
 	Payload       json.RawMessage `json:"payload,omitempty"`
 }
 
+// DecodePayload unmarshals the payload into dst.
+// If the payload is empty, it does nothing.
+func (e Envelope) DecodePayload(dst any) error {
+	if len(e.Payload) == 0 {
+		return nil
+	}
+	return json.Unmarshal(e.Payload, dst)
+}
+
 // ----- payloads -----
 
 type HelloIn struct {

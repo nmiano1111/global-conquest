@@ -2,6 +2,7 @@ package wsapi
 
 import (
 	"backend/internal/game"
+	"backend/internal/proto/wsmsg"
 	"backend/internal/wsconn"
 	"net/http"
 	"time"
@@ -50,7 +51,7 @@ func GinHandler(s *game.Server, opts Options) gin.HandlerFunc {
 		}()
 
 		// Read pump: each envelope goes into hub
-		_ = conn.ReadLoop(ctx, func(env wsconn.Envelope) {
+		_ = conn.ReadLoop(ctx, func(env wsmsg.Envelope) {
 			s.Inbox() <- game.Incoming{ClientID: clientID, Env: env}
 		})
 	}

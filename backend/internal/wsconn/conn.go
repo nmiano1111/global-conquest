@@ -1,8 +1,8 @@
 package wsconn
 
 import (
+	"backend/internal/proto/wsmsg"
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -10,17 +10,9 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-type Envelope struct {
-	Type          string          `json:"type"`
-	ID            string          `json:"id,omitempty"`
-	CorrelationID string          `json:"correlation_id,omitempty"`
-	GameID        string          `json:"game_id,omitempty"`
-	Payload       json.RawMessage `json:"payload,omitempty"`
-}
-
 type Conn struct {
 	ws   *websocket.Conn
-	send chan Envelope
+	send chan wsmsg.Envelope
 }
 
 type Options struct {
@@ -48,7 +40,7 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 
 	c := &Conn{
 		ws:   ws,
-		send: make(chan Envelope, opts.SendBuffer),
+		send: make(chan wsmsg.Envelope, opts.SendBuffer),
 	}
 
 	ctx := r.Context()
@@ -90,7 +82,7 @@ func (c *Conn) Close(code websocket.StatusCode, reason string) error {
 	return c.ws.Close(code, reason)
 }
 
-func (c *Conn) Send(env Envelope) bool {
+func (c *Conn) Send(env wsmsg.Envelope) bool {
 	select {
 	case c.send <- env:
 		return true
@@ -101,21 +93,12 @@ func (c *Conn) Send(env Envelope) bool {
 
 // ReadLoop reads JSON envelopes and calls fn for each one.
 // It returns when the connection closes or ctx is canceled.
-func (c *Conn) ReadLoop(ctx context.Context, fn func(env Envelope)) error {
+func (c *Conn) ReadLoop(ctx context.Context, fn func(env wsmsg.Envelope)) error {
 	for {
-		var env Envelope
+		var env wsmsg.Envelope
 		if err := wsjson.Read(ctx, c.ws, &env); err != nil {
 			return err
 		}
 		fn(env)
 	}
-}
-
-// TODO: probably move to a utils package
-func MustPayload(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return b
 }
