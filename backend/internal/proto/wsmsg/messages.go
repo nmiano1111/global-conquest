@@ -86,3 +86,21 @@ type GameListItem struct {
 	Players    int    `json:"players"`
 	MaxPlayers int    `json:"max_players"`
 }
+
+type CreateGamePayload struct {
+	MaxPlayers int `json:"max_players"`
+}
+
+type GameCreatedPayload struct {
+	GameID     string `json:"game_id"`
+	OwnerID    string `json:"owner_id"`
+	MaxPlayers int    `json:"max_players"`
+}
+
+type JoinedGamePayload struct {
+	Game any `json:"game"` // if snapshot() returns a struct, use that type instead of any
+}
+
+type GameListPayload struct {
+	Games []GameListItem `json:"games"`
+}

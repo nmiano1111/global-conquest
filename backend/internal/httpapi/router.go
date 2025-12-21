@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"backend/internal/game"
 	"backend/internal/wsapi"
 	"net/http"
 
@@ -10,14 +11,16 @@ import (
 func NewRouter() *gin.Engine {
 	r := gin.Default()
 
+	// start hub
+	s := game.NewServer()
+	go s.Run()
+
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})
 	})
 
-	// WS endpoint
-	r.GET("/ws", wsapi.GinHandler(wsapi.Options{
+	r.GET("/ws", wsapi.GinHandler(s, wsapi.Options{
 		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
-		PingInterval:   wsapi.DefaultPingInterval,
 		SendBuffer:     16,
 	}))
 
