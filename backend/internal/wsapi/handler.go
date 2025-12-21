@@ -2,6 +2,7 @@ package wsapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -20,8 +21,17 @@ type Options struct {
 	SendBuffer     int
 }
 
-// GinHandler returns a gin.HandlerFunc that upgrades to WS and runs a basic loop.
-// This stays "transport-y" (upgrade, read/write, keepalive). Game logic should move out later.
+// Envelope is the single wire format used for both client->server and server->client messages.
+type Envelope struct {
+	Type          string          `json:"type"`
+	ID            string          `json:"id,omitempty"`
+	CorrelationID string          `json:"correlation_id,omitempty"`
+	GameID        string          `json:"game_id,omitempty"`
+	Payload       json.RawMessage `json:"payload,omitempty"`
+}
+
+// GinHandler upgrades to WS and runs a basic transport loop.
+// It reads/writes Envelopes only; game logic should live elsewhere.
 func GinHandler(opts Options) gin.HandlerFunc {
 	// sane defaults
 	if opts.PingInterval <= 0 {
@@ -56,16 +66,16 @@ func GinHandler(opts Options) gin.HandlerFunc {
 		go pingLoop(pingCtx, conn, opts.PingInterval)
 
 		// Single-writer loop using a buffered channel (backpressure by drop)
-		send := make(chan ServerMsg, opts.SendBuffer)
+		send := make(chan Envelope, opts.SendBuffer)
 		go writeLoop(ctx, conn, send)
 
 		// Initial hello (non-blocking)
-		nonBlockingSend(send, ServerMsg{Type: "hello"})
+		nonBlockingSend(send, Envelope{Type: "hello"})
 
-		// Read loop
+		// Read loop: read Envelopes, do minimal demo responses.
 		for {
-			var m ClientMsg
-			if err := wsjson.Read(ctx, conn, &m); err != nil {
+			var env Envelope
+			if err := wsjson.Read(ctx, conn, &env); err != nil {
 				if isNormalClose(err) {
 					return
 				}
@@ -74,12 +84,21 @@ func GinHandler(opts Options) gin.HandlerFunc {
 				return
 			}
 
-			// TODO: replace this switch with decoding -> domain commands -> server/hub
-			switch m.Type {
+			// TODO: replace this with decoding -> domain commands -> server/hub.
+			// For now, keep a tiny demo: reply to "ping", ack everything else.
+			switch env.Type {
 			case "ping":
-				nonBlockingSend(send, ServerMsg{Type: "pong"})
+				nonBlockingSend(send, Envelope{
+					Type:          "pong",
+					CorrelationID: env.ID,
+					GameID:        env.GameID,
+				})
 			default:
-				nonBlockingSend(send, ServerMsg{Type: "ack"})
+				nonBlockingSend(send, Envelope{
+					Type:          "ack",
+					CorrelationID: env.ID,
+					GameID:        env.GameID,
+				})
 			}
 		}
 	}
@@ -108,8 +127,7 @@ func pingLoop(ctx context.Context, conn *websocket.Conn, interval time.Duration)
 	}
 }
 
-func writeLoop(ctx context.Context, conn *websocket.Conn, send <-chan ServerMsg) {
-	// NOTE: we do NOT close(send) here. The producer side should close if needed.
+func writeLoop(ctx context.Context, conn *websocket.Conn, send <-chan Envelope) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -125,7 +143,7 @@ func writeLoop(ctx context.Context, conn *websocket.Conn, send <-chan ServerMsg)
 	}
 }
 
-func nonBlockingSend(ch chan<- ServerMsg, msg ServerMsg) {
+func nonBlockingSend(ch chan<- Envelope, msg Envelope) {
 	select {
 	case ch <- msg:
 	default:
@@ -140,3 +158,4 @@ func isNormalClose(err error) bool {
 	}
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
+{"type":"ack","correlation_id":"c2"}
