@@ -112,7 +112,7 @@ db-wait:
 	@echo "==> Waiting for Postgres at $(DB_HOST):$(DB_PORT)/$(DB_NAME)"
 	@$(FLYWAY_CMD) info >/dev/null
 
-# Apply migrations (V*.sql)
+	# Apply migrations (V*.sql)
 db-migrate: db-wait
 	@echo "==> Running Flyway migrate from $(MIGRATIONS_DIR) (mixed=$(DB_MIXED))"
 	@$(FLYWAY_CMD) migrate -mixed=$(DB_MIXED)
