@@ -31,10 +31,10 @@ func (s *UsersService) CreateUser(ctx context.Context, in store.NewUser) (store.
 	return out, err
 }
 
-func (s *UsersService) GetUserByEmail(ctx context.Context, email string) (store.User, error) {
+func (s *UsersService) GetUser(ctx context.Context, userName string) (store.User, error) {
 	var out store.User
 	err := s.db.WithTx(ctx, func(tx pgx.Tx) error {
-		u, err := s.users.GetByEmail(ctx, tx, email)
+		u, err := s.users.GetUser(ctx, tx, userName)
 		if err != nil {
 			return err
 		}

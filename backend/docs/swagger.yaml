@@ -1,0 +1,104 @@
+basePath: /
+definitions:
+  httpapi.createUserReq:
+    properties:
+      username:
+        maxLength: 32
+        minLength: 3
+        type: string
+    required:
+    - username
+    type: object
+  store.User:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      role:
+        type: string
+      updatedAt:
+        type: string
+      userName:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: API for the game backend server
+  title: Backend Game API
+  version: "1.0"
+paths:
+  /api/users:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user with a unique username
+      parameters:
+      - description: Create user request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.createUserReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/store.User'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a new user
+      tags:
+      - users
+  /api/users/{username}:
+    get:
+      description: Retrieves a user by their username
+      parameters:
+      - description: Username
+        in: path
+        name: username
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/store.User'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a user by username
+      tags:
+      - users
+schemes:
+- http
+swagger: "2.0"

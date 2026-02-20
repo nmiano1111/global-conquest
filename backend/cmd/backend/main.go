@@ -9,7 +9,15 @@ import (
 	"backend/internal/httpapi"
 	"backend/internal/service"
 	"backend/internal/store"
+
+	_ "backend/docs"
 )
+
+// @title           Backend Game API
+// @version         1.0
+// @description     API for the game backend server
+// @BasePath        /
+// @schemes         http
 
 func main() {
 	ctx := context.Background()

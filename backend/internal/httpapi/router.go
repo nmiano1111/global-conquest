@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"backend/internal/wsapi"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -10,16 +12,27 @@ import (
 func NewRouter(h *Handler) *gin.Engine {
 	r := gin.Default()
 
-	r.GET("/api/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"message": "pong"})
-	})
+	r.Use(gin.Logger(), gin.Recovery())
 
-	r.POST("/users", h.CreateUser)
+	api := r.Group("/api")
+	{
+		api.GET("/ping", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"message": "pong"})
+		})
+		users := api.Group("/users")
+		{
+			users.POST("/", h.CreateUser)
+			users.GET("/:username", h.GetUser)
+		}
+
+	}
 
 	r.GET("/ws", wsapi.GinHandler(h.gameServer, wsapi.Options{
 		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
 		SendBuffer:     16,
 	}))
+
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	return r
 }
