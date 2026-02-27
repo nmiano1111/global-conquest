@@ -2,12 +2,39 @@ basePath: /
 definitions:
   httpapi.createUserReq:
     properties:
+      password:
+        maxLength: 128
+        minLength: 8
+        type: string
       username:
-        maxLength: 32
+        maxLength: 24
         minLength: 3
         type: string
     required:
+    - password
     - username
+    type: object
+  httpapi.loginReq:
+    properties:
+      password:
+        maxLength: 128
+        minLength: 8
+        type: string
+      username:
+        maxLength: 24
+        minLength: 3
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  httpapi.loginResp:
+    properties:
+      expires_at:
+        type: string
+      token:
+        type: string
+      user: {}
     type: object
   store.User:
     properties:
@@ -28,6 +55,46 @@ info:
   title: Backend Game API
   version: "1.0"
 paths:
+  /api/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates a user and returns a new session token
+      parameters:
+      - description: Login request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.loginReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpapi.loginResp'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Login
+      tags:
+      - auth
   /api/users:
     post:
       consumes:
@@ -49,6 +116,12 @@ paths:
             $ref: '#/definitions/store.User'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
           schema:
             additionalProperties:
               type: string

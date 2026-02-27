@@ -24,6 +24,10 @@ func NewRouter(h *Handler) *gin.Engine {
 			users.POST("/", h.CreateUser)
 			users.GET("/:username", h.GetUser)
 		}
+		auth := api.Group("/auth")
+		{
+			auth.POST("/login", h.Login)
+		}
 
 	}
 

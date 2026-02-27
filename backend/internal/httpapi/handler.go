@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"backend/internal/auth"
 	"backend/internal/game"
 	"backend/internal/service"
-	"backend/internal/store"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"time"
 )
 
 type Handler struct {
@@ -19,7 +21,19 @@ func NewHandler(gameServer *game.Server, users *service.UsersService) *Handler {
 
 // createUserReq represents the payload for creating a user
 type createUserReq struct {
-	UserName string `json:"username" binding:"required,min=3,max=32,alphanum"`
+	UserName string `json:"username" binding:"required,min=3,max=24"`
+	Password string `json:"password" binding:"required,min=8,max=128"`
+}
+
+type loginReq struct {
+	UserName string `json:"username" binding:"required,min=3,max=24"`
+	Password string `json:"password" binding:"required,min=8,max=128"`
+}
+
+type loginResp struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+	User      any    `json:"user"`
 }
 
 // CreateUser godoc
@@ -31,6 +45,7 @@ type createUserReq struct {
 // @Param        request body createUserReq true "Create user request"
 // @Success      201 {object} store.User
 // @Failure      400 {object} map[string]string
+// @Failure      409 {object} map[string]string
 // @Failure      500 {object} map[string]string
 // @Router       /api/users [post]
 func (h *Handler) CreateUser(c *gin.Context) {
@@ -40,15 +55,63 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		return
 	}
 
-	u, err := h.users.CreateUser(c.Request.Context(), store.NewUser{
-		UserName: req.UserName,
-	})
+	u, err := h.users.CreateUser(c.Request.Context(), req.UserName, req.Password)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		switch {
+		case errors.Is(err, auth.ErrUsernameInvalid), errors.Is(err, auth.ErrPasswordTooShort):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, service.ErrUsernameTaken):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
+		}
 		return
 	}
 
 	c.JSON(http.StatusCreated, u)
+}
+
+// Login godoc
+// @Summary      Login
+// @Description  Authenticates a user and returns a new session token
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request body loginReq true "Login request"
+// @Success      200 {object} loginResp
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/auth/login [post]
+func (h *Handler) Login(c *gin.Context) {
+	var req loginReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	out, err := h.users.Login(c.Request.Context(), req.UserName, req.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrInvalidUsernameOrPassword):
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "login failed"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, loginResp{
+		Token:     out.Token,
+		ExpiresAt: out.ExpiresAt.Format(time.RFC3339),
+		User: gin.H{
+			"id":         out.User.ID,
+			"username":   out.User.UserName,
+			"role":       out.User.Role,
+			"created_at": out.User.CreatedAt,
+			"updated_at": out.User.UpdatedAt,
+		},
+	})
 }
 
 // GetUser godoc
