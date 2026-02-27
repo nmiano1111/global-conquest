@@ -4,18 +4,26 @@ import (
 	"backend/internal/auth"
 	"backend/internal/game"
 	"backend/internal/service"
+	"backend/internal/store"
+	"context"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"time"
 )
 
-type Handler struct {
-	gameServer *game.Server
-	users      *service.UsersService
+type userService interface {
+	CreateUser(ctx context.Context, userName, password string) (store.User, error)
+	GetUser(ctx context.Context, userName string) (store.User, error)
+	Login(ctx context.Context, userName, password string) (service.LoginResult, error)
 }
 
-func NewHandler(gameServer *game.Server, users *service.UsersService) *Handler {
+type Handler struct {
+	gameServer *game.Server
+	users      userService
+}
+
+func NewHandler(gameServer *game.Server, users userService) *Handler {
 	return &Handler{gameServer: gameServer, users: users}
 }
 
