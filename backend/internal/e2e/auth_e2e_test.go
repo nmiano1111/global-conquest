@@ -15,6 +15,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -64,10 +66,12 @@ func setupTestEnv(t *testing.T) *testEnv {
 	appDB := db.New(appPool)
 	usersStore := store.NewPostgresUsersStore()
 	usersSvc := service.NewUsersService(appDB, usersStore)
+	gamesStore := store.NewPostgresGamesStore()
+	gamesSvc := service.NewGamesService(appDB, gamesStore)
 	g := game.NewServer()
 	go g.Run()
 
-	handler := httpapi.NewHandler(g, usersSvc)
+	handler := httpapi.NewHandler(g, usersSvc, gamesSvc)
 	router := httpapi.NewRouter(handler)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -113,23 +117,30 @@ func withDatabase(dsn, dbName string) string {
 }
 
 func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
-	paths := []string{
-		"../../migrations/V1__init.sql",
-		"migrations/V1__init.sql",
+	roots := []string{
+		"../../migrations",
+		"migrations",
 	}
-	var sqlBytes []byte
-	var err error
-	for _, p := range paths {
-		sqlBytes, err = os.ReadFile(p)
-		if err == nil {
-			break
+	var files []string
+	for _, root := range roots {
+		matches, _ := filepath.Glob(filepath.Join(root, "V*.sql"))
+		files = append(files, matches...)
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no migration files found")
+	}
+	sort.Strings(files)
+
+	for _, p := range files {
+		sqlBytes, err := os.ReadFile(p)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", p, err)
+		}
+		if _, err := pool.Exec(ctx, string(sqlBytes)); err != nil {
+			return fmt.Errorf("apply migration %s: %w", p, err)
 		}
 	}
-	if len(sqlBytes) == 0 {
-		return fmt.Errorf("read migration file: %w", err)
-	}
-	_, err = pool.Exec(ctx, string(sqlBytes))
-	return err
+	return nil
 }
 
 func postJSON(t *testing.T, baseURL, path string, body any) (*http.Response, map[string]any) {

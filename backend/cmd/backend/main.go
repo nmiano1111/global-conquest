@@ -43,9 +43,11 @@ func main() {
 	// store + service
 	usersStore := store.NewPostgresUsersStore()
 	usersSvc := service.NewUsersService(d, usersStore)
+	gamesStore := store.NewPostgresGamesStore()
+	gamesSvc := service.NewGamesService(d, gamesStore)
 
 	// http
-	h := httpapi.NewHandler(s, usersSvc)
+	h := httpapi.NewHandler(s, usersSvc, gamesSvc)
 	r := httpapi.NewRouter(h)
 
 	log.Fatal(r.Run(":8080"))

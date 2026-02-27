@@ -24,6 +24,12 @@ func (s *stubQuerier) QueryRow(_ context.Context, sql string, args ...any) pgx.R
 	return s.row
 }
 
+func (s *stubQuerier) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	s.lastSQL = sql
+	s.lastArgs = args
+	return nil, errors.New("query not implemented in stubQuerier")
+}
+
 type stubRow struct {
 	values []any
 	err    error

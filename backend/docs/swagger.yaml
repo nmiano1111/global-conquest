@@ -1,5 +1,19 @@
 basePath: /
 definitions:
+  httpapi.createGameReq:
+    properties:
+      owner_user_id:
+        type: string
+      player_ids:
+        items:
+          type: string
+        maxItems: 6
+        minItems: 3
+        type: array
+    required:
+    - owner_user_id
+    - player_ids
+    type: object
   httpapi.createUserReq:
     properties:
       password:
@@ -35,6 +49,31 @@ definitions:
       token:
         type: string
       user: {}
+    type: object
+  httpapi.updateGameStateReq:
+    properties:
+      state:
+        type: object
+      status:
+        type: string
+    required:
+    - state
+    - status
+    type: object
+  store.Game:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      ownerUserID:
+        type: string
+      state:
+        type: object
+      status:
+        type: string
+      updatedAt:
+        type: string
     type: object
   store.User:
     properties:
@@ -95,6 +134,159 @@ paths:
       summary: Login
       tags:
       - auth
+  /api/games:
+    get:
+      description: Lists stored games with optional filters
+      parameters:
+      - description: Owner user ID
+        in: query
+        name: owner_user_id
+        type: string
+      - description: Game status
+        in: query
+        name: status
+        type: string
+      - description: Max games returned
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/store.Game'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List games
+      tags:
+      - games
+    post:
+      consumes:
+      - application/json
+      description: Creates a new game with an initial Risk state
+      parameters:
+      - description: Create game request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.createGameReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/store.Game'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a new game
+      tags:
+      - games
+  /api/games/{id}:
+    get:
+      description: Retrieves stored game state by id
+      parameters:
+      - description: Game ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/store.Game'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get game state
+      tags:
+      - games
+  /api/games/{id}/state:
+    put:
+      consumes:
+      - application/json
+      description: Persists a new serialized game state
+      parameters:
+      - description: Game ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update game state request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httpapi.updateGameStateReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/store.Game'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update game state
+      tags:
+      - games
   /api/users:
     post:
       consumes:

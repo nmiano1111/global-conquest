@@ -48,7 +48,7 @@ FLYWAY_CMD = docker run --rm \
 .DEFAULT_GOAL := help
 
 # ---- Phony targets ----
-.PHONY: help tidy fmt vet lint build run dev test test-short test-integration e2e \
+.PHONY: help tidy fmt vet lint build run dev test test-short test-integration e2e seed-go \
         swagger swagger-check clean tools \
         db-volume db-up db-down db-logs db-connect db-wait db-migrate
 
@@ -130,3 +130,6 @@ e2e: ## Run DB-backed end-to-end tests (requires E2E_ADMIN_DSN)
 		exit 1; \
 	fi
 	$(GO) test -tags=e2e ./internal/e2e -count=1 -v
+
+seed-go: ## Seed DB with test users/games (hashes password='password' via auth module)
+	$(GO) run ./cmd/seed

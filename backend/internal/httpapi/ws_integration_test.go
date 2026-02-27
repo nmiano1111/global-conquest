@@ -72,7 +72,13 @@ func TestWebSocketHello(t *testing.T) {
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn:      func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
-	router := NewRouter(NewHandler(g, svc))
+	games := &fakeGamesService{
+		createClassicGameFn: func(context.Context, string, []string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
+		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+	}
+	router := NewRouter(NewHandler(g, svc, games))
 	base := startTestHTTPServer(t, router)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -109,7 +115,13 @@ func TestWebSocketPingPongAndCreateGame(t *testing.T) {
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn:      func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
-	router := NewRouter(NewHandler(g, svc))
+	games := &fakeGamesService{
+		createClassicGameFn: func(context.Context, string, []string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
+		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+	}
+	router := NewRouter(NewHandler(g, svc, games))
 	base := startTestHTTPServer(t, router)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

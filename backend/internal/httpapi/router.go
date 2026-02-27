@@ -28,6 +28,13 @@ func NewRouter(h *Handler) *gin.Engine {
 		{
 			auth.POST("/login", h.Login)
 		}
+		games := api.Group("/games")
+		{
+			games.GET("/", h.ListGames)
+			games.POST("/", h.CreateGame)
+			games.GET("/:id", h.GetGame)
+			games.PUT("/:id/state", h.UpdateGameState)
+		}
 
 	}
 

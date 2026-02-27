@@ -52,6 +52,9 @@ func (f *fakeStore) CreateSession(ctx context.Context, q db.Querier, in store.Ne
 type noopQuerier struct{}
 
 func (noopQuerier) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
+func (noopQuerier) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, nil
+}
 
 func TestCreateUserValidatesAndHashes(t *testing.T) {
 	q := noopQuerier{}

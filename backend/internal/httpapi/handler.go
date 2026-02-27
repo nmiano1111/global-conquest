@@ -3,12 +3,15 @@ package httpapi
 import (
 	"backend/internal/auth"
 	"backend/internal/game"
+	"backend/internal/risk"
 	"backend/internal/service"
 	"backend/internal/store"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -18,13 +21,21 @@ type userService interface {
 	Login(ctx context.Context, userName, password string) (service.LoginResult, error)
 }
 
+type gameService interface {
+	CreateClassicGame(ctx context.Context, ownerUserID string, playerIDs []string) (store.Game, error)
+	GetGame(ctx context.Context, gameID string) (store.Game, error)
+	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]store.Game, error)
+	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
+}
+
 type Handler struct {
 	gameServer *game.Server
 	users      userService
+	games      gameService
 }
 
-func NewHandler(gameServer *game.Server, users userService) *Handler {
-	return &Handler{gameServer: gameServer, users: users}
+func NewHandler(gameServer *game.Server, users userService, games gameService) *Handler {
+	return &Handler{gameServer: gameServer, users: users, games: games}
 }
 
 // createUserReq represents the payload for creating a user
@@ -42,6 +53,16 @@ type loginResp struct {
 	Token     string `json:"token"`
 	ExpiresAt string `json:"expires_at"`
 	User      any    `json:"user"`
+}
+
+type createGameReq struct {
+	OwnerUserID string   `json:"owner_user_id" binding:"required"`
+	PlayerIDs   []string `json:"player_ids" binding:"required,min=3,max=6,dive,required"`
+}
+
+type updateGameStateReq struct {
+	Status string          `json:"status" binding:"required"`
+	State  json.RawMessage `json:"state" binding:"required" swaggertype:"object"`
 }
 
 // CreateUser godoc
@@ -149,4 +170,149 @@ func (h *Handler) GetUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, u)
+}
+
+// CreateGame godoc
+// @Summary      Create a new game
+// @Description  Creates a new game with an initial Risk state
+// @Tags         games
+// @Accept       json
+// @Produce      json
+// @Param        request body createGameReq true "Create game request"
+// @Success      201 {object} store.Game
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/games [post]
+func (h *Handler) CreateGame(c *gin.Context) {
+	var req createGameReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	g, err := h.games.CreateClassicGame(c.Request.Context(), req.OwnerUserID, req.PlayerIDs)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidGameInput),
+			errors.Is(err, service.ErrOwnerNotInPlayers),
+			errors.Is(err, service.ErrDuplicatePlayers),
+			errors.Is(err, service.ErrUnknownPlayerIDs),
+			errors.Is(err, risk.ErrInvalidPlayerCount):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create game"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusCreated, g)
+}
+
+// GetGame godoc
+// @Summary      Get game state
+// @Description  Retrieves stored game state by id
+// @Tags         games
+// @Produce      json
+// @Param        id path string true "Game ID"
+// @Success      200 {object} store.Game
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/games/{id} [get]
+func (h *Handler) GetGame(c *gin.Context) {
+	gameID := c.Param("id")
+	g, err := h.games.GetGame(c.Request.Context(), gameID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrGameNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch game"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, g)
+}
+
+// ListGames godoc
+// @Summary      List games
+// @Description  Lists stored games with optional filters
+// @Tags         games
+// @Produce      json
+// @Param        owner_user_id query string false "Owner user ID"
+// @Param        status query string false "Game status"
+// @Param        limit query int false "Max games returned"
+// @Param        offset query int false "Pagination offset"
+// @Success      200 {array} store.Game
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/games [get]
+func (h *Handler) ListGames(c *gin.Context) {
+	owner := c.Query("owner_user_id")
+	status := c.Query("status")
+
+	limit := 0
+	offset := 0
+	var err error
+	if v := c.Query("limit"); v != "" {
+		limit, err = strconv.Atoi(v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be an integer"})
+			return
+		}
+	}
+	if v := c.Query("offset"); v != "" {
+		offset, err = strconv.Atoi(v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "offset must be an integer"})
+			return
+		}
+	}
+
+	games, err := h.games.ListGames(c.Request.Context(), owner, status, limit, offset)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidGameInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list games"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, games)
+}
+
+// UpdateGameState godoc
+// @Summary      Update game state
+// @Description  Persists a new serialized game state
+// @Tags         games
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Game ID"
+// @Param        request body updateGameStateReq true "Update game state request"
+// @Success      200 {object} store.Game
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/games/{id}/state [put]
+func (h *Handler) UpdateGameState(c *gin.Context) {
+	gameID := c.Param("id")
+	var req updateGameStateReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	g, err := h.games.UpdateGameState(c.Request.Context(), gameID, req.Status, req.State)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidGameInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, service.ErrGameNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update game state"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, g)
 }
