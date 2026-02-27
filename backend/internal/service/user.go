@@ -14,8 +14,13 @@ import (
 	"backend/internal/store"
 )
 
+type userDB interface {
+	Queryer() db.Querier
+	WithTxQ(ctx context.Context, fn func(q db.Querier) error) error
+}
+
 type UsersService struct {
-	db    *db.DB
+	db    userDB
 	users store.UsersStore
 }
 
@@ -27,7 +32,7 @@ type LoginResult struct {
 
 var ErrUsernameTaken = errors.New("username already taken")
 
-func NewUsersService(db *db.DB, users store.UsersStore) *UsersService {
+func NewUsersService(db userDB, users store.UsersStore) *UsersService {
 	return &UsersService{db: db, users: users}
 }
 
@@ -40,42 +45,27 @@ func (s *UsersService) CreateUser(ctx context.Context, userName, password string
 	if err != nil {
 		return store.User{}, err
 	}
-
-	var out store.User
-	err = s.db.WithTx(ctx, func(tx pgx.Tx) error {
-		u, err := s.users.Create(ctx, tx, store.NewUser{
-			UserName:     validName,
-			PasswordHash: hash,
-		})
-		if err != nil {
-			if isUniqueViolation(err) {
-				return ErrUsernameTaken
-			}
-			return err
-		}
-		out = u
-		return nil
+	u, err := s.users.Create(ctx, s.db.Queryer(), store.NewUser{
+		UserName:     validName,
+		PasswordHash: hash,
 	})
-	return out, err
+	if err != nil {
+		if isUniqueViolation(err) {
+			return store.User{}, ErrUsernameTaken
+		}
+		return store.User{}, err
+	}
+	return u, nil
 }
 
 func (s *UsersService) GetUser(ctx context.Context, userName string) (store.User, error) {
-	var out store.User
-	err := s.db.WithTx(ctx, func(tx pgx.Tx) error {
-		u, err := s.users.GetUser(ctx, tx, userName)
-		if err != nil {
-			return err
-		}
-		out = u
-		return nil
-	})
-	return out, err
+	return s.users.GetUser(ctx, s.db.Queryer(), userName)
 }
 
 func (s *UsersService) Login(ctx context.Context, userName, password string) (LoginResult, error) {
 	var out LoginResult
-	err := s.db.WithTx(ctx, func(tx pgx.Tx) error {
-		u, err := s.users.GetUserAuth(ctx, tx, userName)
+	err := s.db.WithTxQ(ctx, func(q db.Querier) error {
+		u, err := s.users.GetUserAuth(ctx, q, userName)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return auth.ErrInvalidUsernameOrPassword
@@ -101,7 +91,7 @@ func (s *UsersService) Login(ctx context.Context, userName, password string) (Lo
 		}
 
 		expiresAt := time.Now().UTC().Add(24 * time.Hour * 30)
-		_, err = s.users.CreateSession(ctx, tx, store.NewSession{
+		_, err = s.users.CreateSession(ctx, q, store.NewSession{
 			UserID:    u.ID,
 			TokenHash: tokenHash,
 			ExpiresAt: expiresAt,

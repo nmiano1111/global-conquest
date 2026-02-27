@@ -15,6 +15,10 @@ func New(pool *pgxpool.Pool) *DB {
 	return &DB{Pool: pool}
 }
 
+func (d *DB) Queryer() Querier {
+	return d.Pool
+}
+
 func (d *DB) WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
@@ -26,4 +30,10 @@ func (d *DB) WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (d *DB) WithTxQ(ctx context.Context, fn func(q Querier) error) error {
+	return d.WithTx(ctx, func(tx pgx.Tx) error {
+		return fn(tx)
+	})
 }
