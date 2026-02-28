@@ -41,6 +41,7 @@ type Session struct {
 
 type UsersStore interface {
 	Create(ctx context.Context, q db.Querier, in NewUser) (User, error)
+	ListUsers(ctx context.Context, q db.Querier) ([]User, error)
 	GetUser(ctx context.Context, q db.Querier, userName string) (User, error)
 	GetUserAuth(ctx context.Context, q db.Querier, userName string) (UserAuth, error)
 	CreateSession(ctx context.Context, q db.Querier, in NewSession) (Session, error)
@@ -61,6 +62,32 @@ func (s *PostgresUsersStore) Create(ctx context.Context, exec db.Querier, in New
 		&u.ID, &u.UserName, &u.Role, &u.CreatedAt, &u.UpdatedAt,
 	)
 	return u, err
+}
+
+func (s *PostgresUsersStore) ListUsers(ctx context.Context, exec db.Querier) ([]User, error) {
+	const stmt = `
+		SELECT id::text, username, role, created_at, updated_at
+		FROM users
+		ORDER BY created_at DESC
+	`
+	rows, err := exec.Query(ctx, stmt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.UserName, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 func (s *PostgresUsersStore) GetUser(ctx context.Context, exec db.Querier, email string) (User, error) {

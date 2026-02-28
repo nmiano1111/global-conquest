@@ -62,6 +62,10 @@ func (s *UsersService) GetUser(ctx context.Context, userName string) (store.User
 	return s.users.GetUser(ctx, s.db.Queryer(), userName)
 }
 
+func (s *UsersService) ListUsers(ctx context.Context) ([]store.User, error) {
+	return s.users.ListUsers(ctx, s.db.Queryer())
+}
+
 func (s *UsersService) Login(ctx context.Context, userName, password string) (LoginResult, error) {
 	var out LoginResult
 	err := s.db.WithTxQ(ctx, func(q db.Querier) error {

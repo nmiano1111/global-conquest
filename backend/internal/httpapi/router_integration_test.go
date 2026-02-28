@@ -16,6 +16,7 @@ import (
 
 type fakeUsersService struct {
 	createUserFn func(ctx context.Context, userName, password string) (store.User, error)
+	listUsersFn  func(ctx context.Context) ([]store.User, error)
 	getUserFn    func(ctx context.Context, userName string) (store.User, error)
 	loginFn      func(ctx context.Context, userName, password string) (service.LoginResult, error)
 }
@@ -29,6 +30,10 @@ type fakeGamesService struct {
 
 func (f *fakeUsersService) CreateUser(ctx context.Context, userName, password string) (store.User, error) {
 	return f.createUserFn(ctx, userName, password)
+}
+
+func (f *fakeUsersService) ListUsers(ctx context.Context) ([]store.User, error) {
+	return f.listUsersFn(ctx)
 }
 
 func (f *fakeUsersService) GetUser(ctx context.Context, userName string) (store.User, error) {
@@ -118,6 +123,7 @@ func doJSON(t *testing.T, router http.Handler, method, path string, body any) *r
 func TestPingEndpoint(t *testing.T) {
 	router := newTestRouter(&fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn:      func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	})
@@ -137,8 +143,9 @@ func TestCreateUserSuccess(t *testing.T) {
 			}
 			return store.User{ID: "u1", UserName: "alice", Role: "player", CreatedAt: now, UpdatedAt: now}, nil
 		},
-		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
-		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	})
 
 	rr := doJSON(t, router, http.MethodPost, "/api/users/", map[string]string{
@@ -156,8 +163,9 @@ func TestCreateUserValidationError(t *testing.T) {
 			t.Fatalf("create should not be called on bad payload")
 			return store.User{}, nil
 		},
-		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
-		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	})
 
 	rr := doJSON(t, router, http.MethodPost, "/api/users/", map[string]string{
@@ -173,8 +181,9 @@ func TestCreateUserConflict(t *testing.T) {
 		createUserFn: func(context.Context, string, string) (store.User, error) {
 			return store.User{}, service.ErrUsernameTaken
 		},
-		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
-		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	})
 
 	rr := doJSON(t, router, http.MethodPost, "/api/users/", map[string]string{
@@ -189,6 +198,7 @@ func TestCreateUserConflict(t *testing.T) {
 func TestLoginUnauthorized(t *testing.T) {
 	router := newTestRouter(&fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn: func(context.Context, string, string) (service.LoginResult, error) {
 			return service.LoginResult{}, auth.ErrInvalidUsernameOrPassword
@@ -208,6 +218,7 @@ func TestLoginSuccess(t *testing.T) {
 	now := time.Now().UTC().Add(30 * 24 * time.Hour)
 	router := newTestRouter(&fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn: func(_ context.Context, userName, password string) (service.LoginResult, error) {
 			if userName != "alice" || password != "strong-password" {
@@ -238,9 +249,46 @@ func TestLoginSuccess(t *testing.T) {
 	}
 }
 
+func TestListUsersSuccess(t *testing.T) {
+	now := time.Now().UTC()
+	router := newTestRouter(&fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn: func(context.Context) ([]store.User, error) {
+			return []store.User{
+				{ID: "u1", UserName: "alice", Role: "player", CreatedAt: now, UpdatedAt: now},
+				{ID: "u2", UserName: "bob", Role: "player", CreatedAt: now, UpdatedAt: now},
+			}, nil
+		},
+		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	})
+
+	rr := doJSON(t, router, http.MethodGet, "/api/users/", nil)
+	if rr.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestListUsersFailure(t *testing.T) {
+	router := newTestRouter(&fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn: func(context.Context) ([]store.User, error) {
+			return nil, errors.New("db down")
+		},
+		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	})
+
+	rr := doJSON(t, router, http.MethodGet, "/api/users/", nil)
+	if rr.code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
 func TestGetUserNotFound(t *testing.T) {
 	router := newTestRouter(&fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn: func(context.Context, string) (store.User, error) {
 			return store.User{}, errors.New("not found")
 		},
@@ -258,6 +306,7 @@ func TestGetUserNotFound(t *testing.T) {
 func TestCreateGameSuccess(t *testing.T) {
 	userSvc := &fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn:      func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
@@ -286,6 +335,7 @@ func TestCreateGameSuccess(t *testing.T) {
 func TestGetGameNotFound(t *testing.T) {
 	userSvc := &fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn:      func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
@@ -306,6 +356,7 @@ func TestGetGameNotFound(t *testing.T) {
 func TestUpdateGameStateSuccess(t *testing.T) {
 	userSvc := &fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn:      func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
@@ -334,6 +385,7 @@ func TestUpdateGameStateSuccess(t *testing.T) {
 func TestListGamesSuccess(t *testing.T) {
 	userSvc := &fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn:      func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
@@ -359,6 +411,7 @@ func TestListGamesSuccess(t *testing.T) {
 func TestListGamesBadLimit(t *testing.T) {
 	userSvc := &fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
 		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
 		loginFn:      func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}

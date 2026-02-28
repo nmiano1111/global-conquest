@@ -36,54 +36,54 @@ type stdRNG struct{}
 func (stdRNG) IntN(n int) int { return rand.IntN(n) }
 
 type PlayerState struct {
-	ID         string
-	Cards      []Card
-	Eliminated bool
+	ID         string `json:"id"`
+	Cards      []Card `json:"cards"`
+	Eliminated bool   `json:"eliminated"`
 }
 
 type TerritoryState struct {
-	Owner  int
-	Armies int
+	Owner  int `json:"owner"`
+	Armies int `json:"armies"`
 }
 
 type OccupyState struct {
-	From    Territory
-	To      Territory
-	MinMove int
-	MaxMove int
+	From    Territory `json:"from"`
+	To      Territory `json:"to"`
+	MinMove int       `json:"min_move"`
+	MaxMove int       `json:"max_move"`
 }
 
 type AttackResult struct {
-	AttackerRolls []int
-	DefenderRolls []int
-	AttackerLoss  int
-	DefenderLoss  int
-	Conquered     bool
-	Eliminated    string
+	AttackerRolls []int  `json:"attacker_rolls"`
+	DefenderRolls []int  `json:"defender_rolls"`
+	AttackerLoss  int    `json:"attacker_loss"`
+	DefenderLoss  int    `json:"defender_loss"`
+	Conquered     bool   `json:"conquered"`
+	Eliminated    string `json:"eliminated"`
 }
 
 type Game struct {
-	Board       Board
-	Players     []PlayerState
-	Territories map[Territory]TerritoryState
+	Board       Board                        `json:"board"`
+	Players     []PlayerState                `json:"players"`
+	Territories map[Territory]TerritoryState `json:"territories"`
 
-	CurrentPlayer int
-	Phase         Phase
-	Winner        string
+	CurrentPlayer int    `json:"current_player"`
+	Phase         Phase  `json:"phase"`
+	Winner        string `json:"winner"`
 
-	SetupReserves map[int]int
+	SetupReserves map[int]int `json:"setup_reserves"`
 
-	PendingReinforcements int
-	ConqueredThisTurn     bool
-	TerritoryBonusUsed    bool
-	HasFortified          bool
-	Occupy                *OccupyState
+	PendingReinforcements int          `json:"pending_reinforcements"`
+	ConqueredThisTurn     bool         `json:"conquered_this_turn"`
+	TerritoryBonusUsed    bool         `json:"territory_bonus_used"`
+	HasFortified          bool         `json:"has_fortified"`
+	Occupy                *OccupyState `json:"occupy"`
 
-	Deck       []Card
-	Discard    []Card
-	SetsTraded int
+	Deck       []Card `json:"deck"`
+	Discard    []Card `json:"discard"`
+	SetsTraded int    `json:"sets_traded"`
 
-	rng RNG
+	rng RNG `json:"-"`
 }
 
 func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {

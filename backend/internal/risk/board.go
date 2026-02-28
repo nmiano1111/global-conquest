@@ -14,19 +14,19 @@ const (
 )
 
 type Card struct {
-	Territory Territory
-	Symbol    Symbol
+	Territory Territory `json:"territory"`
+	Symbol    Symbol    `json:"symbol"`
 }
 
 type ContinentInfo struct {
-	Bonus       int
-	Territories []Territory
+	Bonus       int         `json:"bonus"`
+	Territories []Territory `json:"territories"`
 }
 
 type Board struct {
-	Continents map[Continent]ContinentInfo
-	Adjacent   map[Territory]map[Territory]struct{}
-	Order      []Territory
+	Continents map[Continent]ContinentInfo          `json:"continents"`
+	Adjacent   map[Territory]map[Territory]struct{} `json:"adjacent"`
+	Order      []Territory                          `json:"order"`
 }
 
 func ClassicBoard() Board {

@@ -28,6 +28,7 @@ func (f *fakeDB) WithTxQ(ctx context.Context, fn func(q db.Querier) error) error
 
 type fakeStore struct {
 	createFn        func(context.Context, db.Querier, store.NewUser) (store.User, error)
+	listUsersFn     func(context.Context, db.Querier) ([]store.User, error)
 	getUserFn       func(context.Context, db.Querier, string) (store.User, error)
 	getUserAuthFn   func(context.Context, db.Querier, string) (store.UserAuth, error)
 	createSessionFn func(context.Context, db.Querier, store.NewSession) (store.Session, error)
@@ -35,6 +36,10 @@ type fakeStore struct {
 
 func (f *fakeStore) Create(ctx context.Context, q db.Querier, in store.NewUser) (store.User, error) {
 	return f.createFn(ctx, q, in)
+}
+
+func (f *fakeStore) ListUsers(ctx context.Context, q db.Querier) ([]store.User, error) {
+	return f.listUsersFn(ctx, q)
 }
 
 func (f *fakeStore) GetUser(ctx context.Context, q db.Querier, userName string) (store.User, error) {
@@ -163,6 +168,34 @@ func TestGetUserDelegatesToStore(t *testing.T) {
 	}
 	if out.UserName != "alice" {
 		t.Fatalf("unexpected user: %#v", out)
+	}
+}
+
+func TestListUsersDelegatesToStore(t *testing.T) {
+	q := noopQuerier{}
+	svc := NewUsersService(&fakeDB{q: q}, &fakeStore{
+		createFn: func(context.Context, db.Querier, store.NewUser) (store.User, error) { return store.User{}, nil },
+		listUsersFn: func(_ context.Context, gotQ db.Querier) ([]store.User, error) {
+			if gotQ != q {
+				t.Fatalf("unexpected querier")
+			}
+			return []store.User{{ID: "u1", UserName: "alice"}}, nil
+		},
+		getUserFn: func(context.Context, db.Querier, string) (store.User, error) { return store.User{}, nil },
+		getUserAuthFn: func(context.Context, db.Querier, string) (store.UserAuth, error) {
+			return store.UserAuth{}, nil
+		},
+		createSessionFn: func(context.Context, db.Querier, store.NewSession) (store.Session, error) {
+			return store.Session{}, nil
+		},
+	})
+
+	out, err := svc.ListUsers(context.Background())
+	if err != nil {
+		t.Fatalf("list users: %v", err)
+	}
+	if len(out) != 1 || out[0].UserName != "alice" {
+		t.Fatalf("unexpected users: %#v", out)
 	}
 }
 

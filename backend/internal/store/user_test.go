@@ -10,12 +10,14 @@ import (
 
 	"backend/internal/db"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type stubQuerier struct {
 	lastSQL  string
 	lastArgs []any
 	row      *stubRow
+	rows     *stubRows
 }
 
 func (s *stubQuerier) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
@@ -27,7 +29,10 @@ func (s *stubQuerier) QueryRow(_ context.Context, sql string, args ...any) pgx.R
 func (s *stubQuerier) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
 	s.lastSQL = sql
 	s.lastArgs = args
-	return nil, errors.New("query not implemented in stubQuerier")
+	if s.rows != nil {
+		return s.rows, nil
+	}
+	return nil, errors.New("query not configured in stubQuerier")
 }
 
 type stubRow struct {
@@ -52,7 +57,52 @@ func (r *stubRow) Scan(dest ...any) error {
 	return nil
 }
 
+type stubRows struct {
+	idx    int
+	values [][]any
+	err    error
+}
+
+func (r *stubRows) Close()                                       {}
+func (r *stubRows) Err() error                                   { return r.err }
+func (r *stubRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (r *stubRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (r *stubRows) RawValues() [][]byte                          { return nil }
+func (r *stubRows) Conn() *pgx.Conn                              { return nil }
+func (r *stubRows) Values() ([]any, error) {
+	if r.idx == 0 || r.idx > len(r.values) {
+		return nil, errors.New("rows cursor out of bounds")
+	}
+	return r.values[r.idx-1], nil
+}
+func (r *stubRows) Next() bool {
+	if r.idx >= len(r.values) {
+		return false
+	}
+	r.idx++
+	return true
+}
+func (r *stubRows) Scan(dest ...any) error {
+	if r.idx == 0 || r.idx > len(r.values) {
+		return errors.New("rows cursor out of bounds")
+	}
+	row := r.values[r.idx-1]
+	if len(dest) != len(row) {
+		return errors.New("scan arity mismatch")
+	}
+	for i := range dest {
+		dv := reflect.ValueOf(dest[i])
+		if dv.Kind() != reflect.Ptr || dv.IsNil() {
+			return errors.New("dest must be pointer")
+		}
+		dv.Elem().Set(reflect.ValueOf(row[i]))
+	}
+	return nil
+}
+func (r *stubRows) NextResultSet() bool { return false }
+
 var _ db.Querier = (*stubQuerier)(nil)
+var _ pgx.Rows = (*stubRows)(nil)
 
 func TestPostgresUsersStoreCreate(t *testing.T) {
 	now := time.Now().UTC()
@@ -97,6 +147,28 @@ func TestPostgresUsersStoreGetUser(t *testing.T) {
 		t.Fatalf("unexpected args: %#v", q.lastArgs)
 	}
 	if out.ID != "u1" || out.UserName != "alice" {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestPostgresUsersStoreListUsers(t *testing.T) {
+	now := time.Now().UTC()
+	q := &stubQuerier{
+		rows: &stubRows{values: [][]any{
+			{"u1", "alice", "player", now, now},
+			{"u2", "bob", "admin", now, now},
+		}},
+	}
+	s := NewPostgresUsersStore()
+
+	out, err := s.ListUsers(context.Background(), q)
+	if err != nil {
+		t.Fatalf("list users: %v", err)
+	}
+	if !strings.Contains(q.lastSQL, "FROM users") || !strings.Contains(q.lastSQL, "ORDER BY created_at DESC") {
+		t.Fatalf("expected users list SQL, got %q", q.lastSQL)
+	}
+	if len(out) != 2 || out[0].UserName != "alice" || out[1].UserName != "bob" {
 		t.Fatalf("unexpected output: %#v", out)
 	}
 }

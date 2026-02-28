@@ -17,6 +17,7 @@ import (
 
 type userService interface {
 	CreateUser(ctx context.Context, userName, password string) (store.User, error)
+	ListUsers(ctx context.Context) ([]store.User, error)
 	GetUser(ctx context.Context, userName string) (store.User, error)
 	Login(ctx context.Context, userName, password string) (service.LoginResult, error)
 }
@@ -98,6 +99,24 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, u)
+}
+
+// ListUsers godoc
+// @Summary      List all users
+// @Description  Retrieves all users
+// @Tags         users
+// @Produce      json
+// @Success      200 {array} store.User
+// @Failure      500 {object} map[string]string
+// @Router       /api/users [get]
+func (h *Handler) ListUsers(c *gin.Context) {
+	users, err := h.users.ListUsers(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list users"})
+		return
+	}
+
+	c.JSON(http.StatusOK, users)
 }
 
 // Login godoc
