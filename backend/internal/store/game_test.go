@@ -52,6 +52,26 @@ func TestPostgresGamesStoreGetByID(t *testing.T) {
 	}
 }
 
+func TestPostgresGamesStoreGetByIDForUpdate(t *testing.T) {
+	now := time.Now().UTC()
+	state := json.RawMessage(`{"phase":"attack"}`)
+	q := &stubQuerier{
+		row: &stubRow{values: []any{"g1", "u1", "in_progress", state, now, now}},
+	}
+	s := NewPostgresGamesStore()
+
+	out, err := s.GetByIDForUpdate(context.Background(), q, "g1")
+	if err != nil {
+		t.Fatalf("get game for update: %v", err)
+	}
+	if !strings.Contains(q.lastSQL, "FOR UPDATE") {
+		t.Fatalf("expected FOR UPDATE SQL, got %q", q.lastSQL)
+	}
+	if out.Status != "in_progress" {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
 func TestPostgresGamesStoreUpdateState(t *testing.T) {
 	now := time.Now().UTC()
 	state := json.RawMessage(`{"phase":"fortify"}`)

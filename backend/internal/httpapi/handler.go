@@ -24,7 +24,8 @@ type userService interface {
 }
 
 type gameService interface {
-	CreateClassicGame(ctx context.Context, ownerUserID string, playerIDs []string) (store.Game, error)
+	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int) (store.Game, error)
+	JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error)
 	GetGame(ctx context.Context, gameID string) (store.Game, error)
 	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]store.Game, error)
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
@@ -58,8 +59,7 @@ type loginResp struct {
 }
 
 type createGameReq struct {
-	OwnerUserID string   `json:"owner_user_id" binding:"required"`
-	PlayerIDs   []string `json:"player_ids" binding:"required,min=3,max=6,dive,required"`
+	PlayerCount int `json:"player_count" binding:"required,min=3,max=6"`
 }
 
 type updateGameStateReq struct {
@@ -210,12 +210,16 @@ func (h *Handler) CreateGame(c *gin.Context) {
 		return
 	}
 
-	g, err := h.games.CreateClassicGame(c.Request.Context(), req.OwnerUserID, req.PlayerIDs)
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	g, err := h.games.CreateClassicGame(c.Request.Context(), authUser.ID, req.PlayerCount)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidGameInput),
-			errors.Is(err, service.ErrOwnerNotInPlayers),
-			errors.Is(err, service.ErrDuplicatePlayers),
 			errors.Is(err, service.ErrUnknownPlayerIDs),
 			errors.Is(err, risk.ErrInvalidPlayerCount):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -226,6 +230,44 @@ func (h *Handler) CreateGame(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, g)
+}
+
+// JoinGame godoc
+// @Summary      Join a lobby game
+// @Description  Adds the authenticated player to a lobby game. When the target count is reached, game transitions to in_progress.
+// @Tags         games
+// @Produce      json
+// @Param        id path string true "Game ID"
+// @Success      200 {object} store.Game
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      409 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/games/{id}/join [post]
+func (h *Handler) JoinGame(c *gin.Context) {
+	gameID := c.Param("id")
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	g, err := h.games.JoinClassicGame(c.Request.Context(), gameID, authUser.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidGameInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, service.ErrGameNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		case errors.Is(err, service.ErrGameNotJoinable), errors.Is(err, service.ErrGamePlayerCountFull):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join game"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, g)
 }
 
 // GetGame godoc

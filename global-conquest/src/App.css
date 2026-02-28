@@ -51,3 +51,90 @@
   margin: 0;
   color: #b42318;
 }
+
+.lobby {
+  display: grid;
+  gap: 1rem;
+}
+
+.lobby-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.game-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.game-item {
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+  padding: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.game-meta {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.95rem;
+}
+
+.game-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.game-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.85rem;
+}
+
+.game-badge {
+  font-size: 0.75rem;
+  border: 1px solid #aeb8c6;
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+}
+
+.create-game-panel {
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.create-game-panel h3 {
+  margin: 0;
+}
+
+.create-game-form {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.create-game-form label {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+}
+
+.create-game-form input {
+  width: 120px;
+  border: 1px solid #c7ced8;
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  font-size: 1rem;
+}

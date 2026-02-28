@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../api/client";
 import { login, signup } from "../api/auth";
-import { createGame, listGames, type GameRecord } from "../api/games";
-import { getUserByUsername, listUsers, type UserRecord } from "../api/users";
+import { createGame, joinGame, listGames, type GameRecord } from "../api/games";
+import { getUserByUsername, type UserRecord } from "../api/users";
 import { useAuth } from "../auth";
 
 export function RootLayout() {
@@ -214,90 +214,58 @@ export function LobbyPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [users, setUsers] = useState<UserRecord[]>([]);
   const [games, setGames] = useState<GameRecord[]>([]);
-  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+  const [playerCount, setPlayerCount] = useState(3);
   const [creatingGame, setCreatingGame] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [joiningGameID, setJoiningGameID] = useState("");
+  const [joinError, setJoinError] = useState("");
+
+  const loadGames = useCallback(async (cancelled = false) => {
+    setError("");
+    try {
+      const loadedGames = await listGames();
+      if (cancelled) return;
+      setGames(loadedGames);
+    } catch (err) {
+      if (cancelled) return;
+      const apiErr = err as ApiError;
+      if (apiErr.status === 401) {
+        auth.clearSession();
+        await navigate({ to: "/login" });
+        return;
+      }
+      setError(apiErr.message || "Failed to load lobby data");
+    }
+  }, [auth, navigate]);
 
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
       setLoading(true);
-      setError("");
-      try {
-        const [loadedUsers, loadedGames] = await Promise.all([listUsers(), listGames()]);
-        if (cancelled) return;
-        setUsers(loadedUsers);
-        setGames(loadedGames);
-      } catch (err) {
-        if (cancelled) return;
-        const apiErr = err as ApiError;
-        if (apiErr.status === 401) {
-          auth.clearSession();
-          await navigate({ to: "/login" });
-          return;
-        }
-        setError(apiErr.message || "Failed to load lobby data");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      await loadGames(cancelled);
+      if (!cancelled) setLoading(false);
     };
 
     void run();
     return () => {
       cancelled = true;
     };
-  }, [auth, navigate]);
-
-  useEffect(() => {
-    if (!auth.user?.id || users.length === 0) return;
-    if (selectedPlayerIds.length > 0) return;
-
-    const defaults = [auth.user.id];
-    for (const user of users) {
-      if (user.id === auth.user.id) continue;
-      defaults.push(user.id);
-      if (defaults.length >= 3) break;
-    }
-    setSelectedPlayerIds(defaults);
-  }, [auth.user?.id, selectedPlayerIds.length, users]);
-
-  const onTogglePlayer = (playerId: string, checked: boolean) => {
-    setSelectedPlayerIds((prev) => {
-      const has = prev.includes(playerId);
-      if (checked && !has) return [...prev, playerId];
-      if (!checked && has) return prev.filter((id) => id !== playerId);
-      return prev;
-    });
-  };
+  }, [loadGames]);
 
   const onCreateGame = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setCreateError("");
-    if (!auth.user?.id) {
-      setCreateError("Missing authenticated user.");
-      return;
-    }
-
-    const uniquePlayerIDs = Array.from(new Set(selectedPlayerIds));
-    if (!uniquePlayerIDs.includes(auth.user.id)) {
-      uniquePlayerIDs.unshift(auth.user.id);
-    }
-    if (uniquePlayerIDs.length < 3 || uniquePlayerIDs.length > 6) {
-      setCreateError("Select between 3 and 6 players.");
+    if (playerCount < 3 || playerCount > 6) {
+      setCreateError("Player count must be between 3 and 6.");
       return;
     }
 
     setCreatingGame(true);
     try {
-      await createGame({
-        ownerUserId: auth.user.id,
-        playerIds: uniquePlayerIDs,
-      });
-      const refreshed = await listGames();
-      setGames(refreshed);
+      await createGame({ playerCount });
+      await loadGames();
     } catch (err) {
       const apiErr = err as ApiError;
       if (apiErr.status === 401) {
@@ -311,54 +279,116 @@ export function LobbyPage() {
     }
   };
 
+  const onJoinGame = async (gameID: string) => {
+    setJoinError("");
+    setJoiningGameID(gameID);
+    try {
+      await joinGame(gameID);
+      await loadGames();
+    } catch (err) {
+      const apiErr = err as ApiError;
+      if (apiErr.status === 401) {
+        auth.clearSession();
+        await navigate({ to: "/login" });
+        return;
+      }
+      setJoinError(apiErr.message || "Failed to join game");
+    } finally {
+      setJoiningGameID("");
+    }
+  };
+
+  const currentUserID = auth.user?.id ?? "";
+  const gamesSorted = [...games].sort((a, b) => {
+    if (a.status === b.status) return b.createdAt.localeCompare(a.createdAt);
+    if (a.status === "lobby") return -1;
+    if (b.status === "lobby") return 1;
+    return 0;
+  });
+
   return (
-    <div>
-      <h2>Lobby</h2>
-      <p>Welcome back, {auth.user?.username}.</p>
+    <div className="lobby">
+      <div className="lobby-head">
+        <div>
+          <h2>Lobby</h2>
+          <p>Welcome back, {auth.user?.username}.</p>
+        </div>
+        <button type="button" onClick={() => void loadGames()} disabled={loading || creatingGame || !!joiningGameID}>
+          Refresh
+        </button>
+      </div>
       {loading ? <p>Loading lobby data...</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
       {!loading && !error ? (
         <>
-          <h3>Players</h3>
-          <ul>
-            {users.map((u) => (
-              <li key={u.id || u.username}>
-                {u.username} ({u.role})
-              </li>
-            ))}
-          </ul>
-          <h3>Games</h3>
-          <ul>
-            {games.map((g) => (
-              <li key={g.id}>
-                {g.id} - {g.status} (owner: {g.ownerUserId || "unknown"})
-              </li>
-            ))}
-          </ul>
-          <h3>Create Game</h3>
-          <form className="auth-form" onSubmit={onCreateGame}>
-            <div>
-              {users.map((u) => {
-                const checked = selectedPlayerIds.includes(u.id);
-                const isSelf = u.id === auth.user?.id;
-                return (
-                  <label key={u.id || u.username} className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={checked || isSelf}
-                      disabled={isSelf}
-                      onChange={(e) => onTogglePlayer(u.id, e.target.checked)}
-                    />
-                    {u.username} ({u.role})
-                  </label>
-                );
-              })}
-            </div>
+          <div className="create-game-panel">
+            <h3>Create Game</h3>
+            <form className="create-game-form" onSubmit={onCreateGame}>
+              <label>
+                Player Count
+                <input
+                  type="number"
+                  min={3}
+                  max={6}
+                  value={playerCount}
+                  onChange={(e) => setPlayerCount(Number(e.target.value))}
+                  required
+                />
+              </label>
+              <button type="submit" disabled={creatingGame}>
+                {creatingGame ? "Creating game..." : "Create Game"}
+              </button>
+            </form>
             {createError ? <p className="form-error">{createError}</p> : null}
-            <button type="submit" disabled={creatingGame}>
-              {creatingGame ? "Creating game..." : "Create Game"}
-            </button>
-          </form>
+          </div>
+
+          <h3>Games</h3>
+          {gamesSorted.length === 0 ? <p>No games yet. Create one below.</p> : null}
+          <ul className="game-list">
+            {gamesSorted.map((g) => {
+              const currentPlayers = g.playerIds.length;
+              const maxPlayers = g.playerCount ?? 0;
+              const hasJoined = currentUserID !== "" && g.playerIds.includes(currentUserID);
+              const isLobby = g.status === "lobby";
+              const canJoin = isLobby && maxPlayers > 0 && currentPlayers < maxPlayers && !hasJoined;
+              const isFull = isLobby && maxPlayers > 0 && currentPlayers >= maxPlayers;
+              const statusLabel = canJoin
+                ? "Open"
+                : hasJoined
+                  ? "Joined"
+                  : isFull
+                    ? "Full"
+                    : isLobby
+                      ? "Unavailable"
+                      : "In Progress";
+
+              return (
+                <li key={g.id} className="game-item">
+                  <div className="game-meta">
+                    <div className="game-top">
+                      <span className="game-id">{g.id}</span>
+                      <span className="game-badge">{statusLabel}</span>
+                    </div>
+                    <div>Owner: {g.ownerUserId || "unknown"}</div>
+                    <div>Status: {g.status}</div>
+                    <div>Players: {maxPlayers > 0 ? `${currentPlayers}/${maxPlayers}` : "unknown"}</div>
+                  </div>
+                  <div className="game-actions">
+                    {canJoin ? (
+                      <button type="button" onClick={() => void onJoinGame(g.id)} disabled={joiningGameID === g.id}>
+                        {joiningGameID === g.id ? "Joining..." : "Join Game"}
+                      </button>
+                    ) : (
+                      <button type="button" disabled>
+                        {hasJoined ? "Already Joined" : isFull ? "Lobby Full" : "Not Joinable"}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {joinError ? <p className="form-error">{joinError}</p> : null}
         </>
       ) : null}
     </div>

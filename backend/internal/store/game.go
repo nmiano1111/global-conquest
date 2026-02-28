@@ -40,6 +40,7 @@ type GameListFilter struct {
 type GamesStore interface {
 	Create(ctx context.Context, q db.Querier, in NewGame) (Game, error)
 	GetByID(ctx context.Context, q db.Querier, gameID string) (Game, error)
+	GetByIDForUpdate(ctx context.Context, q db.Querier, gameID string) (Game, error)
 	List(ctx context.Context, q db.Querier, filter GameListFilter) ([]Game, error)
 	UpdateState(ctx context.Context, q db.Querier, in UpdateGameState) (Game, error)
 }
@@ -66,6 +67,20 @@ func (s *PostgresGamesStore) GetByID(ctx context.Context, exec db.Querier, gameI
 		SELECT id::text, owner_user_id::text, status, state, created_at, updated_at
 		FROM games
 		WHERE id = $1::uuid
+	`
+	var g Game
+	err := exec.QueryRow(ctx, stmt, gameID).Scan(
+		&g.ID, &g.OwnerUserID, &g.Status, &g.State, &g.CreatedAt, &g.UpdatedAt,
+	)
+	return g, err
+}
+
+func (s *PostgresGamesStore) GetByIDForUpdate(ctx context.Context, exec db.Querier, gameID string) (Game, error) {
+	const stmt = `
+		SELECT id::text, owner_user_id::text, status, state, created_at, updated_at
+		FROM games
+		WHERE id = $1::uuid
+		FOR UPDATE
 	`
 	var g Game
 	err := exec.QueryRow(ctx, stmt, gameID).Scan(

@@ -47,10 +47,11 @@ func (q countQuerier) Query(context.Context, string, ...any) (pgx.Rows, error) {
 }
 
 type fakeGamesStore struct {
-	createFn      func(context.Context, db.Querier, store.NewGame) (store.Game, error)
-	getByIDFn     func(context.Context, db.Querier, string) (store.Game, error)
-	listFn        func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error)
-	updateStateFn func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error)
+	createFn         func(context.Context, db.Querier, store.NewGame) (store.Game, error)
+	getByIDFn        func(context.Context, db.Querier, string) (store.Game, error)
+	getByIDForUpdate func(context.Context, db.Querier, string) (store.Game, error)
+	listFn           func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error)
+	updateStateFn    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error)
 }
 
 func (f *fakeGamesStore) Create(ctx context.Context, q db.Querier, in store.NewGame) (store.Game, error) {
@@ -59,6 +60,10 @@ func (f *fakeGamesStore) Create(ctx context.Context, q db.Querier, in store.NewG
 
 func (f *fakeGamesStore) GetByID(ctx context.Context, q db.Querier, gameID string) (store.Game, error) {
 	return f.getByIDFn(ctx, q, gameID)
+}
+
+func (f *fakeGamesStore) GetByIDForUpdate(ctx context.Context, q db.Querier, gameID string) (store.Game, error) {
+	return f.getByIDForUpdate(ctx, q, gameID)
 }
 
 func (f *fakeGamesStore) List(ctx context.Context, q db.Querier, filter store.GameListFilter) ([]store.Game, error) {
@@ -70,56 +75,56 @@ func (f *fakeGamesStore) UpdateState(ctx context.Context, q db.Querier, in store
 }
 
 func TestCreateClassicGameValidation(t *testing.T) {
-	svc := NewGamesService(&fakeDB{q: countQuerier{count: 3}}, &fakeGamesStore{
+	svc := NewGamesService(&fakeDB{q: countQuerier{count: 1}}, &fakeGamesStore{
 		createFn: func(context.Context, db.Querier, store.NewGame) (store.Game, error) {
 			t.Fatalf("create should not be called")
 			return store.Game{}, nil
 		},
-		getByIDFn:     func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
-		listFn:        func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
-		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn:        func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		listFn:           func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	_, err := svc.CreateClassicGame(context.Background(), "", []string{"u1", "u2", "u3"})
+	_, err := svc.CreateClassicGame(context.Background(), "", 3)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", []string{"u2", "u3", "u4"})
-	if !errors.Is(err, ErrOwnerNotInPlayers) {
-		t.Fatalf("expected ErrOwnerNotInPlayers, got %v", err)
-	}
-
-	_, err = svc.CreateClassicGame(context.Background(), "u1", []string{"u1", "u1", "u2"})
-	if !errors.Is(err, ErrDuplicatePlayers) {
-		t.Fatalf("expected ErrDuplicatePlayers, got %v", err)
-	}
-
-	_, err = svc.CreateClassicGame(context.Background(), "u1", []string{"u1", "u2"})
-	if !errors.Is(err, risk.ErrInvalidPlayerCount) {
-		t.Fatalf("expected risk.ErrInvalidPlayerCount, got %v", err)
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 2)
+	if !errors.Is(err, ErrInvalidGameInput) {
+		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}
 }
 
-func TestCreateClassicGamePersistsState(t *testing.T) {
+func TestCreateClassicGamePersistsLobbyState(t *testing.T) {
 	called := false
-	svc := NewGamesService(&fakeDB{q: countQuerier{count: 3}}, &fakeGamesStore{
+	svc := NewGamesService(&fakeDB{q: countQuerier{count: 1}}, &fakeGamesStore{
 		createFn: func(_ context.Context, _ db.Querier, in store.NewGame) (store.Game, error) {
 			called = true
 			if in.OwnerUserID != "u1" || in.Status != "lobby" {
 				t.Fatalf("unexpected create input: %#v", in)
 			}
-			if len(in.State) == 0 {
-				t.Fatalf("expected serialized state")
+			var state map[string]any
+			if err := json.Unmarshal(in.State, &state); err != nil {
+				t.Fatalf("unmarshal state: %v", err)
+			}
+			if state["player_count"].(float64) != 4 {
+				t.Fatalf("expected player_count=4")
+			}
+			ids := state["player_ids"].([]any)
+			if len(ids) != 1 || ids[0].(string) != "u1" {
+				t.Fatalf("expected owner seeded in player_ids")
 			}
 			return store.Game{ID: "g1", OwnerUserID: in.OwnerUserID, Status: in.Status, State: in.State}, nil
 		},
-		getByIDFn:     func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
-		listFn:        func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
-		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn:        func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		listFn:           func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	out, err := svc.CreateClassicGame(context.Background(), "u1", []string{"u1", "u2", "u3"})
+	out, err := svc.CreateClassicGame(context.Background(), "u1", 4)
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -131,29 +136,129 @@ func TestCreateClassicGamePersistsState(t *testing.T) {
 	}
 }
 
-func TestCreateClassicGameRejectsUnknownPlayers(t *testing.T) {
-	svc := NewGamesService(&fakeDB{q: countQuerier{count: 2}}, &fakeGamesStore{
+func TestCreateClassicGameRejectsUnknownOwner(t *testing.T) {
+	svc := NewGamesService(&fakeDB{q: countQuerier{count: 0}}, &fakeGamesStore{
 		createFn: func(context.Context, db.Querier, store.NewGame) (store.Game, error) {
-			t.Fatalf("create should not be called when users are missing")
+			t.Fatalf("create should not be called when owner is missing")
 			return store.Game{}, nil
 		},
-		getByIDFn:     func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
-		listFn:        func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
-		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn:        func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		listFn:           func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	_, err := svc.CreateClassicGame(context.Background(), "u1", []string{"u1", "u2", "u3"})
+	_, err := svc.CreateClassicGame(context.Background(), "u1", 3)
 	if !errors.Is(err, ErrUnknownPlayerIDs) {
 		t.Fatalf("expected ErrUnknownPlayerIDs, got %v", err)
 	}
 }
 
-func TestGetGameMapsNotFound(t *testing.T) {
-	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
-		createFn:      func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
-		getByIDFn:     func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, pgx.ErrNoRows },
+func TestJoinClassicGameTransitionsWhenFull(t *testing.T) {
+	lobby := json.RawMessage(`{"player_count":3,"player_ids":["u1","u2"]}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "lobby", State: lobby}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(_ context.Context, _ db.Querier, in store.UpdateGameState) (store.Game, error) {
+			if in.Status != "in_progress" {
+				t.Fatalf("expected in_progress status")
+			}
+			var g risk.Game
+			if err := json.Unmarshal(in.State, &g); err != nil {
+				t.Fatalf("expected risk game state: %v", err)
+			}
+			if len(g.Players) != 3 {
+				t.Fatalf("expected 3 players in risk state")
+			}
+			return store.Game{ID: "g1", Status: in.Status, State: in.State}, nil
+		},
+	})
+
+	out, err := svc.JoinClassicGame(context.Background(), "g1", "u3")
+	if err != nil {
+		t.Fatalf("join game: %v", err)
+	}
+	if out.Status != "in_progress" {
+		t.Fatalf("unexpected status: %s", out.Status)
+	}
+}
+
+func TestJoinClassicGameLobbyUpdate(t *testing.T) {
+	lobby := json.RawMessage(`{"player_count":4,"player_ids":["u1","u2"]}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "lobby", State: lobby}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(_ context.Context, _ db.Querier, in store.UpdateGameState) (store.Game, error) {
+			if in.Status != "lobby" {
+				t.Fatalf("expected lobby status")
+			}
+			var next map[string]any
+			_ = json.Unmarshal(in.State, &next)
+			ids := next["player_ids"].([]any)
+			if len(ids) != 3 {
+				t.Fatalf("expected 3 joined players")
+			}
+			return store.Game{ID: "g1", Status: "lobby", State: in.State}, nil
+		},
+	})
+
+	out, err := svc.JoinClassicGame(context.Background(), "g1", "u3")
+	if err != nil {
+		t.Fatalf("join game: %v", err)
+	}
+	if out.Status != "lobby" {
+		t.Fatalf("unexpected status: %s", out.Status)
+	}
+}
+
+func TestJoinClassicGameErrors(t *testing.T) {
+	full := json.RawMessage(`{"player_count":3,"player_ids":["u1","u2","u3"]}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(_ context.Context, _ db.Querier, gameID string) (store.Game, error) {
+			switch gameID {
+			case "missing":
+				return store.Game{}, pgx.ErrNoRows
+			case "started":
+				return store.Game{ID: gameID, Status: "in_progress", State: full}, nil
+			default:
+				return store.Game{ID: gameID, Status: "lobby", State: full}, nil
+			}
+		},
 		listFn:        func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
 		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
+	})
+
+	if _, err := svc.JoinClassicGame(context.Background(), "", "u1"); !errors.Is(err, ErrInvalidGameInput) {
+		t.Fatalf("expected invalid input, got %v", err)
+	}
+	if _, err := svc.JoinClassicGame(context.Background(), "missing", "u1"); !errors.Is(err, ErrGameNotFound) {
+		t.Fatalf("expected game not found, got %v", err)
+	}
+	if _, err := svc.JoinClassicGame(context.Background(), "started", "u4"); !errors.Is(err, ErrGameNotJoinable) {
+		t.Fatalf("expected game not joinable, got %v", err)
+	}
+	if _, err := svc.JoinClassicGame(context.Background(), "full", "u4"); !errors.Is(err, ErrGamePlayerCountFull) {
+		t.Fatalf("expected game full, got %v", err)
+	}
+}
+
+func TestGetGameMapsNotFound(t *testing.T) {
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
+		createFn:         func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn:        func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, pgx.ErrNoRows },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		listFn:           func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
 	_, err := svc.GetGame(context.Background(), "missing")
@@ -165,9 +270,10 @@ func TestGetGameMapsNotFound(t *testing.T) {
 func TestUpdateGameState(t *testing.T) {
 	state := json.RawMessage(`{"turn":2}`)
 	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
-		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
-		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
-		listFn:    func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		createFn:         func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn:        func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		listFn:           func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
 		updateStateFn: func(_ context.Context, _ db.Querier, in store.UpdateGameState) (store.Game, error) {
 			if in.GameID != "g1" || in.Status != "in_progress" {
 				t.Fatalf("unexpected update input: %#v", in)
@@ -188,8 +294,9 @@ func TestUpdateGameState(t *testing.T) {
 func TestListGamesValidationAndPassThrough(t *testing.T) {
 	called := false
 	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
-		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
-		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		createFn:         func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn:        func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
 		listFn: func(_ context.Context, _ db.Querier, filter store.GameListFilter) ([]store.Game, error) {
 			called = true
 			if filter.OwnerUserID != "u1" || filter.Status != "lobby" || filter.Limit != 20 || filter.Offset != 10 {

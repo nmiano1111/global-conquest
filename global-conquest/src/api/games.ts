@@ -6,13 +6,15 @@ export type GameRecord = {
   id: string;
   ownerUserId: string;
   status: string;
+  state: unknown;
+  playerCount: number | null;
+  playerIds: string[];
   createdAt: string;
   updatedAt: string;
 };
 
 export type CreateGameRequest = {
-  ownerUserId: string;
-  playerIds: string[];
+  playerCount: number;
 };
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -27,13 +29,47 @@ function readString(value: unknown, fallback = ""): string {
 function normalizeGame(value: unknown): GameRecord {
   const record = asRecord(value);
   if (!record) {
-    return { id: "", ownerUserId: "", status: "", createdAt: "", updatedAt: "" };
+    return {
+      id: "",
+      ownerUserId: "",
+      status: "",
+      state: null,
+      playerCount: null,
+      playerIds: [],
+      createdAt: "",
+      updatedAt: "",
+    };
+  }
+
+  const rawState = record.state;
+  let playerCount: number | null = null;
+  let playerIds: string[] = [];
+  if (rawState && typeof rawState === "object") {
+    const stateRecord = rawState as UnknownRecord;
+    const count = stateRecord.player_count;
+    if (typeof count === "number") {
+      playerCount = count;
+    }
+    if (Array.isArray(stateRecord.player_ids)) {
+      playerIds = stateRecord.player_ids.filter((v): v is string => typeof v === "string");
+    }
+    // In-progress games store Risk engine state, which includes `players` but not lobby metadata.
+    if (playerCount === null && Array.isArray(stateRecord.players)) {
+      const players = stateRecord.players.filter((v): v is UnknownRecord => !!v && typeof v === "object");
+      playerCount = players.length;
+      playerIds = players
+        .map((p) => p.id)
+        .filter((id): id is string => typeof id === "string");
+    }
   }
 
   return {
     id: readString(record.id ?? record.ID),
     ownerUserId: readString(record.owner_user_id ?? record.OwnerUserID),
     status: readString(record.status ?? record.Status),
+    state: rawState,
+    playerCount,
+    playerIds,
     createdAt: readString(record.created_at ?? record.CreatedAt),
     updatedAt: readString(record.updated_at ?? record.UpdatedAt),
   };
@@ -50,9 +86,16 @@ export async function createGame(input: CreateGameRequest): Promise<GameRecord> 
     method: "POST",
     url: "/games/",
     data: {
-      owner_user_id: input.ownerUserId,
-      player_ids: input.playerIds,
+      player_count: input.playerCount,
     },
+  });
+  return normalizeGame(res);
+}
+
+export async function joinGame(gameID: string): Promise<GameRecord> {
+  const res = await request<unknown>({
+    method: "POST",
+    url: `/games/${encodeURIComponent(gameID)}/join`,
   });
   return normalizeGame(res);
 }

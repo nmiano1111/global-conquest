@@ -19,6 +19,11 @@ type seededUser struct {
 	Username string
 }
 
+type lobbyState struct {
+	PlayerCount int      `json:"player_count"`
+	PlayerIDs   []string `json:"player_ids"`
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -85,19 +90,28 @@ func seedGames(ctx context.Context, pool *pgxpool.Pool, users []seededUser) erro
 	}
 
 	gameDefs := []struct {
-		owner   string
-		players []string
-		status  string
+		owner       string
+		status      string
+		playerCount int
+		players     []string
 	}{
 		{
-			owner:   "test_alice",
-			players: []string{"test_alice", "test_bob", "test_cara"},
-			status:  "lobby",
+			owner:       "test_alice",
+			status:      "lobby",
+			playerCount: 4,
+			players:     []string{"test_alice"},
 		},
 		{
-			owner:   "test_dan",
-			players: []string{"test_dan", "test_erin", "test_frank"},
-			status:  "in_progress",
+			owner:       "test_bob",
+			status:      "lobby",
+			playerCount: 3,
+			players:     []string{"test_bob", "test_cara"},
+		},
+		{
+			owner:       "test_dan",
+			status:      "in_progress",
+			playerCount: 3,
+			players:     []string{"test_dan", "test_erin", "test_frank"},
 		},
 	}
 
@@ -116,13 +130,28 @@ func seedGames(ctx context.Context, pool *pgxpool.Pool, users []seededUser) erro
 			playerIDs = append(playerIDs, u.ID)
 		}
 
-		engine, err := risk.NewClassicGame(playerIDs, nil)
-		if err != nil {
-			return fmt.Errorf("build game state for owner %s: %w", def.owner, err)
-		}
+		var state []byte
+		switch def.status {
+		case "lobby":
+			if len(playerIDs) == 0 {
+				return fmt.Errorf("lobby seed for owner %s must include at least owner in players", def.owner)
+			}
+			lobby := lobbyState{
+				PlayerCount: def.playerCount,
+				PlayerIDs:   playerIDs,
+			}
+			var err error
+			state, err = json.Marshal(lobby)
+			if err != nil {
+				return fmt.Errorf("marshal lobby state: %w", err)
+			}
+		case "in_progress":
+			engine, err := risk.NewClassicGame(playerIDs, nil)
+			if err != nil {
+				return fmt.Errorf("build game state for owner %s: %w", def.owner, err)
+			}
 
-		// Nudge one game into a more realistic "in_progress" phase.
-		if def.status == "in_progress" {
+			// Nudge one game into a more realistic "in_progress" phase.
 			for engine.Phase == risk.PhaseSetupClaim {
 				pid := engine.Players[engine.CurrentPlayer].ID
 				for _, terr := range engine.Board.Order {
@@ -150,11 +179,12 @@ func seedGames(ctx context.Context, pool *pgxpool.Pool, users []seededUser) erro
 					return fmt.Errorf("place initial army: %w", err)
 				}
 			}
-		}
-
-		state, err := json.Marshal(engine)
-		if err != nil {
-			return fmt.Errorf("marshal game state: %w", err)
+			state, err = json.Marshal(engine)
+			if err != nil {
+				return fmt.Errorf("marshal game state: %w", err)
+			}
+		default:
+			return fmt.Errorf("unsupported game status %q", def.status)
 		}
 
 		owner := byName[def.owner]

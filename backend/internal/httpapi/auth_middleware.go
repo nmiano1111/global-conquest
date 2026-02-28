@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"backend/internal/auth"
+	"backend/internal/store"
 	"errors"
 	"net/http"
 	"strings"
@@ -50,4 +51,13 @@ func parseBearerToken(header string) (string, bool) {
 		return "", false
 	}
 	return token, true
+}
+
+func getAuthUser(c *gin.Context) (store.User, bool) {
+	v, ok := c.Get(authUserContextKey)
+	if !ok {
+		return store.User{}, false
+	}
+	u, ok := v.(store.User)
+	return u, ok
 }
