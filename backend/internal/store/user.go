@@ -43,6 +43,7 @@ type UsersStore interface {
 	Create(ctx context.Context, q db.Querier, in NewUser) (User, error)
 	ListUsers(ctx context.Context, q db.Querier) ([]User, error)
 	GetUser(ctx context.Context, q db.Querier, userName string) (User, error)
+	GetUserBySessionToken(ctx context.Context, q db.Querier, tokenHash []byte) (User, error)
 	GetUserAuth(ctx context.Context, q db.Querier, userName string) (UserAuth, error)
 	CreateSession(ctx context.Context, q db.Querier, in NewSession) (Session, error)
 }
@@ -98,6 +99,21 @@ func (s *PostgresUsersStore) GetUser(ctx context.Context, exec db.Querier, email
 	`
 	var u User
 	err := exec.QueryRow(ctx, stmt, email).Scan(
+		&u.ID, &u.UserName, &u.Role, &u.CreatedAt, &u.UpdatedAt,
+	)
+	return u, err
+}
+
+func (s *PostgresUsersStore) GetUserBySessionToken(ctx context.Context, exec db.Querier, tokenHash []byte) (User, error) {
+	const stmt = `
+		SELECT u.id::text, u.username, u.role, u.created_at, u.updated_at
+		FROM sessions s
+		JOIN users u ON u.id = s.user_id
+		WHERE s.token_hash = $1
+		  AND s.expires_at > now()
+	`
+	var u User
+	err := exec.QueryRow(ctx, stmt, tokenHash).Scan(
 		&u.ID, &u.UserName, &u.Role, &u.CreatedAt, &u.UpdatedAt,
 	)
 	return u, err

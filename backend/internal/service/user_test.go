@@ -27,11 +27,12 @@ func (f *fakeDB) WithTxQ(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 type fakeStore struct {
-	createFn        func(context.Context, db.Querier, store.NewUser) (store.User, error)
-	listUsersFn     func(context.Context, db.Querier) ([]store.User, error)
-	getUserFn       func(context.Context, db.Querier, string) (store.User, error)
-	getUserAuthFn   func(context.Context, db.Querier, string) (store.UserAuth, error)
-	createSessionFn func(context.Context, db.Querier, store.NewSession) (store.Session, error)
+	createFn                func(context.Context, db.Querier, store.NewUser) (store.User, error)
+	listUsersFn             func(context.Context, db.Querier) ([]store.User, error)
+	getUserFn               func(context.Context, db.Querier, string) (store.User, error)
+	getUserBySessionTokenFn func(context.Context, db.Querier, []byte) (store.User, error)
+	getUserAuthFn           func(context.Context, db.Querier, string) (store.UserAuth, error)
+	createSessionFn         func(context.Context, db.Querier, store.NewSession) (store.Session, error)
 }
 
 func (f *fakeStore) Create(ctx context.Context, q db.Querier, in store.NewUser) (store.User, error) {
@@ -44,6 +45,13 @@ func (f *fakeStore) ListUsers(ctx context.Context, q db.Querier) ([]store.User, 
 
 func (f *fakeStore) GetUser(ctx context.Context, q db.Querier, userName string) (store.User, error) {
 	return f.getUserFn(ctx, q, userName)
+}
+
+func (f *fakeStore) GetUserBySessionToken(ctx context.Context, q db.Querier, tokenHash []byte) (store.User, error) {
+	if f.getUserBySessionTokenFn == nil {
+		return store.User{}, pgx.ErrNoRows
+	}
+	return f.getUserBySessionTokenFn(ctx, q, tokenHash)
 }
 
 func (f *fakeStore) GetUserAuth(ctx context.Context, q db.Querier, userName string) (store.UserAuth, error) {
@@ -251,6 +259,51 @@ func TestLoginSuccessCreatesSession(t *testing.T) {
 	}
 	if string(hashedOut) != string(createdSession.TokenHash) {
 		t.Fatalf("stored token hash does not match returned token")
+	}
+}
+
+func TestAuthenticateSessionSuccess(t *testing.T) {
+	q := noopQuerier{}
+	svc := NewUsersService(&fakeDB{q: q}, &fakeStore{
+		createFn:    func(context.Context, db.Querier, store.NewUser) (store.User, error) { return store.User{}, nil },
+		listUsersFn: func(context.Context, db.Querier) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, db.Querier, string) (store.User, error) { return store.User{}, nil },
+		getUserBySessionTokenFn: func(_ context.Context, gotQ db.Querier, tokenHash []byte) (store.User, error) {
+			if gotQ != q || len(tokenHash) == 0 {
+				t.Fatalf("expected queryer and non-empty token hash")
+			}
+			return store.User{ID: "u1", UserName: "alice"}, nil
+		},
+		getUserAuthFn: func(context.Context, db.Querier, string) (store.UserAuth, error) { return store.UserAuth{}, nil },
+		createSessionFn: func(context.Context, db.Querier, store.NewSession) (store.Session, error) {
+			return store.Session{}, nil
+		},
+	})
+
+	out, err := svc.AuthenticateSession(context.Background(), "session-token")
+	if err != nil {
+		t.Fatalf("authenticate session: %v", err)
+	}
+	if out.UserName != "alice" {
+		t.Fatalf("unexpected user: %#v", out)
+	}
+}
+
+func TestAuthenticateSessionInvalid(t *testing.T) {
+	svc := NewUsersService(&fakeDB{q: noopQuerier{}}, &fakeStore{
+		createFn:                func(context.Context, db.Querier, store.NewUser) (store.User, error) { return store.User{}, nil },
+		listUsersFn:             func(context.Context, db.Querier) ([]store.User, error) { return nil, nil },
+		getUserFn:               func(context.Context, db.Querier, string) (store.User, error) { return store.User{}, nil },
+		getUserBySessionTokenFn: func(context.Context, db.Querier, []byte) (store.User, error) { return store.User{}, pgx.ErrNoRows },
+		getUserAuthFn:           func(context.Context, db.Querier, string) (store.UserAuth, error) { return store.UserAuth{}, nil },
+		createSessionFn: func(context.Context, db.Querier, store.NewSession) (store.Session, error) {
+			return store.Session{}, nil
+		},
+	})
+
+	_, err := svc.AuthenticateSession(context.Background(), "session-token")
+	if !errors.Is(err, auth.ErrInvalidSession) {
+		t.Fatalf("expected invalid session, got %v", err)
 	}
 }
 

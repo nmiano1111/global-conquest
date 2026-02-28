@@ -66,6 +66,22 @@ func (s *UsersService) ListUsers(ctx context.Context) ([]store.User, error) {
 	return s.users.ListUsers(ctx, s.db.Queryer())
 }
 
+func (s *UsersService) AuthenticateSession(ctx context.Context, token string) (store.User, error) {
+	tokenHash, err := auth.HashSessionToken(token)
+	if err != nil {
+		return store.User{}, auth.ErrInvalidSession
+	}
+
+	u, err := s.users.GetUserBySessionToken(ctx, s.db.Queryer(), tokenHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.User{}, auth.ErrInvalidSession
+		}
+		return store.User{}, err
+	}
+	return u, nil
+}
+
 func (s *UsersService) Login(ctx context.Context, userName, password string) (LoginResult, error) {
 	var out LoginResult
 	err := s.db.WithTxQ(ctx, func(q db.Querier) error {

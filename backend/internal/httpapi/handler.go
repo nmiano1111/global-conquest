@@ -19,6 +19,7 @@ type userService interface {
 	CreateUser(ctx context.Context, userName, password string) (store.User, error)
 	ListUsers(ctx context.Context) ([]store.User, error)
 	GetUser(ctx context.Context, userName string) (store.User, error)
+	AuthenticateSession(ctx context.Context, token string) (store.User, error)
 	Login(ctx context.Context, userName, password string) (service.LoginResult, error)
 }
 

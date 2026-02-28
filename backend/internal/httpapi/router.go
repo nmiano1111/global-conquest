@@ -22,8 +22,12 @@ func NewRouter(h *Handler) *gin.Engine {
 		users := api.Group("/users")
 		{
 			users.POST("/", h.CreateUser)
-			users.GET("/", h.ListUsers)
-			users.GET("/:username", h.GetUser)
+			protectedUsers := users.Group("")
+			protectedUsers.Use(h.RequireAuth())
+			{
+				protectedUsers.GET("/", h.ListUsers)
+				protectedUsers.GET("/:username", h.GetUser)
+			}
 		}
 		auth := api.Group("/auth")
 		{
@@ -31,6 +35,7 @@ func NewRouter(h *Handler) *gin.Engine {
 		}
 		games := api.Group("/games")
 		{
+			games.Use(h.RequireAuth())
 			games.GET("/", h.ListGames)
 			games.POST("/", h.CreateGame)
 			games.GET("/:id", h.GetGame)

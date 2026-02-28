@@ -151,6 +151,29 @@ func TestPostgresUsersStoreGetUser(t *testing.T) {
 	}
 }
 
+func TestPostgresUsersStoreGetUserBySessionToken(t *testing.T) {
+	now := time.Now().UTC()
+	tokenHash := []byte{1, 2, 3}
+	q := &stubQuerier{
+		row: &stubRow{values: []any{"u1", "alice", "player", now, now}},
+	}
+	s := NewPostgresUsersStore()
+
+	out, err := s.GetUserBySessionToken(context.Background(), q, tokenHash)
+	if err != nil {
+		t.Fatalf("get user by session token: %v", err)
+	}
+	if !strings.Contains(q.lastSQL, "FROM sessions") || !strings.Contains(q.lastSQL, "JOIN users") {
+		t.Fatalf("expected session join SQL, got %q", q.lastSQL)
+	}
+	if len(q.lastArgs) != 1 || !reflect.DeepEqual(q.lastArgs[0], tokenHash) {
+		t.Fatalf("unexpected args: %#v", q.lastArgs)
+	}
+	if out.ID != "u1" || out.UserName != "alice" {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
 func TestPostgresUsersStoreListUsers(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
