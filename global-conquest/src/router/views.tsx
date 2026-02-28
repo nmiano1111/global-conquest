@@ -6,6 +6,15 @@ import { createGame, joinGame, listGames, type GameRecord } from "../api/games";
 import { getUserByUsername, type UserRecord } from "../api/users";
 import { useAuth } from "../auth";
 
+const inputClass =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200";
+
+const buttonPrimaryClass =
+  "inline-flex items-center justify-center rounded-lg border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60";
+
+const buttonGhostClass =
+  "inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60";
+
 export function RootLayout() {
   return <Outlet />;
 }
@@ -15,7 +24,7 @@ export function LoginPage() {
   const auth = useAuth();
   const [form, setForm] = useState({ username: "", password: "" });
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState("");
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -44,41 +53,54 @@ export function LoginPage() {
   };
 
   return (
-    <main className="page">
-      <h1>Login</h1>
-      <form className="auth-form" onSubmit={onSubmit}>
-        <label>
-          Username
-          <input
-            type="text"
-            autoComplete="username"
-            minLength={3}
-            maxLength={24}
-            value={form.username}
-            onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            autoComplete="current-password"
-            minLength={8}
-            maxLength={128}
-            value={form.password}
-            onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-            required
-          />
-        </label>
-        {error ? <p className="form-error">{error}</p> : null}
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Signing in..." : "Login"}
-        </button>
-      </form>
-      <p>
-        Need an account? <Link to="/signup">Sign up</Link>
-      </p>
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-4 py-10">
+      <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Welcome Back</h1>
+        <p className="mt-1 text-sm text-slate-600">Sign in to continue to your lobby.</p>
+
+        <form className="mt-6 grid gap-4" onSubmit={onSubmit}>
+          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+            Username
+            <input
+              className={inputClass}
+              type="text"
+              autoComplete="username"
+              minLength={3}
+              maxLength={24}
+              value={form.username}
+              onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+              required
+            />
+          </label>
+
+          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+            Password
+            <input
+              className={inputClass}
+              type="password"
+              autoComplete="current-password"
+              minLength={8}
+              maxLength={128}
+              value={form.password}
+              onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+              required
+            />
+          </label>
+
+          {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+
+          <button className={buttonPrimaryClass} type="submit" disabled={submitting}>
+            {submitting ? "Signing in..." : "Login"}
+          </button>
+        </form>
+
+        <p className="mt-4 text-sm text-slate-600">
+          Need an account?{" "}
+          <Link className="font-medium text-slate-900 underline-offset-2 hover:underline" to="/signup">
+            Sign up
+          </Link>
+        </p>
+      </section>
     </main>
   );
 }
@@ -92,7 +114,7 @@ export function SignupPage() {
     confirmPassword: "",
   });
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState("");
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -130,53 +152,68 @@ export function SignupPage() {
   };
 
   return (
-    <main className="page">
-      <h1>Sign Up</h1>
-      <form className="auth-form" onSubmit={onSubmit}>
-        <label>
-          Username
-          <input
-            type="text"
-            autoComplete="username"
-            minLength={3}
-            maxLength={24}
-            value={form.username}
-            onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            maxLength={128}
-            value={form.password}
-            onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-            required
-          />
-        </label>
-        <label>
-          Confirm Password
-          <input
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            maxLength={128}
-            value={form.confirmPassword}
-            onChange={(e) => setForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
-            required
-          />
-        </label>
-        {error ? <p className="form-error">{error}</p> : null}
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Creating account..." : "Create account"}
-        </button>
-      </form>
-      <p>
-        Already have an account? <Link to="/login">Login</Link>
-      </p>
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-4 py-10">
+      <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Create Account</h1>
+        <p className="mt-1 text-sm text-slate-600">Set up your account to start playing.</p>
+
+        <form className="mt-6 grid gap-4" onSubmit={onSubmit}>
+          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+            Username
+            <input
+              className={inputClass}
+              type="text"
+              autoComplete="username"
+              minLength={3}
+              maxLength={24}
+              value={form.username}
+              onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+              required
+            />
+          </label>
+
+          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+            Password
+            <input
+              className={inputClass}
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={128}
+              value={form.password}
+              onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+              required
+            />
+          </label>
+
+          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+            Confirm Password
+            <input
+              className={inputClass}
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={128}
+              value={form.confirmPassword}
+              onChange={(e) => setForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
+              required
+            />
+          </label>
+
+          {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+
+          <button className={buttonPrimaryClass} type="submit" disabled={submitting}>
+            {submitting ? "Creating account..." : "Create account"}
+          </button>
+        </form>
+
+        <p className="mt-4 text-sm text-slate-600">
+          Already have an account?{" "}
+          <Link className="font-medium text-slate-900 underline-offset-2 hover:underline" to="/login">
+            Login
+          </Link>
+        </p>
+      </section>
     </main>
   );
 }
@@ -191,18 +228,31 @@ export function AppShell() {
   };
 
   return (
-    <main className="page">
-      <header className="app-header">
-        <h1>Global Conquest</h1>
-        <nav className="app-nav">
-          <Link to="/app/lobby">Lobby</Link>
-          <Link to="/app/profile">Profile</Link>
-          <button type="button" onClick={onLogout}>
-            Logout
-          </button>
-        </nav>
+    <main className="mx-auto min-h-screen w-full max-w-5xl px-4 py-8">
+      <header className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold tracking-tight text-slate-900">Global Conquest</h1>
+          <nav className="flex items-center gap-2">
+            <Link
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              to="/app/lobby"
+            >
+              Lobby
+            </Link>
+            <Link
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              to="/app/profile"
+            >
+              Profile
+            </Link>
+            <button className={buttonGhostClass} type="button" onClick={onLogout}>
+              Logout
+            </button>
+          </nav>
+        </div>
       </header>
-      <section>
+
+      <section className="mt-4"> 
         <Outlet />
       </section>
     </main>
@@ -221,23 +271,26 @@ export function LobbyPage() {
   const [joiningGameID, setJoiningGameID] = useState("");
   const [joinError, setJoinError] = useState("");
 
-  const loadGames = useCallback(async (cancelled = false) => {
-    setError("");
-    try {
-      const loadedGames = await listGames();
-      if (cancelled) return;
-      setGames(loadedGames);
-    } catch (err) {
-      if (cancelled) return;
-      const apiErr = err as ApiError;
-      if (apiErr.status === 401) {
-        auth.clearSession();
-        await navigate({ to: "/login" });
-        return;
+  const loadGames = useCallback(
+    async (cancelled = false) => {
+      setError("");
+      try {
+        const loadedGames = await listGames();
+        if (cancelled) return;
+        setGames(loadedGames);
+      } catch (err) {
+        if (cancelled) return;
+        const apiErr = err as ApiError;
+        if (apiErr.status === 401) {
+          auth.clearSession();
+          await navigate({ to: "/login" });
+          return;
+        }
+        setError(apiErr.message || "Failed to load lobby data");
       }
-      setError(apiErr.message || "Failed to load lobby data");
-    }
-  }, [auth, navigate]);
+    },
+    [auth, navigate]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -307,90 +360,113 @@ export function LobbyPage() {
   });
 
   return (
-    <div className="lobby">
-      <div className="lobby-head">
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2>Lobby</h2>
-          <p>Welcome back, {auth.user?.username}.</p>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Lobby</h2>
+          <p className="text-sm text-slate-600">Welcome back, {auth.user?.username}.</p>
         </div>
-        <button type="button" onClick={() => void loadGames()} disabled={loading || creatingGame || !!joiningGameID}>
+        <button
+          className={buttonGhostClass}
+          type="button"
+          onClick={() => void loadGames()}
+          disabled={loading || creatingGame || !!joiningGameID}
+        >
           Refresh
         </button>
       </div>
-      {loading ? <p>Loading lobby data...</p> : null}
-      {error ? <p className="form-error">{error}</p> : null}
-      {!loading && !error ? (
-        <>
-          <div className="create-game-panel">
-            <h3>Create Game</h3>
-            <form className="create-game-form" onSubmit={onCreateGame}>
-              <label>
-                Player Count
-                <input
-                  type="number"
-                  min={3}
-                  max={6}
-                  value={playerCount}
-                  onChange={(e) => setPlayerCount(Number(e.target.value))}
-                  required
-                />
-              </label>
-              <button type="submit" disabled={creatingGame}>
-                {creatingGame ? "Creating game..." : "Create Game"}
-              </button>
-            </form>
-            {createError ? <p className="form-error">{createError}</p> : null}
-          </div>
 
-          <h3>Games</h3>
-          {gamesSorted.length === 0 ? <p>No games yet. Create one below.</p> : null}
-          <ul className="game-list">
-            {gamesSorted.map((g) => {
-              const currentPlayers = g.playerIds.length;
-              const maxPlayers = g.playerCount ?? 0;
-              const hasJoined = currentUserID !== "" && g.playerIds.includes(currentUserID);
-              const isLobby = g.status === "lobby";
-              const canJoin = isLobby && maxPlayers > 0 && currentPlayers < maxPlayers && !hasJoined;
-              const isFull = isLobby && maxPlayers > 0 && currentPlayers >= maxPlayers;
-              const statusLabel = canJoin
-                ? "Open"
-                : hasJoined
-                  ? "Joined"
-                  : isFull
-                    ? "Full"
-                    : isLobby
-                      ? "Unavailable"
-                      : "In Progress";
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Create Game</h3>
+        <form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={onCreateGame}>
+          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+            Player Count
+            <input
+              className={`${inputClass} w-32`}
+              type="number"
+              min={3}
+              max={6}
+              value={playerCount}
+              onChange={(e) => setPlayerCount(Number(e.target.value))}
+              required
+            />
+          </label>
+          <button className={buttonPrimaryClass} type="submit" disabled={creatingGame}>
+            {creatingGame ? "Creating..." : "Create"}
+          </button>
+        </form>
+        {createError ? <p className="mt-2 text-sm text-rose-700">{createError}</p> : null}
+      </section>
 
-              return (
-                <li key={g.id} className="game-item">
-                  <div className="game-meta">
-                    <div className="game-top">
-                      <span className="game-id">{g.id}</span>
-                      <span className="game-badge">{statusLabel}</span>
-                    </div>
-                    <div>Owner: {g.ownerUserId || "unknown"}</div>
-                    <div>Status: {g.status}</div>
-                    <div>Players: {maxPlayers > 0 ? `${currentPlayers}/${maxPlayers}` : "unknown"}</div>
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Games</h3>
+          <span className="text-xs text-slate-500">{gamesSorted.length} total</span>
+        </div>
+
+        {loading ? <p className="text-sm text-slate-600">Loading lobby data...</p> : null}
+        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        {joinError ? <p className="mb-2 text-sm text-rose-700">{joinError}</p> : null}
+
+        {!loading && !error && gamesSorted.length === 0 ? (
+          <p className="text-sm text-slate-600">No games yet. Create one above.</p>
+        ) : null}
+
+        <ul className="grid gap-2">
+          {gamesSorted.map((g) => {
+            const currentPlayers = g.playerIds.length;
+            const maxPlayers = g.playerCount ?? 0;
+            const hasJoined = currentUserID !== "" && g.playerIds.includes(currentUserID);
+            const isLobby = g.status === "lobby";
+            const canJoin = isLobby && maxPlayers > 0 && currentPlayers < maxPlayers && !hasJoined;
+            const isFull = isLobby && maxPlayers > 0 && currentPlayers >= maxPlayers;
+            const statusLabel = canJoin
+              ? "Open"
+              : hasJoined
+                ? "Joined"
+                : isFull
+                  ? "Full"
+                  : isLobby
+                    ? "Unavailable"
+                    : "In Progress";
+
+            return (
+              <li
+                key={g.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
+              >
+                <div className="grid gap-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs text-slate-700">{g.id}</span>
+                    <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                      {statusLabel}
+                    </span>
                   </div>
-                  <div className="game-actions">
-                    {canJoin ? (
-                      <button type="button" onClick={() => void onJoinGame(g.id)} disabled={joiningGameID === g.id}>
-                        {joiningGameID === g.id ? "Joining..." : "Join Game"}
-                      </button>
-                    ) : (
-                      <button type="button" disabled>
-                        {hasJoined ? "Already Joined" : isFull ? "Lobby Full" : "Not Joinable"}
-                      </button>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          {joinError ? <p className="form-error">{joinError}</p> : null}
-        </>
-      ) : null}
+                  <p className="text-xs text-slate-600">Owner: {g.ownerUserId || "unknown"}</p>
+                  <p className="text-xs text-slate-600">
+                    Players: {maxPlayers > 0 ? `${currentPlayers}/${maxPlayers}` : "unknown"}
+                  </p>
+                </div>
+
+                {canJoin ? (
+                  <button
+                    className={buttonPrimaryClass}
+                    type="button"
+                    onClick={() => void onJoinGame(g.id)}
+                    disabled={joiningGameID === g.id}
+                  >
+                    {joiningGameID === g.id ? "Joining..." : "Join Game"}
+                  </button>
+                ) : (
+                  <button className={buttonGhostClass} type="button" disabled>
+                    {hasJoined ? "Joined" : isFull ? "Lobby Full" : "Not Joinable"}
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
     </div>
   );
 }
@@ -437,17 +513,26 @@ export function ProfilePage() {
   }, [auth, navigate]);
 
   return (
-    <div>
-      <h2>Profile</h2>
-      {loading ? <p>Loading profile...</p> : null}
-      {error ? <p className="form-error">{error}</p> : null}
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Profile</h2>
+      {loading ? <p className="mt-3 text-sm text-slate-600">Loading profile...</p> : null}
+      {error ? <p className="mt-3 text-sm text-rose-700">{error}</p> : null}
       {!loading && !error ? (
-        <>
-          <p>Username: {profile?.username ?? auth.user?.username ?? "-"}</p>
-          <p>User ID: {profile?.id ?? auth.user?.id ?? "-"}</p>
-          <p>Role: {profile?.role ?? auth.user?.role ?? "-"}</p>
-        </>
+        <dl className="mt-4 grid gap-2 text-sm text-slate-700">
+          <div className="grid grid-cols-[100px_1fr] gap-2">
+            <dt className="text-slate-500">Username</dt>
+            <dd className="font-medium text-slate-900">{profile?.username ?? auth.user?.username ?? "-"}</dd>
+          </div>
+          <div className="grid grid-cols-[100px_1fr] gap-2">
+            <dt className="text-slate-500">User ID</dt>
+            <dd className="font-mono text-xs text-slate-700">{profile?.id ?? auth.user?.id ?? "-"}</dd>
+          </div>
+          <div className="grid grid-cols-[100px_1fr] gap-2">
+            <dt className="text-slate-500">Role</dt>
+            <dd className="font-medium text-slate-900">{profile?.role ?? auth.user?.role ?? "-"}</dd>
+          </div>
+        </dl>
       ) : null}
-    </div>
+    </section>
   );
 }
