@@ -10,12 +10,12 @@ import (
 )
 
 type Game struct {
-	ID          string
-	OwnerUserID string
-	Status      string
-	State       json.RawMessage `swaggertype:"object"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string          `json:"id"`
+	OwnerUserID string          `json:"owner_user_id"`
+	Status      string          `json:"status"`
+	State       json.RawMessage `swaggertype:"object" json:"state,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 type NewGame struct {
