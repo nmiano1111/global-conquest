@@ -20,7 +20,7 @@ function readString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function normalizeMessage(value: unknown): LobbyMessage {
+export function normalizeLobbyMessage(value: unknown): LobbyMessage {
   const record = asRecord(value);
   if (!record) {
     return { id: "", room: "lobby", userId: "", userName: "", body: "", createdAt: "" };
@@ -43,7 +43,7 @@ export async function listLobbyMessages(limit = 100): Promise<LobbyMessage[]> {
     params: { limit },
   });
   if (!Array.isArray(res)) return [];
-  return res.map((v) => normalizeMessage(v));
+  return res.map((v) => normalizeLobbyMessage(v));
 }
 
 export async function postLobbyMessage(body: string): Promise<LobbyMessage> {
@@ -52,5 +52,5 @@ export async function postLobbyMessage(body: string): Promise<LobbyMessage> {
     url: "/chat/lobby/messages",
     data: { body },
   });
-  return normalizeMessage(res);
+  return normalizeLobbyMessage(res);
 }

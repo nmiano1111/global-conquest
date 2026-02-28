@@ -459,5 +459,18 @@ func (h *Handler) PostLobbyMessage(c *gin.Context) {
 		return
 	}
 
+	if h.gameServer != nil {
+		h.gameServer.Inbox() <- game.PublishLobbyChat{
+			Message: map[string]any{
+				"id":         msg.ID,
+				"room":       msg.Room,
+				"user_id":    msg.UserID,
+				"user_name":  msg.UserName,
+				"body":       msg.Body,
+				"created_at": msg.CreatedAt,
+			},
+		}
+	}
+
 	c.JSON(http.StatusCreated, msg)
 }

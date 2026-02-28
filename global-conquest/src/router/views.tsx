@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../api/client";
 import { login, signup } from "../api/auth";
-import { listLobbyMessages, postLobbyMessage, type LobbyMessage } from "../api/chat";
+import { listLobbyMessages, normalizeLobbyMessage, postLobbyMessage, type LobbyMessage } from "../api/chat";
 import { createGame, joinGame, listGames, type GameRecord } from "../api/games";
 import { getUserByUsername, type UserRecord } from "../api/users";
 import { useAuth } from "../auth";
@@ -279,6 +279,14 @@ export function LobbyPage() {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const { on, send, status: wsStatus } = useSocket();
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const upsertMessage = useCallback((next: LobbyMessage) => {
+    setMessages((prev) => {
+      if (next.id && prev.some((m) => m.id === next.id)) {
+        return prev.map((m) => (m.id === next.id ? next : m));
+      }
+      return [...prev, next];
+    });
+  }, []);
 
   const loadGames = useCallback(
     async (cancelled = false) => {
@@ -339,13 +347,6 @@ export function LobbyPage() {
   }, [loadGames, loadMessages]);
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      void loadMessages();
-    }, 4000);
-    return () => window.clearInterval(id);
-  }, [loadMessages]);
-
-  useEffect(() => {
     const off = on("lobby_typing_state", (msg) => {
       const payload = msg.payload as { users?: unknown } | undefined;
       const users = Array.isArray(payload?.users)
@@ -355,6 +356,13 @@ export function LobbyPage() {
     });
     return off;
   }, [on]);
+
+  useEffect(() => {
+    const off = on("lobby_chat_message", (msg) => {
+      upsertMessage(normalizeLobbyMessage(msg.payload));
+    });
+    return off;
+  }, [on, upsertMessage]);
 
   useEffect(() => {
     const el = chatScrollRef.current;
@@ -436,7 +444,9 @@ export function LobbyPage() {
     try {
       const created = await postLobbyMessage(body);
       setChatBody("");
-      setMessages((prev) => [...prev, created]);
+      if (wsStatus !== "connected") {
+        upsertMessage(created);
+      }
       if (wsStatus === "connected") {
         send("lobby_typing_stop");
       }

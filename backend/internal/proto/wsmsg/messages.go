@@ -23,6 +23,7 @@ const (
 	TypePlayerJoined     Type = "player_joined"
 	TypePlayerLeft       Type = "player_left"
 	TypeLobbyTypingState Type = "lobby_typing_state"
+	TypeLobbyChatMessage Type = "lobby_chat_message"
 )
 
 type Envelope struct {

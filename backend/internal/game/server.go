@@ -50,6 +50,9 @@ type Incoming struct {
 	ClientID string
 	Env      wsmsg.Envelope
 }
+type PublishLobbyChat struct {
+	Message map[string]any
+}
 
 func NewServer() *Server {
 	return &Server{
@@ -77,6 +80,8 @@ func (s *Server) Run() {
 			s.handleDisconnect(m.ClientID)
 		case Incoming:
 			s.handleIncoming(m.ClientID, m.Env)
+		case PublishLobbyChat:
+			s.broadcastLobbyChat(m.Message)
 		}
 	}
 }
@@ -298,6 +303,13 @@ func (s *Server) sendTypingStateTo(c *Client) {
 	c.Conn.Send(envelope(string(wsmsg.TypeLobbyTypingState), newID("s"), "", "", map[string]any{
 		"users": users,
 	}))
+}
+
+func (s *Server) broadcastLobbyChat(message map[string]any) {
+	ev := envelope(string(wsmsg.TypeLobbyChatMessage), newID("s"), "", "", message)
+	for _, c := range s.clients {
+		c.Conn.Send(ev)
+	}
 }
 
 func snapshot(g *Game) map[string]any {
