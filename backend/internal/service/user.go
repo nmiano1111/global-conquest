@@ -31,6 +31,13 @@ type LoginResult struct {
 }
 
 var ErrUsernameTaken = errors.New("username already taken")
+var ErrUserAccessDenied = errors.New("user is not allowed to access the system")
+var ErrInvalidAccessState = errors.New("invalid access state")
+
+const (
+	AccessStatusActive  = "active"
+	AccessStatusBlocked = "blocked"
+)
 
 func NewUsersService(db userDB, users store.UsersStore) *UsersService {
 	return &UsersService{db: db, users: users}
@@ -66,6 +73,21 @@ func (s *UsersService) ListUsers(ctx context.Context) ([]store.User, error) {
 	return s.users.ListUsers(ctx, s.db.Queryer())
 }
 
+func (s *UsersService) ListAdminUsers(ctx context.Context) ([]store.AdminUser, error) {
+	return s.users.ListAdminUsers(ctx, s.db.Queryer())
+}
+
+func (s *UsersService) UpdateUserAccess(ctx context.Context, userID, accessStatus string) (store.User, error) {
+	if accessStatus != AccessStatusActive && accessStatus != AccessStatusBlocked {
+		return store.User{}, ErrInvalidAccessState
+	}
+	return s.users.UpdateUserAccess(ctx, s.db.Queryer(), userID, accessStatus)
+}
+
+func (s *UsersService) RevokeUserSessions(ctx context.Context, userID string) (int64, error) {
+	return s.users.RevokeSessions(ctx, s.db.Queryer(), userID)
+}
+
 func (s *UsersService) AuthenticateSession(ctx context.Context, token string) (store.User, error) {
 	tokenHash, err := auth.HashSessionToken(token)
 	if err != nil {
@@ -78,6 +100,9 @@ func (s *UsersService) AuthenticateSession(ctx context.Context, token string) (s
 			return store.User{}, auth.ErrInvalidSession
 		}
 		return store.User{}, err
+	}
+	if u.AccessStatus == AccessStatusBlocked {
+		return store.User{}, auth.ErrInvalidSession
 	}
 	return u, nil
 }
@@ -99,6 +124,9 @@ func (s *UsersService) Login(ctx context.Context, userName, password string) (Lo
 		}
 		if !ok {
 			return auth.ErrInvalidUsernameOrPassword
+		}
+		if u.AccessStatus == AccessStatusBlocked {
+			return ErrUserAccessDenied
 		}
 
 		token, err := auth.NewSessionToken()
@@ -122,11 +150,12 @@ func (s *UsersService) Login(ctx context.Context, userName, password string) (Lo
 
 		out = LoginResult{
 			User: store.User{
-				ID:        u.ID,
-				UserName:  u.UserName,
-				Role:      u.Role,
-				CreatedAt: u.CreatedAt,
-				UpdatedAt: u.UpdatedAt,
+				ID:           u.ID,
+				UserName:     u.UserName,
+				Role:         u.Role,
+				AccessStatus: u.AccessStatus,
+				CreatedAt:    u.CreatedAt,
+				UpdatedAt:    u.UpdatedAt,
 			},
 			Token:     token,
 			ExpiresAt: expiresAt,

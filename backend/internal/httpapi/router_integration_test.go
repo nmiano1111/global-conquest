@@ -17,7 +17,10 @@ import (
 type fakeUsersService struct {
 	createUserFn          func(ctx context.Context, userName, password string) (store.User, error)
 	listUsersFn           func(ctx context.Context) ([]store.User, error)
+	listAdminUsersFn      func(ctx context.Context) ([]store.AdminUser, error)
 	getUserFn             func(ctx context.Context, userName string) (store.User, error)
+	updateUserAccessFn    func(ctx context.Context, userID, accessStatus string) (store.User, error)
+	revokeUserSessionsFn  func(ctx context.Context, userID string) (int64, error)
 	authenticateSessionFn func(ctx context.Context, token string) (store.User, error)
 	loginFn               func(ctx context.Context, userName, password string) (service.LoginResult, error)
 }
@@ -43,8 +46,29 @@ func (f *fakeUsersService) ListUsers(ctx context.Context) ([]store.User, error) 
 	return f.listUsersFn(ctx)
 }
 
+func (f *fakeUsersService) ListAdminUsers(ctx context.Context) ([]store.AdminUser, error) {
+	if f.listAdminUsersFn == nil {
+		return nil, nil
+	}
+	return f.listAdminUsersFn(ctx)
+}
+
 func (f *fakeUsersService) GetUser(ctx context.Context, userName string) (store.User, error) {
 	return f.getUserFn(ctx, userName)
+}
+
+func (f *fakeUsersService) UpdateUserAccess(ctx context.Context, userID, accessStatus string) (store.User, error) {
+	if f.updateUserAccessFn == nil {
+		return store.User{}, nil
+	}
+	return f.updateUserAccessFn(ctx, userID, accessStatus)
+}
+
+func (f *fakeUsersService) RevokeUserSessions(ctx context.Context, userID string) (int64, error) {
+	if f.revokeUserSessionsFn == nil {
+		return 0, nil
+	}
+	return f.revokeUserSessionsFn(ctx, userID)
 }
 
 func (f *fakeUsersService) AuthenticateSession(ctx context.Context, token string) (store.User, error) {
@@ -381,6 +405,112 @@ func TestProtectedRouteUnauthorized(t *testing.T) {
 	rr := doJSON(t, router, http.MethodGet, "/api/users/", nil)
 	if rr.code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestAdminUsersForbiddenForNonAdmin(t *testing.T) {
+	router := newTestRouter(&fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "alice", Role: "player"}, nil
+		},
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	})
+
+	rr := doJSONWithAuth(t, router, http.MethodGet, "/api/admin/users", "valid-token", nil)
+	if rr.code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestAdminUsersSuccess(t *testing.T) {
+	now := time.Now().UTC()
+	router := newTestRouter(&fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "root", Role: "admin"}, nil
+		},
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		listAdminUsersFn: func(context.Context) ([]store.AdminUser, error) {
+			return []store.AdminUser{
+				{
+					User: store.User{
+						ID:           "u2",
+						UserName:     "alice",
+						Role:         "player",
+						AccessStatus: "active",
+						CreatedAt:    now,
+						UpdatedAt:    now,
+					},
+					ActiveSessions: 1,
+				},
+			}, nil
+		},
+		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	})
+
+	rr := doJSONWithAuth(t, router, http.MethodGet, "/api/admin/users", "valid-token", nil)
+	if rr.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestAdminRevokeSessionsSuccess(t *testing.T) {
+	router := newTestRouter(&fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "root", Role: "admin"}, nil
+		},
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		revokeUserSessionsFn: func(_ context.Context, userID string) (int64, error) {
+			if userID != "u2" {
+				t.Fatalf("unexpected user id: %s", userID)
+			}
+			return 2, nil
+		},
+		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	})
+
+	rr := doJSONWithAuth(t, router, http.MethodPost, "/api/admin/users/u2/revoke-sessions", "valid-token", nil)
+	if rr.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestAdminUpdateAccessSuccess(t *testing.T) {
+	now := time.Now().UTC()
+	router := newTestRouter(&fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "root", Role: "admin"}, nil
+		},
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		updateUserAccessFn: func(_ context.Context, userID, accessStatus string) (store.User, error) {
+			if userID != "u2" || accessStatus != "blocked" {
+				t.Fatalf("unexpected update payload")
+			}
+			return store.User{
+				ID:           "u2",
+				UserName:     "alice",
+				Role:         "player",
+				AccessStatus: "blocked",
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			}, nil
+		},
+		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	})
+
+	rr := doJSONWithAuth(t, router, http.MethodPut, "/api/admin/users/u2/access", "valid-token", map[string]string{
+		"access_status": "blocked",
+	})
+	if rr.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.code, rr.body.String())
 	}
 }
 

@@ -29,7 +29,10 @@ func (f *fakeDB) WithTxQ(ctx context.Context, fn func(q db.Querier) error) error
 type fakeStore struct {
 	createFn                func(context.Context, db.Querier, store.NewUser) (store.User, error)
 	listUsersFn             func(context.Context, db.Querier) ([]store.User, error)
+	listAdminUsersFn        func(context.Context, db.Querier) ([]store.AdminUser, error)
 	getUserFn               func(context.Context, db.Querier, string) (store.User, error)
+	updateUserAccessFn      func(context.Context, db.Querier, string, string) (store.User, error)
+	revokeSessionsFn        func(context.Context, db.Querier, string) (int64, error)
 	getUserBySessionTokenFn func(context.Context, db.Querier, []byte) (store.User, error)
 	getUserAuthFn           func(context.Context, db.Querier, string) (store.UserAuth, error)
 	createSessionFn         func(context.Context, db.Querier, store.NewSession) (store.Session, error)
@@ -43,8 +46,29 @@ func (f *fakeStore) ListUsers(ctx context.Context, q db.Querier) ([]store.User, 
 	return f.listUsersFn(ctx, q)
 }
 
+func (f *fakeStore) ListAdminUsers(ctx context.Context, q db.Querier) ([]store.AdminUser, error) {
+	if f.listAdminUsersFn == nil {
+		return nil, nil
+	}
+	return f.listAdminUsersFn(ctx, q)
+}
+
 func (f *fakeStore) GetUser(ctx context.Context, q db.Querier, userName string) (store.User, error) {
 	return f.getUserFn(ctx, q, userName)
+}
+
+func (f *fakeStore) UpdateUserAccess(ctx context.Context, q db.Querier, userID, accessStatus string) (store.User, error) {
+	if f.updateUserAccessFn == nil {
+		return store.User{}, nil
+	}
+	return f.updateUserAccessFn(ctx, q, userID, accessStatus)
+}
+
+func (f *fakeStore) RevokeSessions(ctx context.Context, q db.Querier, userID string) (int64, error) {
+	if f.revokeSessionsFn == nil {
+		return 0, nil
+	}
+	return f.revokeSessionsFn(ctx, q, userID)
 }
 
 func (f *fakeStore) GetUserBySessionToken(ctx context.Context, q db.Querier, tokenHash []byte) (store.User, error) {
@@ -86,7 +110,7 @@ func TestCreateUserValidatesAndHashes(t *testing.T) {
 			if err != nil || !ok {
 				t.Fatalf("stored hash did not verify: ok=%v err=%v", ok, err)
 			}
-			return store.User{ID: "u1", UserName: in.UserName}, nil
+			return store.User{ID: "u1", UserName: in.UserName, AccessStatus: "active"}, nil
 		},
 		getUserFn: func(context.Context, db.Querier, string) (store.User, error) { return store.User{}, nil },
 		getUserAuthFn: func(context.Context, db.Querier, string) (store.UserAuth, error) {
@@ -160,7 +184,7 @@ func TestGetUserDelegatesToStore(t *testing.T) {
 			if gotQ != q || userName != "alice" {
 				t.Fatalf("unexpected delegation values")
 			}
-			return store.User{ID: "u1", UserName: "alice"}, nil
+			return store.User{ID: "u1", UserName: "alice", AccessStatus: "active"}, nil
 		},
 		getUserAuthFn: func(context.Context, db.Querier, string) (store.UserAuth, error) {
 			return store.UserAuth{}, nil
@@ -187,7 +211,7 @@ func TestListUsersDelegatesToStore(t *testing.T) {
 			if gotQ != q {
 				t.Fatalf("unexpected querier")
 			}
-			return []store.User{{ID: "u1", UserName: "alice"}}, nil
+			return []store.User{{ID: "u1", UserName: "alice", AccessStatus: "active"}}, nil
 		},
 		getUserFn: func(context.Context, db.Querier, string) (store.User, error) { return store.User{}, nil },
 		getUserAuthFn: func(context.Context, db.Querier, string) (store.UserAuth, error) {
@@ -225,11 +249,12 @@ func TestLoginSuccessCreatesSession(t *testing.T) {
 			now := time.Now().UTC()
 			return store.UserAuth{
 				User: store.User{
-					ID:        "u1",
-					UserName:  "alice",
-					Role:      "player",
-					CreatedAt: now,
-					UpdatedAt: now,
+					ID:           "u1",
+					UserName:     "alice",
+					Role:         "player",
+					AccessStatus: "active",
+					CreatedAt:    now,
+					UpdatedAt:    now,
 				},
 				PasswordHash: pwHash,
 			}, nil
@@ -272,7 +297,7 @@ func TestAuthenticateSessionSuccess(t *testing.T) {
 			if gotQ != q || len(tokenHash) == 0 {
 				t.Fatalf("expected queryer and non-empty token hash")
 			}
-			return store.User{ID: "u1", UserName: "alice"}, nil
+			return store.User{ID: "u1", UserName: "alice", AccessStatus: "active"}, nil
 		},
 		getUserAuthFn: func(context.Context, db.Querier, string) (store.UserAuth, error) { return store.UserAuth{}, nil },
 		createSessionFn: func(context.Context, db.Querier, store.NewSession) (store.Session, error) {
@@ -319,7 +344,7 @@ func TestLoginInvalidCredentials(t *testing.T) {
 		getUserFn: func(context.Context, db.Querier, string) (store.User, error) { return store.User{}, nil },
 		getUserAuthFn: func(context.Context, db.Querier, string) (store.UserAuth, error) {
 			return store.UserAuth{
-				User:         store.User{ID: "u1", UserName: "alice"},
+				User:         store.User{ID: "u1", UserName: "alice", AccessStatus: "active"},
 				PasswordHash: pwHash,
 			}, nil
 		},

@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import type { AuthContextValue } from "../auth";
 import {
+  AdminPage,
   AppShell,
   LobbyPage,
   LoginPage,
@@ -88,11 +89,22 @@ const profileRoute = createRoute({
   component: ProfilePage,
 });
 
+const adminRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/admin",
+  beforeLoad: ({ context }) => {
+    if (context.auth.user?.role !== "admin") {
+      throw redirect({ to: "/app/lobby" });
+    }
+  },
+  component: AdminPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   signupRoute,
-  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute]),
+  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, adminRoute]),
 ]);
 
 export const router = createRouter({

@@ -19,6 +19,11 @@ type seededUser struct {
 	Username string
 }
 
+type userSeedDef struct {
+	Username string
+	Role     string
+}
+
 type lobbyState struct {
 	PlayerCount int      `json:"player_count"`
 	PlayerIDs   []string `json:"player_ids"`
@@ -51,32 +56,36 @@ func main() {
 }
 
 func seedUsers(ctx context.Context, pool *pgxpool.Pool) ([]seededUser, error) {
-	usernames := []string{
-		"test_alice",
-		"test_bob",
-		"test_cara",
-		"test_dan",
-		"test_erin",
-		"test_frank",
+	userDefs := []userSeedDef{
+		{Username: "test_admin", Role: "admin"},
+		{Username: "test_alice", Role: "player"},
+		{Username: "test_bob", Role: "player"},
+		{Username: "test_cara", Role: "player"},
+		{Username: "test_dan", Role: "player"},
+		{Username: "test_erin", Role: "player"},
+		{Username: "test_frank", Role: "player"},
 	}
 
-	out := make([]seededUser, 0, len(usernames))
-	for _, uname := range usernames {
+	out := make([]seededUser, 0, len(userDefs))
+	for _, def := range userDefs {
 		hash, err := auth.HashPassword("password", auth.DefaultPasswordParams())
 		if err != nil {
-			return nil, fmt.Errorf("hash password for %s: %w", uname, err)
+			return nil, fmt.Errorf("hash password for %s: %w", def.Username, err)
 		}
 
 		const q = `
 			INSERT INTO users (username, password_hash, role)
-			VALUES ($1, $2, 'player')
+			VALUES ($1, $2, $3)
 			ON CONFLICT (username)
-			DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = now()
+			DO UPDATE SET
+				password_hash = EXCLUDED.password_hash,
+				role = EXCLUDED.role,
+				updated_at = now()
 			RETURNING id::text, username
 		`
 		var u seededUser
-		if err := pool.QueryRow(ctx, q, uname, hash).Scan(&u.ID, &u.Username); err != nil {
-			return nil, fmt.Errorf("upsert user %s: %w", uname, err)
+		if err := pool.QueryRow(ctx, q, def.Username, hash, def.Role).Scan(&u.ID, &u.Username); err != nil {
+			return nil, fmt.Errorf("upsert user %s: %w", def.Username, err)
 		}
 		out = append(out, u)
 	}

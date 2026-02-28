@@ -38,6 +38,23 @@ func (h *Handler) RequireAuth() gin.HandlerFunc {
 	}
 }
 
+func (h *Handler) RequireAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		u, ok := getAuthUser(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			c.Abort()
+			return
+		}
+		if !strings.EqualFold(u.Role, "admin") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "admin role required"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func parseBearerToken(header string) (string, bool) {
 	parts := strings.SplitN(strings.TrimSpace(header), " ", 2)
 	if len(parts) != 2 {

@@ -107,7 +107,7 @@ var _ pgx.Rows = (*stubRows)(nil)
 func TestPostgresUsersStoreCreate(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "active", now, now}},
 	}
 	s := NewPostgresUsersStore()
 
@@ -132,7 +132,7 @@ func TestPostgresUsersStoreCreate(t *testing.T) {
 func TestPostgresUsersStoreGetUser(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "active", now, now}},
 	}
 	s := NewPostgresUsersStore()
 
@@ -155,7 +155,7 @@ func TestPostgresUsersStoreGetUserBySessionToken(t *testing.T) {
 	now := time.Now().UTC()
 	tokenHash := []byte{1, 2, 3}
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "active", now, now}},
 	}
 	s := NewPostgresUsersStore()
 
@@ -178,8 +178,8 @@ func TestPostgresUsersStoreListUsers(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
 		rows: &stubRows{values: [][]any{
-			{"u1", "alice", "player", now, now},
-			{"u2", "bob", "admin", now, now},
+			{"u1", "alice", "player", "active", now, now},
+			{"u2", "bob", "admin", "active", now, now},
 		}},
 	}
 	s := NewPostgresUsersStore()
@@ -199,7 +199,7 @@ func TestPostgresUsersStoreListUsers(t *testing.T) {
 func TestPostgresUsersStoreGetUserAuth(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", "pw_hash", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "active", "pw_hash", now, now}},
 	}
 	s := NewPostgresUsersStore()
 
@@ -212,6 +212,65 @@ func TestPostgresUsersStoreGetUserAuth(t *testing.T) {
 	}
 	if out.PasswordHash != "pw_hash" {
 		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestPostgresUsersStoreListAdminUsers(t *testing.T) {
+	now := time.Now().UTC()
+	q := &stubQuerier{
+		rows: &stubRows{values: [][]any{
+			{"u1", "alice", "player", "active", now, now, 2},
+			{"u2", "bob", "admin", "active", now, now, 1},
+		}},
+	}
+	s := NewPostgresUsersStore()
+
+	out, err := s.ListAdminUsers(context.Background(), q)
+	if err != nil {
+		t.Fatalf("list admin users: %v", err)
+	}
+	if !strings.Contains(q.lastSQL, "active_sessions") {
+		t.Fatalf("expected active session SQL, got %q", q.lastSQL)
+	}
+	if len(out) != 2 || out[0].ActiveSessions != 2 || out[1].ActiveSessions != 1 {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestPostgresUsersStoreUpdateUserAccess(t *testing.T) {
+	now := time.Now().UTC()
+	q := &stubQuerier{
+		row: &stubRow{values: []any{"u1", "alice", "player", "blocked", now, now}},
+	}
+	s := NewPostgresUsersStore()
+
+	out, err := s.UpdateUserAccess(context.Background(), q, "u1", "blocked")
+	if err != nil {
+		t.Fatalf("update user access: %v", err)
+	}
+	if !strings.Contains(q.lastSQL, "UPDATE users") {
+		t.Fatalf("expected update SQL, got %q", q.lastSQL)
+	}
+	if out.AccessStatus != "blocked" {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestPostgresUsersStoreRevokeSessions(t *testing.T) {
+	q := &stubQuerier{
+		row: &stubRow{values: []any{int64(3)}},
+	}
+	s := NewPostgresUsersStore()
+
+	revoked, err := s.RevokeSessions(context.Background(), q, "u1")
+	if err != nil {
+		t.Fatalf("revoke sessions: %v", err)
+	}
+	if !strings.Contains(q.lastSQL, "DELETE FROM sessions") {
+		t.Fatalf("expected delete session SQL, got %q", q.lastSQL)
+	}
+	if revoked != 3 {
+		t.Fatalf("expected 3 revoked, got %d", revoked)
 	}
 }
 

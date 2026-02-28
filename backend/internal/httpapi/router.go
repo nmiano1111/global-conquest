@@ -48,6 +48,13 @@ func NewRouter(h *Handler) *gin.Engine {
 			chat.GET("/lobby/messages", h.ListLobbyMessages)
 			chat.POST("/lobby/messages", h.PostLobbyMessage)
 		}
+		admin := api.Group("/admin")
+		{
+			admin.Use(h.RequireAuth(), h.RequireAdmin())
+			admin.GET("/users", h.ListAdminUsers)
+			admin.PUT("/users/:id/access", h.UpdateUserAccess)
+			admin.POST("/users/:id/revoke-sessions", h.RevokeUserSessions)
+		}
 
 	}
 

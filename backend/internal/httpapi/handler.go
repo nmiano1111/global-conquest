@@ -18,7 +18,10 @@ import (
 type userService interface {
 	CreateUser(ctx context.Context, userName, password string) (store.User, error)
 	ListUsers(ctx context.Context) ([]store.User, error)
+	ListAdminUsers(ctx context.Context) ([]store.AdminUser, error)
 	GetUser(ctx context.Context, userName string) (store.User, error)
+	UpdateUserAccess(ctx context.Context, userID, accessStatus string) (store.User, error)
+	RevokeUserSessions(ctx context.Context, userID string) (int64, error)
 	AuthenticateSession(ctx context.Context, token string) (store.User, error)
 	Login(ctx context.Context, userName, password string) (service.LoginResult, error)
 }
@@ -75,6 +78,10 @@ type updateGameStateReq struct {
 
 type postLobbyMessageReq struct {
 	Body string `json:"body" binding:"required,min=1,max=1000"`
+}
+
+type updateUserAccessReq struct {
+	AccessStatus string `json:"access_status" binding:"required,oneof=active blocked"`
 }
 
 // CreateUser godoc
@@ -154,6 +161,8 @@ func (h *Handler) Login(c *gin.Context) {
 		switch {
 		case errors.Is(err, auth.ErrInvalidUsernameOrPassword):
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
+		case errors.Is(err, service.ErrUserAccessDenied):
+			c.JSON(http.StatusForbidden, gin.H{"error": "account is not allowed to login"})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "login failed"})
 		}
@@ -164,11 +173,12 @@ func (h *Handler) Login(c *gin.Context) {
 		Token:     out.Token,
 		ExpiresAt: out.ExpiresAt.Format(time.RFC3339),
 		User: gin.H{
-			"id":         out.User.ID,
-			"username":   out.User.UserName,
-			"role":       out.User.Role,
-			"created_at": out.User.CreatedAt,
-			"updated_at": out.User.UpdatedAt,
+			"id":            out.User.ID,
+			"username":      out.User.UserName,
+			"role":          out.User.Role,
+			"access_status": out.User.AccessStatus,
+			"created_at":    out.User.CreatedAt,
+			"updated_at":    out.User.UpdatedAt,
 		},
 	})
 }
@@ -473,4 +483,53 @@ func (h *Handler) PostLobbyMessage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, msg)
+}
+
+func (h *Handler) ListAdminUsers(c *gin.Context) {
+	users, err := h.users.ListAdminUsers(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list users"})
+		return
+	}
+	c.JSON(http.StatusOK, users)
+}
+
+func (h *Handler) UpdateUserAccess(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user id is required"})
+		return
+	}
+	var req updateUserAccessReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	u, err := h.users.UpdateUserAccess(c.Request.Context(), userID, req.AccessStatus)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidAccessState):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update user access"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, u)
+}
+
+func (h *Handler) RevokeUserSessions(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user id is required"})
+		return
+	}
+
+	revoked, err := h.users.RevokeUserSessions(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke sessions"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"revoked": revoked})
 }
