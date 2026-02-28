@@ -54,21 +54,3 @@ export async function postLobbyMessage(body: string): Promise<LobbyMessage> {
   });
   return normalizeMessage(res);
 }
-
-export async function sendLobbyTypingHeartbeat(): Promise<void> {
-  await request({
-    method: "POST",
-    url: "/chat/lobby/typing",
-  });
-}
-
-export async function listLobbyTypingUsers(): Promise<string[]> {
-  const res = await request<unknown>({
-    method: "GET",
-    url: "/chat/lobby/typing",
-  });
-  if (!res || typeof res !== "object") return [];
-  const users = (res as { users?: unknown }).users;
-  if (!Array.isArray(users)) return [];
-  return users.filter((v): v is string => typeof v === "string");
-}

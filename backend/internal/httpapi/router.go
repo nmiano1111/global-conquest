@@ -47,8 +47,6 @@ func NewRouter(h *Handler) *gin.Engine {
 			chat.Use(h.RequireAuth())
 			chat.GET("/lobby/messages", h.ListLobbyMessages)
 			chat.POST("/lobby/messages", h.PostLobbyMessage)
-			chat.GET("/lobby/typing", h.ListLobbyTyping)
-			chat.POST("/lobby/typing", h.PostLobbyTyping)
 		}
 
 	}

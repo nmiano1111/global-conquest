@@ -6,20 +6,23 @@ type Type string
 
 const (
 	// client->server
-	TypeHello      Type = "hello"
-	TypeCreateGame Type = "create_game"
-	TypeJoinGame   Type = "join_game"
-	TypeLeaveGame  Type = "leave_game"
-	TypeListGames  Type = "list_games"
+	TypeHello            Type = "hello"
+	TypeCreateGame       Type = "create_game"
+	TypeJoinGame         Type = "join_game"
+	TypeLeaveGame        Type = "leave_game"
+	TypeListGames        Type = "list_games"
+	TypeLobbyTypingStart Type = "lobby_typing_start"
+	TypeLobbyTypingStop  Type = "lobby_typing_stop"
 
 	// server->client
-	TypeError        Type = "error"
-	TypeGameCreated  Type = "game_created"
-	TypeJoinedGame   Type = "joined_game"
-	TypeLeftGame     Type = "left_game"
-	TypeGameList     Type = "game_list"
-	TypePlayerJoined Type = "player_joined"
-	TypePlayerLeft   Type = "player_left"
+	TypeError            Type = "error"
+	TypeGameCreated      Type = "game_created"
+	TypeJoinedGame       Type = "joined_game"
+	TypeLeftGame         Type = "left_game"
+	TypeGameList         Type = "game_list"
+	TypePlayerJoined     Type = "player_joined"
+	TypePlayerLeft       Type = "player_left"
+	TypeLobbyTypingState Type = "lobby_typing_state"
 )
 
 type Envelope struct {

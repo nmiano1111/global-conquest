@@ -2,16 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../api/client";
 import { login, signup } from "../api/auth";
-import {
-  listLobbyMessages,
-  listLobbyTypingUsers,
-  postLobbyMessage,
-  sendLobbyTypingHeartbeat,
-  type LobbyMessage,
-} from "../api/chat";
+import { listLobbyMessages, postLobbyMessage, type LobbyMessage } from "../api/chat";
 import { createGame, joinGame, listGames, type GameRecord } from "../api/games";
 import { getUserByUsername, type UserRecord } from "../api/users";
 import { useAuth } from "../auth";
+import { useSocket } from "../realtime";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200";
@@ -282,7 +277,8 @@ export function LobbyPage() {
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState("");
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
-  const lastTypingBeatRef = useRef(0);
+  const { on, send, status: wsStatus } = useSocket();
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadGames = useCallback(
     async (cancelled = false) => {
@@ -326,24 +322,6 @@ export function LobbyPage() {
     [auth, navigate]
   );
 
-  const loadTypingUsers = useCallback(
-    async (cancelled = false) => {
-      try {
-        const users = await listLobbyTypingUsers();
-        if (cancelled) return;
-        setTypingUsers(users);
-      } catch (err) {
-        if (cancelled) return;
-        const apiErr = err as ApiError;
-        if (apiErr.status === 401) {
-          auth.clearSession();
-          await navigate({ to: "/login" });
-        }
-      }
-    },
-    [auth, navigate]
-  );
-
   useEffect(() => {
     let cancelled = false;
 
@@ -368,19 +346,42 @@ export function LobbyPage() {
   }, [loadMessages]);
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      void loadTypingUsers();
-    }, 1200);
-    return () => window.clearInterval(id);
-  }, [loadTypingUsers]);
+    const off = on("lobby_typing_state", (msg) => {
+      const payload = msg.payload as { users?: unknown } | undefined;
+      const users = Array.isArray(payload?.users)
+        ? payload.users.filter((v): v is string => typeof v === "string")
+        : [];
+      setTypingUsers(users);
+    });
+    return off;
+  }, [on]);
 
   useEffect(() => {
-    if (chatBody.trim() === "") return;
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
+  const isTyping = chatBody.trim() !== "";
+
+  useEffect(() => {
+    if (wsStatus !== "connected") return;
+
+    if (!isTyping) {
+      send("lobby_typing_stop");
+      return;
+    }
+
+    send("lobby_typing_start", { username: auth.user?.username ?? "anon" });
     const id = window.setInterval(() => {
-      void sendLobbyTypingHeartbeat();
-    }, 1200);
-    return () => window.clearInterval(id);
-  }, [chatBody]);
+      send("lobby_typing_start", { username: auth.user?.username ?? "anon" });
+    }, 1500);
+
+    return () => {
+      window.clearInterval(id);
+      send("lobby_typing_stop");
+    };
+  }, [isTyping, wsStatus, send, auth.user?.username]);
 
   const onCreateGame = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -436,6 +437,9 @@ export function LobbyPage() {
       const created = await postLobbyMessage(body);
       setChatBody("");
       setMessages((prev) => [...prev, created]);
+      if (wsStatus === "connected") {
+        send("lobby_typing_stop");
+      }
     } catch (err) {
       const apiErr = err as ApiError;
       if (apiErr.status === 401) {
@@ -451,12 +455,6 @@ export function LobbyPage() {
 
   const onChatBodyChange = (value: string) => {
     setChatBody(value);
-    if (value.trim() === "") return;
-
-    const now = Date.now();
-    if (now-lastTypingBeatRef.current < 1000) return;
-    lastTypingBeatRef.current = now;
-    void sendLobbyTypingHeartbeat();
   };
 
   const typingText = (() => {
@@ -593,7 +591,7 @@ export function LobbyPage() {
           </button>
         </div>
 
-        <div className="h-[380px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <div ref={chatScrollRef} className="h-[380px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
           {messages.length === 0 ? <p className="text-sm text-slate-500">No messages yet.</p> : null}
           <ul className="grid gap-2">
             {messages.map((m) => (

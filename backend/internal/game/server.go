@@ -15,6 +15,7 @@ type Server struct {
 
 	clients map[string]*Client
 	games   map[string]*Game
+	typing  map[string]typingPresence
 }
 
 type Client struct {
@@ -37,6 +38,11 @@ type Game struct {
 	CreatedAt  time.Time
 }
 
+type typingPresence struct {
+	Name     string
+	LastSeen time.Time
+}
+
 // --- inbox messages ---
 type Register struct{ C *Client }
 type Unregister struct{ ClientID string }
@@ -50,6 +56,7 @@ func NewServer() *Server {
 		inbox:   make(chan any, 256),
 		clients: make(map[string]*Client),
 		games:   make(map[string]*Game),
+		typing:  make(map[string]typingPresence),
 	}
 }
 
@@ -65,6 +72,7 @@ func (s *Server) Run() {
 				"client_id": m.C.ID,
 				"name":      m.C.Name,
 			}))
+			s.sendTypingStateTo(m.C)
 		case Unregister:
 			s.handleDisconnect(m.ClientID)
 		case Incoming:
@@ -81,6 +89,10 @@ func (s *Server) handleDisconnect(clientID string) {
 	// If in a game, remove and broadcast
 	if c.Game != "" {
 		s.leaveGame(c, true)
+	}
+	if _, ok := s.typing[clientID]; ok {
+		delete(s.typing, clientID)
+		s.broadcastTypingState()
 	}
 	delete(s.clients, clientID)
 }
@@ -183,6 +195,28 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 	case "ping":
 		c.Conn.Send(envelope("pong", newID("s"), id, gameID, nil))
 
+	case wsmsg.TypeLobbyTypingStart:
+		name := c.Name
+		if len(env.Payload) > 0 {
+			var payload struct {
+				UserName string `json:"username"`
+			}
+			if err := json.Unmarshal(env.Payload, &payload); err == nil && strings.TrimSpace(payload.UserName) != "" {
+				name = strings.TrimSpace(payload.UserName)
+			}
+		}
+		if name == "" {
+			name = "anon"
+		}
+		s.typing[c.ID] = typingPresence{Name: name, LastSeen: time.Now().UTC()}
+		s.broadcastTypingState()
+
+	case wsmsg.TypeLobbyTypingStop:
+		if _, ok := s.typing[c.ID]; ok {
+			delete(s.typing, c.ID)
+			s.broadcastTypingState()
+		}
+
 	default:
 		// generic ack
 		c.Conn.Send(envelope("ack", newID("s"), id, gameID, nil))
@@ -237,6 +271,33 @@ func (s *Server) leaveGame(c *Client, disconnect bool) {
 	if len(g.Players) == 0 {
 		delete(s.games, gid)
 	}
+}
+
+func (s *Server) broadcastTypingState() {
+	const typingTTL = 4 * time.Second
+	cutoff := time.Now().UTC().Add(-typingTTL)
+	for clientID, state := range s.typing {
+		if state.LastSeen.Before(cutoff) {
+			delete(s.typing, clientID)
+		}
+	}
+
+	for _, c := range s.clients {
+		s.sendTypingStateTo(c)
+	}
+}
+
+func (s *Server) sendTypingStateTo(c *Client) {
+	users := make([]string, 0, len(s.typing))
+	for typingClientID, state := range s.typing {
+		if typingClientID == c.ID {
+			continue
+		}
+		users = append(users, state.Name)
+	}
+	c.Conn.Send(envelope(string(wsmsg.TypeLobbyTypingState), newID("s"), "", "", map[string]any{
+		"users": users,
+	}))
 }
 
 func snapshot(g *Game) map[string]any {
