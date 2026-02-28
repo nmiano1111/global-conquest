@@ -10,6 +10,11 @@ export type GameRecord = {
   updatedAt: string;
 };
 
+export type CreateGameRequest = {
+  ownerUserId: string;
+  playerIds: string[];
+};
+
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== "object") return null;
   return value as UnknownRecord;
@@ -38,4 +43,16 @@ export async function listGames(): Promise<GameRecord[]> {
   const res = await request<unknown>({ method: "GET", url: "/games/" });
   if (!Array.isArray(res)) return [];
   return res.map((item) => normalizeGame(item));
+}
+
+export async function createGame(input: CreateGameRequest): Promise<GameRecord> {
+  const res = await request<unknown>({
+    method: "POST",
+    url: "/games/",
+    data: {
+      owner_user_id: input.ownerUserId,
+      player_ids: input.playerIds,
+    },
+  });
+  return normalizeGame(res);
 }

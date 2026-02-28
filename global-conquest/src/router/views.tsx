@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../api/client";
 import { login, signup } from "../api/auth";
-import { listGames, type GameRecord } from "../api/games";
+import { createGame, listGames, type GameRecord } from "../api/games";
 import { getUserByUsername, listUsers, type UserRecord } from "../api/users";
 import { useAuth } from "../auth";
 
@@ -216,6 +216,9 @@ export function LobbyPage() {
   const [error, setError] = useState("");
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [games, setGames] = useState<GameRecord[]>([]);
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+  const [creatingGame, setCreatingGame] = useState(false);
+  const [createError, setCreateError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -248,6 +251,66 @@ export function LobbyPage() {
     };
   }, [auth, navigate]);
 
+  useEffect(() => {
+    if (!auth.user?.id || users.length === 0) return;
+    if (selectedPlayerIds.length > 0) return;
+
+    const defaults = [auth.user.id];
+    for (const user of users) {
+      if (user.id === auth.user.id) continue;
+      defaults.push(user.id);
+      if (defaults.length >= 3) break;
+    }
+    setSelectedPlayerIds(defaults);
+  }, [auth.user?.id, selectedPlayerIds.length, users]);
+
+  const onTogglePlayer = (playerId: string, checked: boolean) => {
+    setSelectedPlayerIds((prev) => {
+      const has = prev.includes(playerId);
+      if (checked && !has) return [...prev, playerId];
+      if (!checked && has) return prev.filter((id) => id !== playerId);
+      return prev;
+    });
+  };
+
+  const onCreateGame = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setCreateError("");
+    if (!auth.user?.id) {
+      setCreateError("Missing authenticated user.");
+      return;
+    }
+
+    const uniquePlayerIDs = Array.from(new Set(selectedPlayerIds));
+    if (!uniquePlayerIDs.includes(auth.user.id)) {
+      uniquePlayerIDs.unshift(auth.user.id);
+    }
+    if (uniquePlayerIDs.length < 3 || uniquePlayerIDs.length > 6) {
+      setCreateError("Select between 3 and 6 players.");
+      return;
+    }
+
+    setCreatingGame(true);
+    try {
+      await createGame({
+        ownerUserId: auth.user.id,
+        playerIds: uniquePlayerIDs,
+      });
+      const refreshed = await listGames();
+      setGames(refreshed);
+    } catch (err) {
+      const apiErr = err as ApiError;
+      if (apiErr.status === 401) {
+        auth.clearSession();
+        await navigate({ to: "/login" });
+        return;
+      }
+      setCreateError(apiErr.message || "Failed to create game");
+    } finally {
+      setCreatingGame(false);
+    }
+  };
+
   return (
     <div>
       <h2>Lobby</h2>
@@ -272,6 +335,30 @@ export function LobbyPage() {
               </li>
             ))}
           </ul>
+          <h3>Create Game</h3>
+          <form className="auth-form" onSubmit={onCreateGame}>
+            <div>
+              {users.map((u) => {
+                const checked = selectedPlayerIds.includes(u.id);
+                const isSelf = u.id === auth.user?.id;
+                return (
+                  <label key={u.id || u.username} className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={checked || isSelf}
+                      disabled={isSelf}
+                      onChange={(e) => onTogglePlayer(u.id, e.target.checked)}
+                    />
+                    {u.username} ({u.role})
+                  </label>
+                );
+              })}
+            </div>
+            {createError ? <p className="form-error">{createError}</p> : null}
+            <button type="submit" disabled={creatingGame}>
+              {creatingGame ? "Creating game..." : "Create Game"}
+            </button>
+          </form>
         </>
       ) : null}
     </div>
