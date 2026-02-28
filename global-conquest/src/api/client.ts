@@ -9,7 +9,8 @@ export type ApiError = {
 };
 
 function env(name: string, fallback = ""): string {
-  return (import.meta as any).env?.[name] ?? fallback;
+  const value = import.meta.env[name];
+  return typeof value === "string" ? value : fallback;
 }
 
 const baseURL =
@@ -37,17 +38,20 @@ function toApiError(err: unknown): ApiError {
     return { status: null, message: err instanceof Error ? err.message : String(err) };
   }
 
-  const axErr = err as AxiosError<any>;
+  const axErr = err as AxiosError<unknown>;
   const status = axErr.response?.status ?? null;
 
   // Try to preserve server-provided error payloads
   const details = axErr.response?.data;
 
   // Prefer a useful message
-  const message =
-    (typeof details?.message === "string" && details.message) ||
-    axErr.message ||
-    "Request failed";
+  let message = axErr.message || "Request failed";
+  if (details && typeof details === "object" && "message" in details) {
+    const detailMessage = (details as { message?: unknown }).message;
+    if (typeof detailMessage === "string" && detailMessage.trim() !== "") {
+      message = detailMessage;
+    }
+  }
 
   return { status, message, details };
 }

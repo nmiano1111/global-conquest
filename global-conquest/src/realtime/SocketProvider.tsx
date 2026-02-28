@@ -1,10 +1,7 @@
 // src/realtime/SocketProvider.tsx
-
-import React, { createContext, useContext } from "react";
-import type { GameSocket } from "./socket";
+import type { ReactNode } from "react";
 import { useGameSocket } from "./socket";
-
-const SocketContext = createContext<GameSocket | null>(null);
+import { SocketContext } from "./context";
 
 function buildWsUrl(): string {
   const explicit = import.meta.env.VITE_WS_URL as string | undefined;
@@ -14,15 +11,9 @@ function buildWsUrl(): string {
   return `${proto}//${window.location.host}/ws`;
 }
 
-export function SocketProvider({ children }: { children: React.ReactNode }) {
+export function SocketProvider({ children }: { children: ReactNode }) {
   const wsUrl = buildWsUrl();
   const socket = useGameSocket(wsUrl);
 
   return <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>;
-}
-
-export function useSocket(): GameSocket {
-  const ctx = useContext(SocketContext);
-  if (!ctx) throw new Error("useSocket must be used inside <SocketProvider>");
-  return ctx;
 }

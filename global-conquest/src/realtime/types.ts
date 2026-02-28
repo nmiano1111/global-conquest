@@ -10,14 +10,14 @@ export type WsEnvelope<TPayload = unknown> = {
 
 export type SocketStatus = "disconnected" | "connecting" | "connected";
 
-export type Listener<T = any> = (msg: WsEnvelope<T>) => void;
+export type Listener<T = unknown> = (msg: WsEnvelope<T>) => void;
 
 export function safeParseEnvelope(raw: unknown): WsEnvelope | null {
   if (typeof raw !== "string") return null;
   try {
     const v = JSON.parse(raw);
     if (!v || typeof v !== "object") return null;
-    if (typeof (v as any).type !== "string") return null;
+    if (!("type" in v) || typeof (v as { type?: unknown }).type !== "string") return null;
     return v as WsEnvelope;
   } catch {
     return null;
