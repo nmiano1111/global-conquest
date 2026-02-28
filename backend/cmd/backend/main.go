@@ -45,9 +45,11 @@ func main() {
 	usersSvc := service.NewUsersService(d, usersStore)
 	gamesStore := store.NewPostgresGamesStore()
 	gamesSvc := service.NewGamesService(d, gamesStore)
+	chatStore := store.NewPostgresChatStore()
+	chatSvc := service.NewChatService(d, chatStore)
 
 	// http
-	h := httpapi.NewHandler(s, usersSvc, gamesSvc)
+	h := httpapi.NewHandler(s, usersSvc, gamesSvc, chatSvc)
 	r := httpapi.NewRouter(h)
 
 	log.Fatal(r.Run(":8080"))

@@ -30,6 +30,11 @@ type fakeGamesService struct {
 	updateGameStateFn   func(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
 }
 
+type fakeChatService struct {
+	listLobbyMessagesFn func(ctx context.Context, limit int) ([]store.ChatMessage, error)
+	postLobbyMessageFn  func(ctx context.Context, userID, body string) (store.ChatMessage, error)
+}
+
 func (f *fakeUsersService) CreateUser(ctx context.Context, userName, password string) (store.User, error) {
 	return f.createUserFn(ctx, userName, password)
 }
@@ -73,8 +78,16 @@ func (f *fakeGamesService) UpdateGameState(ctx context.Context, gameID, status s
 	return f.updateGameStateFn(ctx, gameID, status, state)
 }
 
-func newTestRouterWithServices(userSvc *fakeUsersService, games *fakeGamesService) http.Handler {
-	h := NewHandler(game.NewServer(), userSvc, games)
+func (f *fakeChatService) ListLobbyMessages(ctx context.Context, limit int) ([]store.ChatMessage, error) {
+	return f.listLobbyMessagesFn(ctx, limit)
+}
+
+func (f *fakeChatService) PostLobbyMessage(ctx context.Context, userID, body string) (store.ChatMessage, error) {
+	return f.postLobbyMessageFn(ctx, userID, body)
+}
+
+func newTestRouterWithServices(userSvc *fakeUsersService, games *fakeGamesService, chats *fakeChatService) http.Handler {
+	h := NewHandler(game.NewServer(), userSvc, games, chats)
 	return NewRouter(h)
 }
 
@@ -86,7 +99,18 @@ func newTestRouter(svc *fakeUsersService) http.Handler {
 		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
 		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
-	return newTestRouterWithServices(svc, games)
+	chats := &fakeChatService{
+		listLobbyMessagesFn: func(context.Context, int) ([]store.ChatMessage, error) { return nil, nil },
+		postLobbyMessageFn:  func(context.Context, string, string) (store.ChatMessage, error) { return store.ChatMessage{}, nil },
+	}
+	return newTestRouterWithServices(svc, games, chats)
+}
+
+func newFakeChatService() *fakeChatService {
+	return &fakeChatService{
+		listLobbyMessagesFn: func(context.Context, int) ([]store.ChatMessage, error) { return nil, nil },
+		postLobbyMessageFn:  func(context.Context, string, string) (store.ChatMessage, error) { return store.ChatMessage{}, nil },
+	}
 }
 
 type responseRecorder struct {
@@ -360,6 +384,69 @@ func TestProtectedRouteUnauthorized(t *testing.T) {
 	}
 }
 
+func TestListLobbyMessagesSuccess(t *testing.T) {
+	now := time.Now().UTC()
+	svc := &fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "alice"}, nil
+		},
+		loginFn: func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	}
+	router := newTestRouterWithServices(svc, &fakeGamesService{
+		createClassicGameFn: func(context.Context, string, int) (store.Game, error) { return store.Game{}, nil },
+		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
+		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+	}, &fakeChatService{
+		listLobbyMessagesFn: func(context.Context, int) ([]store.ChatMessage, error) {
+			return []store.ChatMessage{{ID: "m1", Room: "lobby", UserID: "u1", UserName: "alice", Body: "hello", CreatedAt: now}}, nil
+		},
+		postLobbyMessageFn: func(context.Context, string, string) (store.ChatMessage, error) { return store.ChatMessage{}, nil },
+	})
+
+	rr := doJSONWithAuth(t, router, http.MethodGet, "/api/chat/lobby/messages?limit=25", "valid-token", nil)
+	if rr.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestPostLobbyMessageSuccess(t *testing.T) {
+	now := time.Now().UTC()
+	svc := &fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		listUsersFn:  func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:    func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "alice"}, nil
+		},
+		loginFn: func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	}
+	router := newTestRouterWithServices(svc, &fakeGamesService{
+		createClassicGameFn: func(context.Context, string, int) (store.Game, error) { return store.Game{}, nil },
+		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
+		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+	}, &fakeChatService{
+		listLobbyMessagesFn: func(context.Context, int) ([]store.ChatMessage, error) { return nil, nil },
+		postLobbyMessageFn: func(_ context.Context, userID, body string) (store.ChatMessage, error) {
+			if userID != "u1" || body != "hey all" {
+				t.Fatalf("unexpected post args")
+			}
+			return store.ChatMessage{ID: "m1", Room: "lobby", UserID: userID, UserName: "alice", Body: body, CreatedAt: now}, nil
+		},
+	})
+
+	rr := doJSONWithAuth(t, router, http.MethodPost, "/api/chat/lobby/messages", "valid-token", map[string]string{"body": "hey all"})
+	if rr.code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
 func TestCreateGameSuccess(t *testing.T) {
 	userSvc := &fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
@@ -382,7 +469,7 @@ func TestCreateGameSuccess(t *testing.T) {
 		listGamesFn:       func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
 		updateGameStateFn: func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
-	router := newTestRouterWithServices(userSvc, gamesSvc)
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
 
 	rr := doJSONWithAuth(t, router, http.MethodPost, "/api/games/", "valid-token", map[string]any{
 		"player_count": 3,
@@ -414,7 +501,7 @@ func TestJoinGameSuccess(t *testing.T) {
 		listGamesFn:       func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
 		updateGameStateFn: func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
-	router := newTestRouterWithServices(userSvc, gamesSvc)
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
 
 	rr := doJSONWithAuth(t, router, http.MethodPost, "/api/games/g1/join", "valid-token", nil)
 	if rr.code != http.StatusOK {
@@ -439,7 +526,7 @@ func TestGetGameNotFound(t *testing.T) {
 		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
 		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
-	router := newTestRouterWithServices(userSvc, gamesSvc)
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
 
 	rr := doJSONWithAuth(t, router, http.MethodGet, "/api/games/g_missing", "valid-token", nil)
 	if rr.code != http.StatusNotFound {
@@ -469,7 +556,7 @@ func TestUpdateGameStateSuccess(t *testing.T) {
 			return store.Game{ID: "g1", Status: "in_progress", State: state}, nil
 		},
 	}
-	router := newTestRouterWithServices(userSvc, gamesSvc)
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
 
 	rr := doJSONWithAuth(t, router, http.MethodPut, "/api/games/g1/state", "valid-token", map[string]any{
 		"status": "in_progress",
@@ -502,7 +589,7 @@ func TestListGamesSuccess(t *testing.T) {
 		},
 		updateGameStateFn: func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
-	router := newTestRouterWithServices(userSvc, gamesSvc)
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
 
 	rr := doJSONWithAuth(t, router, http.MethodGet, "/api/games/?owner_user_id=u1&status=lobby&limit=10&offset=5", "valid-token", nil)
 	if rr.code != http.StatusOK {
@@ -530,7 +617,7 @@ func TestListGamesBadLimit(t *testing.T) {
 		},
 		updateGameStateFn: func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
-	router := newTestRouterWithServices(userSvc, gamesSvc)
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
 
 	rr := doJSONWithAuth(t, router, http.MethodGet, "/api/games/?limit=bad", "valid-token", nil)
 	if rr.code != http.StatusBadRequest {

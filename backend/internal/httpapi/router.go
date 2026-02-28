@@ -42,6 +42,14 @@ func NewRouter(h *Handler) *gin.Engine {
 			games.GET("/:id", h.GetGame)
 			games.PUT("/:id/state", h.UpdateGameState)
 		}
+		chat := api.Group("/chat")
+		{
+			chat.Use(h.RequireAuth())
+			chat.GET("/lobby/messages", h.ListLobbyMessages)
+			chat.POST("/lobby/messages", h.PostLobbyMessage)
+			chat.GET("/lobby/typing", h.ListLobbyTyping)
+			chat.POST("/lobby/typing", h.PostLobbyTyping)
+		}
 
 	}
 

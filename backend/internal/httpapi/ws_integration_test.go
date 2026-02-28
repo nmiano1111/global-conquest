@@ -79,7 +79,11 @@ func TestWebSocketHello(t *testing.T) {
 		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
 		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
-	router := NewRouter(NewHandler(g, svc, games))
+	chats := &fakeChatService{
+		listLobbyMessagesFn: func(context.Context, int) ([]store.ChatMessage, error) { return nil, nil },
+		postLobbyMessageFn:  func(context.Context, string, string) (store.ChatMessage, error) { return store.ChatMessage{}, nil },
+	}
+	router := NewRouter(NewHandler(g, svc, games, chats))
 	base := startTestHTTPServer(t, router)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -123,7 +127,11 @@ func TestWebSocketPingPongAndCreateGame(t *testing.T) {
 		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
 		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
-	router := NewRouter(NewHandler(g, svc, games))
+	chats := &fakeChatService{
+		listLobbyMessagesFn: func(context.Context, int) ([]store.ChatMessage, error) { return nil, nil },
+		postLobbyMessageFn:  func(context.Context, string, string) (store.ChatMessage, error) { return store.ChatMessage{}, nil },
+	}
+	router := NewRouter(NewHandler(g, svc, games, chats))
 	base := startTestHTTPServer(t, router)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

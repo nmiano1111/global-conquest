@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -31,14 +32,28 @@ type gameService interface {
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
 }
 
+type chatService interface {
+	ListLobbyMessages(ctx context.Context, limit int) ([]store.ChatMessage, error)
+	PostLobbyMessage(ctx context.Context, userID, body string) (store.ChatMessage, error)
+}
+
 type Handler struct {
 	gameServer *game.Server
 	users      userService
 	games      gameService
+	chats      chatService
+	typingMu   sync.Mutex
+	typing     map[string]typingState
 }
 
-func NewHandler(gameServer *game.Server, users userService, games gameService) *Handler {
-	return &Handler{gameServer: gameServer, users: users, games: games}
+func NewHandler(gameServer *game.Server, users userService, games gameService, chats chatService) *Handler {
+	return &Handler{
+		gameServer: gameServer,
+		users:      users,
+		games:      games,
+		chats:      chats,
+		typing:     make(map[string]typingState),
+	}
 }
 
 // createUserReq represents the payload for creating a user
@@ -65,6 +80,15 @@ type createGameReq struct {
 type updateGameStateReq struct {
 	Status string          `json:"status" binding:"required"`
 	State  json.RawMessage `json:"state" binding:"required" swaggertype:"object"`
+}
+
+type postLobbyMessageReq struct {
+	Body string `json:"body" binding:"required,min=1,max=1000"`
+}
+
+type typingState struct {
+	userName string
+	lastSeen time.Time
 }
 
 // CreateUser godoc
@@ -377,4 +401,135 @@ func (h *Handler) UpdateGameState(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, g)
+}
+
+// ListLobbyMessages godoc
+// @Summary      List lobby chat messages
+// @Description  Returns recent chat messages from the global lobby room
+// @Tags         chat
+// @Produce      json
+// @Param        limit query int false "Max messages returned (default 50)"
+// @Success      200 {array} store.ChatMessage
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/chat/lobby/messages [get]
+func (h *Handler) ListLobbyMessages(c *gin.Context) {
+	limit := 0
+	if v := c.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be an integer"})
+			return
+		}
+		limit = n
+	}
+
+	out, err := h.chats.ListLobbyMessages(c.Request.Context(), limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidChatInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list lobby messages"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// PostLobbyMessage godoc
+// @Summary      Post a lobby chat message
+// @Description  Creates a message in the global lobby room for the authenticated user
+// @Tags         chat
+// @Accept       json
+// @Produce      json
+// @Param        request body postLobbyMessageReq true "Lobby message request"
+// @Success      201 {object} store.ChatMessage
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/chat/lobby/messages [post]
+func (h *Handler) PostLobbyMessage(c *gin.Context) {
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req postLobbyMessageReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	msg, err := h.chats.PostLobbyMessage(c.Request.Context(), authUser.ID, req.Body)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidChatInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to post lobby message"})
+		}
+		return
+	}
+	c.JSON(http.StatusCreated, msg)
+}
+
+// PostLobbyTyping godoc
+// @Summary      Send lobby typing heartbeat
+// @Description  Marks the authenticated user as currently typing in lobby chat
+// @Tags         chat
+// @Success      204
+// @Failure      401 {object} map[string]string
+// @Router       /api/chat/lobby/typing [post]
+func (h *Handler) PostLobbyTyping(c *gin.Context) {
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	h.typingMu.Lock()
+	h.typing[authUser.ID] = typingState{
+		userName: authUser.UserName,
+		lastSeen: time.Now().UTC(),
+	}
+	h.typingMu.Unlock()
+
+	c.Status(http.StatusNoContent)
+}
+
+// ListLobbyTyping godoc
+// @Summary      List lobby users currently typing
+// @Description  Returns usernames typing in lobby chat in the last few seconds
+// @Tags         chat
+// @Produce      json
+// @Success      200 {object} map[string][]string
+// @Failure      401 {object} map[string]string
+// @Router       /api/chat/lobby/typing [get]
+func (h *Handler) ListLobbyTyping(c *gin.Context) {
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	const typingTTL = 4 * time.Second
+	cutoff := time.Now().UTC().Add(-typingTTL)
+	users := make([]string, 0)
+
+	h.typingMu.Lock()
+	for userID, st := range h.typing {
+		if st.lastSeen.Before(cutoff) {
+			delete(h.typing, userID)
+			continue
+		}
+		if userID == authUser.ID {
+			continue
+		}
+		users = append(users, st.userName)
+	}
+	h.typingMu.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{"users": users})
 }

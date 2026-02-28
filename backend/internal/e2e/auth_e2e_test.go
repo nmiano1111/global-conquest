@@ -68,10 +68,12 @@ func setupTestEnv(t *testing.T) *testEnv {
 	usersSvc := service.NewUsersService(appDB, usersStore)
 	gamesStore := store.NewPostgresGamesStore()
 	gamesSvc := service.NewGamesService(appDB, gamesStore)
+	chatStore := store.NewPostgresChatStore()
+	chatSvc := service.NewChatService(appDB, chatStore)
 	g := game.NewServer()
 	go g.Run()
 
-	handler := httpapi.NewHandler(g, usersSvc, gamesSvc)
+	handler := httpapi.NewHandler(g, usersSvc, gamesSvc, chatSvc)
 	router := httpapi.NewRouter(handler)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../api/client";
 import { login, signup } from "../api/auth";
+import {
+  listLobbyMessages,
+  listLobbyTypingUsers,
+  postLobbyMessage,
+  sendLobbyTypingHeartbeat,
+  type LobbyMessage,
+} from "../api/chat";
 import { createGame, joinGame, listGames, type GameRecord } from "../api/games";
 import { getUserByUsername, type UserRecord } from "../api/users";
 import { useAuth } from "../auth";
@@ -270,6 +277,12 @@ export function LobbyPage() {
   const [createError, setCreateError] = useState("");
   const [joiningGameID, setJoiningGameID] = useState("");
   const [joinError, setJoinError] = useState("");
+  const [messages, setMessages] = useState<LobbyMessage[]>([]);
+  const [chatBody, setChatBody] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const lastTypingBeatRef = useRef(0);
 
   const loadGames = useCallback(
     async (cancelled = false) => {
@@ -292,12 +305,52 @@ export function LobbyPage() {
     [auth, navigate]
   );
 
+  const loadMessages = useCallback(
+    async (cancelled = false) => {
+      setChatError("");
+      try {
+        const loadedMessages = await listLobbyMessages(100);
+        if (cancelled) return;
+        setMessages(loadedMessages);
+      } catch (err) {
+        if (cancelled) return;
+        const apiErr = err as ApiError;
+        if (apiErr.status === 401) {
+          auth.clearSession();
+          await navigate({ to: "/login" });
+          return;
+        }
+        setChatError(apiErr.message || "Failed to load chat");
+      }
+    },
+    [auth, navigate]
+  );
+
+  const loadTypingUsers = useCallback(
+    async (cancelled = false) => {
+      try {
+        const users = await listLobbyTypingUsers();
+        if (cancelled) return;
+        setTypingUsers(users);
+      } catch (err) {
+        if (cancelled) return;
+        const apiErr = err as ApiError;
+        if (apiErr.status === 401) {
+          auth.clearSession();
+          await navigate({ to: "/login" });
+        }
+      }
+    },
+    [auth, navigate]
+  );
+
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
       setLoading(true);
       await loadGames(cancelled);
+      await loadMessages(cancelled);
       if (!cancelled) setLoading(false);
     };
 
@@ -305,7 +358,29 @@ export function LobbyPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadGames]);
+  }, [loadGames, loadMessages]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void loadMessages();
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [loadMessages]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void loadTypingUsers();
+    }, 1200);
+    return () => window.clearInterval(id);
+  }, [loadTypingUsers]);
+
+  useEffect(() => {
+    if (chatBody.trim() === "") return;
+    const id = window.setInterval(() => {
+      void sendLobbyTypingHeartbeat();
+    }, 1200);
+    return () => window.clearInterval(id);
+  }, [chatBody]);
 
   const onCreateGame = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -351,6 +426,46 @@ export function LobbyPage() {
     }
   };
 
+  const onSendChat = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const body = chatBody.trim();
+    setChatError("");
+    if (!body) return;
+    setChatSending(true);
+    try {
+      const created = await postLobbyMessage(body);
+      setChatBody("");
+      setMessages((prev) => [...prev, created]);
+    } catch (err) {
+      const apiErr = err as ApiError;
+      if (apiErr.status === 401) {
+        auth.clearSession();
+        await navigate({ to: "/login" });
+        return;
+      }
+      setChatError(apiErr.message || "Failed to send message");
+    } finally {
+      setChatSending(false);
+    }
+  };
+
+  const onChatBodyChange = (value: string) => {
+    setChatBody(value);
+    if (value.trim() === "") return;
+
+    const now = Date.now();
+    if (now-lastTypingBeatRef.current < 1000) return;
+    lastTypingBeatRef.current = now;
+    void sendLobbyTypingHeartbeat();
+  };
+
+  const typingText = (() => {
+    if (typingUsers.length === 0) return "";
+    if (typingUsers.length > 2) return "Many people are typing...";
+    if (typingUsers.length === 2) return `${typingUsers[0]} and ${typingUsers[1]} are typing...`;
+    return `${typingUsers[0]} is typing...`;
+  })();
+
   const currentUserID = auth.user?.id ?? "";
   const gamesSorted = [...games].sort((a, b) => {
     if (a.status === b.status) return b.createdAt.localeCompare(a.createdAt);
@@ -360,7 +475,8 @@ export function LobbyPage() {
   });
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Lobby</h2>
@@ -467,6 +583,47 @@ export function LobbyPage() {
           })}
         </ul>
       </section>
+      </div>
+
+      <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Lobby Chat</h3>
+          <button className={buttonGhostClass} type="button" onClick={() => void loadMessages()} disabled={loading || chatSending}>
+            Refresh
+          </button>
+        </div>
+
+        <div className="h-[380px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
+          {messages.length === 0 ? <p className="text-sm text-slate-500">No messages yet.</p> : null}
+          <ul className="grid gap-2">
+            {messages.map((m) => (
+              <li key={m.id || `${m.userId}-${m.createdAt}-${m.body}`} className="rounded-lg bg-white p-2 text-sm">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="font-medium text-slate-900">{m.userName || "unknown"}</span>
+                  <span className="text-[11px] text-slate-500">{m.createdAt ? new Date(m.createdAt).toLocaleTimeString() : ""}</span>
+                </div>
+                <p className="whitespace-pre-wrap text-slate-700">{m.body}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <form className="mt-3 grid gap-2" onSubmit={onSendChat}>
+          <textarea
+            className={inputClass}
+            rows={3}
+            maxLength={1000}
+            placeholder="Message lobby..."
+            value={chatBody}
+            onChange={(e) => onChatBodyChange(e.target.value)}
+          />
+          {typingText ? <p className="text-xs text-slate-500">{typingText}</p> : null}
+          {chatError ? <p className="text-sm text-rose-700">{chatError}</p> : null}
+          <button className={buttonPrimaryClass} type="submit" disabled={chatSending || chatBody.trim() === ""}>
+            {chatSending ? "Sending..." : "Send"}
+          </button>
+        </form>
+      </aside>
     </div>
   );
 }
