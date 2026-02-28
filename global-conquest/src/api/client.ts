@@ -1,6 +1,7 @@
 // src/api/client.ts
 import axios from "axios";
 import type { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
+import { getStoredToken } from "../auth/storage";
 
 export type ApiError = {
   status: number | null;
@@ -26,12 +27,16 @@ export const api: AxiosInstance = axios.create({
   // withCredentials: true, // only if you use cookies later
 });
 
-// ---- Request interceptor: attach auth token later ----
-// api.interceptors.request.use(async (config) => {
-//   const token = await getAccessTokenSomehow(); // Auth0 hook/utility
-//   if (token) config.headers.Authorization = `Bearer ${token}`;
-//   return config;
-// });
+api.interceptors.request.use((config) => {
+  const token = getStoredToken();
+  if (!token) return config;
+
+  config.headers = config.headers ?? {};
+  if (!("Authorization" in config.headers)) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 function toApiError(err: unknown): ApiError {
   if (!axios.isAxiosError(err)) {

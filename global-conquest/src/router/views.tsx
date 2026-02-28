@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../api/client";
 import { login, signup } from "../api/auth";
+import { listGames, type GameRecord } from "../api/games";
+import { getUserByUsername, listUsers, type UserRecord } from "../api/users";
 import { useAuth } from "../auth";
 
 export function RootLayout() {
@@ -209,24 +211,126 @@ export function AppShell() {
 
 export function LobbyPage() {
   const auth = useAuth();
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [games, setGames] = useState<GameRecord[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const [loadedUsers, loadedGames] = await Promise.all([listUsers(), listGames()]);
+        if (cancelled) return;
+        setUsers(loadedUsers);
+        setGames(loadedGames);
+      } catch (err) {
+        if (cancelled) return;
+        const apiErr = err as ApiError;
+        if (apiErr.status === 401) {
+          auth.clearSession();
+          await navigate({ to: "/login" });
+          return;
+        }
+        setError(apiErr.message || "Failed to load lobby data");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, navigate]);
 
   return (
     <div>
       <h2>Lobby</h2>
       <p>Welcome back, {auth.user?.username}.</p>
+      {loading ? <p>Loading lobby data...</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
+      {!loading && !error ? (
+        <>
+          <h3>Players</h3>
+          <ul>
+            {users.map((u) => (
+              <li key={u.id || u.username}>
+                {u.username} ({u.role})
+              </li>
+            ))}
+          </ul>
+          <h3>Games</h3>
+          <ul>
+            {games.map((g) => (
+              <li key={g.id}>
+                {g.id} - {g.status} (owner: {g.ownerUserId || "unknown"})
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </div>
   );
 }
 
 export function ProfilePage() {
   const auth = useAuth();
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [profile, setProfile] = useState<UserRecord | null>(null);
+
+  useEffect(() => {
+    const username = auth.user?.username;
+    if (!username) {
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const loaded = await getUserByUsername(username);
+        if (!cancelled) setProfile(loaded);
+      } catch (err) {
+        if (cancelled) return;
+        const apiErr = err as ApiError;
+        if (apiErr.status === 401) {
+          auth.clearSession();
+          await navigate({ to: "/login" });
+          return;
+        }
+        setError(apiErr.message || "Failed to load profile");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, navigate]);
 
   return (
     <div>
       <h2>Profile</h2>
-      <p>Username: {auth.user?.username ?? "-"}</p>
-      <p>User ID: {auth.user?.id ?? "-"}</p>
-      <p>Role: {auth.user?.role ?? "-"}</p>
+      {loading ? <p>Loading profile...</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
+      {!loading && !error ? (
+        <>
+          <p>Username: {profile?.username ?? auth.user?.username ?? "-"}</p>
+          <p>User ID: {profile?.id ?? auth.user?.id ?? "-"}</p>
+          <p>Role: {profile?.role ?? auth.user?.role ?? "-"}</p>
+        </>
+      ) : null}
     </div>
   );
 }
