@@ -27,6 +27,17 @@ type AuthUser struct {
 // GinHandler wires transport to the game hub.
 func GinHandler(s *game.Server, opts Options) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		authUser := AuthUser{}
+		if opts.Authenticate != nil {
+			token := c.Query("token")
+			if token != "" {
+				if u, err := opts.Authenticate(ctx, token); err == nil {
+					authUser = u
+				}
+			}
+		}
+
 		w := unwrapWriter(c.Writer)
 
 		conn, err := wsconn.Accept(w, c.Request, wsconn.Options{
@@ -38,20 +49,6 @@ func GinHandler(s *game.Server, opts Options) gin.HandlerFunc {
 			return
 		}
 		c.Abort()
-
-		ctx := c.Request.Context()
-		authUser := AuthUser{}
-		if opts.Authenticate != nil {
-			token := c.Query("token")
-			if token != "" {
-				u, err := opts.Authenticate(ctx, token)
-				if err != nil {
-					c.Status(http.StatusUnauthorized)
-					return
-				}
-				authUser = u
-			}
-		}
 
 		// Create client + register with hub.
 		clientID := randClientID()

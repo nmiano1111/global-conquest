@@ -8,6 +8,10 @@ function buildWsUrl(): string {
   const explicit = import.meta.env.VITE_WS_URL as string | undefined;
   if (explicit && explicit.trim() !== "") return explicit;
 
+  if (import.meta.env.DEV) {
+    return "ws://127.0.0.1:8080/ws";
+  }
+
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}/ws`;
 }
