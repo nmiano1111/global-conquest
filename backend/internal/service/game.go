@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"backend/internal/db"
@@ -18,8 +20,9 @@ type gameDB interface {
 }
 
 type GamesService struct {
-	db    gameDB
-	games store.GamesStore
+	db        gameDB
+	games     store.GamesStore
+	gameEvent gameEventStore
 }
 
 var (
@@ -35,6 +38,15 @@ var (
 
 func NewGamesService(db gameDB, games store.GamesStore) *GamesService {
 	return &GamesService{db: db, games: games}
+}
+
+type gameEventStore interface {
+	SaveGameEvent(ctx context.Context, q db.Querier, gameID, actorUserID, eventType, body string) (store.GameEvent, error)
+	ListGameEvents(ctx context.Context, q db.Querier, gameID string, limit int) ([]store.GameEvent, error)
+}
+
+func (s *GamesService) SetGameEventStore(gameEvent gameEventStore) {
+	s.gameEvent = gameEvent
 }
 
 type lobbyState struct {
@@ -60,6 +72,7 @@ type GameBootstrap struct {
 	Occupy                *GameOccupyRequirement `json:"occupy,omitempty"`
 	Players               []GameBootstrapPlayer  `json:"players"`
 	Territories           json.RawMessage        `json:"territories"`
+	Events                []GameEventEntry       `json:"events"`
 	CreatedAt             time.Time              `json:"created_at"`
 	UpdatedAt             time.Time              `json:"updated_at"`
 }
@@ -93,6 +106,16 @@ type GameActionUpdate struct {
 	Players               []GameActionPlayer     `json:"players"`
 	Territories           json.RawMessage        `json:"territories"`
 	Result                any                    `json:"result,omitempty"`
+	Event                 *GameEventEntry        `json:"event,omitempty"`
+}
+
+type GameEventEntry struct {
+	ID          string    `json:"id"`
+	GameID      string    `json:"game_id"`
+	ActorUserID string    `json:"actor_user_id,omitempty"`
+	EventType   string    `json:"event_type"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type GameOccupyRequirement struct {
@@ -172,6 +195,10 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		}
 
 		lobby.PlayerIDs = append(lobby.PlayerIDs, playerID)
+		names, err := s.userNamesByIDsQ(ctx, q, lobby.PlayerIDs)
+		if err != nil {
+			return err
+		}
 		nextStatus := "lobby"
 		var nextState []byte
 		if len(lobby.PlayerIDs) == lobby.PlayerCount {
@@ -184,10 +211,36 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 			if err != nil {
 				return err
 			}
+			if s.gameEvent != nil {
+				joinBody := fmt.Sprintf(
+					"%s joined the game lobby (%d/%d players).",
+					displayName(names, playerID),
+					len(lobby.PlayerIDs),
+					lobby.PlayerCount,
+				)
+				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "player_joined", joinBody); err != nil {
+					return err
+				}
+				startBody := fmt.Sprintf("All players joined. The game has started. %s goes first.", displayName(names, engine.Players[engine.CurrentPlayer].ID))
+				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "game_started", startBody); err != nil {
+					return err
+				}
+			}
 		} else {
 			nextState, err = json.Marshal(lobby)
 			if err != nil {
 				return err
+			}
+			if s.gameEvent != nil {
+				joinBody := fmt.Sprintf(
+					"%s joined the game lobby (%d/%d players).",
+					displayName(names, playerID),
+					len(lobby.PlayerIDs),
+					lobby.PlayerCount,
+				)
+				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "player_joined", joinBody); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -271,8 +324,14 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 		if !containsID(playerIDs, in.PlayerUserID) {
 			return ErrGameForbidden
 		}
+		names, err := s.userNamesByIDsQ(ctx, q, playerIDs)
+		if err != nil {
+			return err
+		}
+		prevOccupy := occupyRequirement(engine.Occupy)
 
 		var result any
+		var eventType, eventBody string
 		switch in.Action {
 		case "place_reinforcement":
 			if in.Territory == "" || in.Armies <= 0 {
@@ -281,6 +340,8 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			if err := engine.PlaceReinforcement(in.PlayerUserID, risk.Territory(in.Territory), in.Armies); err != nil {
 				return err
 			}
+			eventType = "reinforcement_placed"
+			eventBody = fmt.Sprintf("%s placed %d %s on %s.", displayName(names, in.PlayerUserID), in.Armies, pluralize("army", in.Armies), in.Territory)
 		case "attack":
 			if in.From == "" || in.To == "" || in.AttackerDice <= 0 {
 				return ErrInvalidGameAction
@@ -292,6 +353,10 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			dst, ok := engine.Territories[risk.Territory(in.To)]
 			if !ok {
 				return ErrInvalidGameAction
+			}
+			defenderUserID := ""
+			if dst.Owner >= 0 && dst.Owner < len(engine.Players) {
+				defenderUserID = engine.Players[dst.Owner].ID
 			}
 			maxAttackerDice := min(3, src.Armies-1)
 			if maxAttackerDice < 1 {
@@ -313,6 +378,25 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				return err
 			}
 			result = ar
+			eventType = "attack_resolved"
+			eventBody = fmt.Sprintf(
+				"%s attacked %s from %s. Dice: attacker [%s], defender [%s]. Losses: %s %d, %s %d.",
+				displayName(names, in.PlayerUserID),
+				in.To,
+				in.From,
+				joinDice(ar.AttackerRolls),
+				joinDice(ar.DefenderRolls),
+				displayName(names, in.PlayerUserID),
+				ar.AttackerLoss,
+				displayName(names, defenderUserID),
+				ar.DefenderLoss,
+			)
+			if ar.Conquered {
+				eventBody += fmt.Sprintf(" %s conquered %s.", displayName(names, in.PlayerUserID), in.To)
+			}
+			if ar.Eliminated != "" {
+				eventBody += fmt.Sprintf(" %s was eliminated.", displayName(names, ar.Eliminated))
+			}
 		case "occupy":
 			if in.Armies <= 0 {
 				return ErrInvalidGameAction
@@ -320,10 +404,20 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			if err := engine.OccupyTerritory(in.PlayerUserID, in.Armies); err != nil {
 				return err
 			}
+			from := in.From
+			to := in.To
+			if prevOccupy != nil {
+				from = prevOccupy.From
+				to = prevOccupy.To
+			}
+			eventType = "territory_occupied"
+			eventBody = fmt.Sprintf("%s moved %d %s from %s to %s.", displayName(names, in.PlayerUserID), in.Armies, pluralize("army", in.Armies), from, to)
 		case "end_attack":
 			if err := engine.EndAttackPhase(in.PlayerUserID); err != nil {
 				return err
 			}
+			eventType = "attack_phase_ended"
+			eventBody = fmt.Sprintf("%s ended the attack phase.", displayName(names, in.PlayerUserID))
 		case "fortify":
 			if in.From == "" || in.To == "" || in.Armies <= 0 {
 				return ErrInvalidGameAction
@@ -331,10 +425,18 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			if err := engine.Fortify(in.PlayerUserID, risk.Territory(in.From), risk.Territory(in.To), in.Armies); err != nil {
 				return err
 			}
+			eventType = "fortified"
+			eventBody = fmt.Sprintf("%s fortified %s from %s with %d %s.", displayName(names, in.PlayerUserID), in.To, in.From, in.Armies, pluralize("army", in.Armies))
 		case "end_turn":
 			if err := engine.EndTurn(in.PlayerUserID); err != nil {
 				return err
 			}
+			nextPlayer := ""
+			if engine.CurrentPlayer >= 0 && engine.CurrentPlayer < len(engine.Players) {
+				nextPlayer = engine.Players[engine.CurrentPlayer].ID
+			}
+			eventType = "turn_ended"
+			eventBody = fmt.Sprintf("%s ended their turn. %s is up next.", displayName(names, in.PlayerUserID), displayName(names, nextPlayer))
 		default:
 			return ErrInvalidGameAction
 		}
@@ -374,6 +476,20 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			Players:               players,
 			Territories:           territories,
 			Result:                result,
+		}
+		if s.gameEvent != nil && strings.TrimSpace(eventBody) != "" {
+			saved, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, in.PlayerUserID, eventType, eventBody)
+			if err != nil {
+				return err
+			}
+			out.Event = &GameEventEntry{
+				ID:          saved.ID,
+				GameID:      saved.GameID,
+				ActorUserID: saved.ActorUserID,
+				EventType:   saved.EventType,
+				Body:        saved.Body,
+				CreatedAt:   saved.CreatedAt,
+			}
 		}
 		return nil
 	})
@@ -432,6 +548,23 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 			})
 		}
 		out.Territories = json.RawMessage(`{}`)
+		if s.gameEvent != nil {
+			events, err := s.gameEvent.ListGameEvents(ctx, s.db.Queryer(), g.ID, 250)
+			if err != nil {
+				return GameBootstrap{}, err
+			}
+			out.Events = make([]GameEventEntry, 0, len(events))
+			for _, ev := range events {
+				out.Events = append(out.Events, GameEventEntry{
+					ID:          ev.ID,
+					GameID:      ev.GameID,
+					ActorUserID: ev.ActorUserID,
+					EventType:   ev.EventType,
+					Body:        ev.Body,
+					CreatedAt:   ev.CreatedAt,
+				})
+			}
+		}
 		return out, nil
 
 	case "in_progress":
@@ -497,6 +630,23 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 			return GameBootstrap{}, err
 		}
 		out.Territories = tb
+		if s.gameEvent != nil {
+			events, err := s.gameEvent.ListGameEvents(ctx, s.db.Queryer(), g.ID, 250)
+			if err != nil {
+				return GameBootstrap{}, err
+			}
+			out.Events = make([]GameEventEntry, 0, len(events))
+			for _, ev := range events {
+				out.Events = append(out.Events, GameEventEntry{
+					ID:          ev.ID,
+					GameID:      ev.GameID,
+					ActorUserID: ev.ActorUserID,
+					EventType:   ev.EventType,
+					Body:        ev.Body,
+					CreatedAt:   ev.CreatedAt,
+				})
+			}
+		}
 		return out, nil
 
 	default:
@@ -505,16 +655,34 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 }
 
 func (s *GamesService) userNamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	return s.userNamesByIDsQ(ctx, s.db.Queryer(), ids)
+}
+
+func (s *GamesService) userNamesByIDsQ(ctx context.Context, q db.Querier, ids []string) (map[string]string, error) {
 	if len(ids) == 0 {
 		return map[string]string{}, nil
 	}
-	rows, err := s.db.Queryer().Query(
+	if q == nil {
+		out := make(map[string]string, len(ids))
+		for _, id := range ids {
+			out[id] = id
+		}
+		return out, nil
+	}
+	rows, err := q.Query(
 		ctx,
 		`SELECT id::text, username FROM users WHERE id::text = ANY($1::text[])`,
 		ids,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if rows == nil {
+		out := make(map[string]string, len(ids))
+		for _, id := range ids {
+			out[id] = id
+		}
+		return out, nil
 	}
 	defer rows.Close()
 
@@ -601,4 +769,35 @@ func occupyRequirement(o *risk.OccupyState) *GameOccupyRequirement {
 		MinMove: o.MinMove,
 		MaxMove: o.MaxMove,
 	}
+}
+
+func displayName(names map[string]string, userID string) string {
+	if userID == "" {
+		return "Unknown player"
+	}
+	if name := strings.TrimSpace(names[userID]); name != "" {
+		return name
+	}
+	return userID
+}
+
+func pluralize(noun string, n int) string {
+	if n == 1 {
+		return noun
+	}
+	if strings.HasSuffix(noun, "y") && len(noun) > 1 {
+		return noun[:len(noun)-1] + "ies"
+	}
+	return noun + "s"
+}
+
+func joinDice(values []int) string {
+	if len(values) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		parts = append(parts, fmt.Sprintf("%d", v))
+	}
+	return strings.Join(parts, ", ")
 }

@@ -90,6 +90,7 @@ type GameActionUpdate struct {
 	Players               []GameActionPlayer
 	Territories           json.RawMessage
 	Result                any
+	Event                 *GameEventMessage
 }
 
 type GameOccupyRequirement struct {
@@ -97,6 +98,15 @@ type GameOccupyRequirement struct {
 	To      string
 	MinMove int
 	MaxMove int
+}
+
+type GameEventMessage struct {
+	ID          string
+	GameID      string
+	ActorUserID string
+	EventType   string
+	Body        string
+	CreatedAt   time.Time
 }
 
 type GameActionService interface {
@@ -415,6 +425,19 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			Players:     statePlayers,
 			Territories: updated.Territories,
 			Result:      updated.Result,
+			Event: func() *wsmsg.GameEventPayload {
+				if updated.Event == nil {
+					return nil
+				}
+				return &wsmsg.GameEventPayload{
+					ID:          updated.Event.ID,
+					GameID:      updated.Event.GameID,
+					ActorUserID: updated.Event.ActorUserID,
+					EventType:   updated.Event.EventType,
+					Body:        updated.Event.Body,
+					CreatedAt:   updated.Event.CreatedAt.UTC().Format(time.RFC3339Nano),
+				}
+			}(),
 		})
 
 	default:

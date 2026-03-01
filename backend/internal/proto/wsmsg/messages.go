@@ -168,6 +168,7 @@ type GameStateUpdatedPayload struct {
 	Players               []GameStatePlayerPayload `json:"players"`
 	Territories           json.RawMessage          `json:"territories"`
 	Result                any                      `json:"result,omitempty"`
+	Event                 *GameEventPayload        `json:"event,omitempty"`
 }
 
 type GameOccupyRequirement struct {
@@ -175,4 +176,13 @@ type GameOccupyRequirement struct {
 	To      string `json:"to"`
 	MinMove int    `json:"min_move"`
 	MaxMove int    `json:"max_move"`
+}
+
+type GameEventPayload struct {
+	ID          string `json:"id"`
+	GameID      string `json:"game_id"`
+	ActorUserID string `json:"actor_user_id,omitempty"`
+	EventType   string `json:"event_type"`
+	Body        string `json:"body"`
+	CreatedAt   string `json:"created_at"`
 }

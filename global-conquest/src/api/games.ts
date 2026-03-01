@@ -32,6 +32,15 @@ export type GameOccupyRequirement = {
   maxMove: number;
 };
 
+export type GameEventEntry = {
+  id: string;
+  gameID: string;
+  actorUserID: string;
+  eventType: string;
+  body: string;
+  createdAt: string;
+};
+
 export type GameBootstrap = {
   id: string;
   ownerUserId: string;
@@ -42,6 +51,7 @@ export type GameBootstrap = {
   occupy: GameOccupyRequirement | null;
   players: GameBootstrapPlayer[];
   territories: Record<string, unknown>;
+  events: GameEventEntry[];
   createdAt: string;
   updatedAt: string;
 };
@@ -121,6 +131,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
       occupy: null,
       players: [],
       territories: {},
+      events: [],
       createdAt: "",
       updatedAt: "",
     };
@@ -153,6 +164,17 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
           maxMove: occupyRaw.max_move,
         }
       : null;
+  const eventsRaw = Array.isArray(record.events) ? record.events : [];
+  const events = eventsRaw
+    .filter((v): v is UnknownRecord => !!v && typeof v === "object")
+    .map((e) => ({
+      id: readString(e.id ?? e.ID),
+      gameID: readString(e.game_id ?? e.gameID),
+      actorUserID: readString(e.actor_user_id ?? e.actorUserID),
+      eventType: readString(e.event_type ?? e.eventType),
+      body: readString(e.body ?? e.Body),
+      createdAt: readString(e.created_at ?? e.createdAt),
+    }));
   return {
     id: readString(record.id ?? record.ID),
     ownerUserId: readString(record.owner_user_id ?? record.OwnerUserID),
@@ -163,6 +185,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     occupy,
     players,
     territories,
+    events,
     createdAt: readString(record.created_at ?? record.CreatedAt),
     updatedAt: readString(record.updated_at ?? record.UpdatedAt),
   };

@@ -45,6 +45,8 @@ func main() {
 	usersSvc := service.NewUsersService(d, usersStore)
 	gamesStore := store.NewPostgresGamesStore()
 	gamesSvc := service.NewGamesService(d, gamesStore)
+	gameEventStore := store.NewPostgresGameEventStore()
+	gamesSvc.SetGameEventStore(gameEventStore)
 	gameActionSvc := service.NewGameActionService(gamesSvc)
 	chatStore := store.NewPostgresChatStore()
 	chatSvc := service.NewChatService(d, chatStore)

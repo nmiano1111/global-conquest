@@ -58,5 +58,18 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 		Players:     players,
 		Territories: out.Territories,
 		Result:      out.Result,
+		Event: func() *game.GameEventMessage {
+			if out.Event == nil {
+				return nil
+			}
+			return &game.GameEventMessage{
+				ID:          out.Event.ID,
+				GameID:      out.Event.GameID,
+				ActorUserID: out.Event.ActorUserID,
+				EventType:   out.Event.EventType,
+				Body:        out.Event.Body,
+				CreatedAt:   out.Event.CreatedAt,
+			}
+		}(),
 	}, nil
 }

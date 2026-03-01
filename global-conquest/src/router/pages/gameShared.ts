@@ -14,6 +14,15 @@ export type GameChatMessage = {
   createdAt: string;
 };
 
+export type GameEventMessage = {
+  id: string;
+  gameID: string;
+  actorUserID: string;
+  eventType: string;
+  body: string;
+  createdAt: string;
+};
+
 export type DiceRollResult = {
   attacker: number[];
   defender: number[];

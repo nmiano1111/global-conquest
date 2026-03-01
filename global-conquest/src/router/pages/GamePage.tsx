@@ -19,6 +19,7 @@ import {
   MAP_VIEWBOX_WIDTH,
   type DiceRollResult,
   type GameChatMessage,
+  type GameEventMessage,
 } from "./gameShared";
 
 export function GamePage() {
@@ -30,6 +31,7 @@ export function GamePage() {
   const [error, setError] = useState("");
   const [game, setGame] = useState<GameBootstrap | null>(null);
   const [chatMessages, setChatMessages] = useState<GameChatMessage[]>([]);
+  const [eventMessages, setEventMessages] = useState<GameEventMessage[]>([]);
   const [chatDraft, setChatDraft] = useState("");
   const [chatError, setChatError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -61,6 +63,7 @@ export function GamePage() {
         const out = await getGameBootstrap(gameID);
         if (cancelled) return;
         setGame(out);
+        setEventMessages(out.events ?? []);
       } catch (err) {
         if (cancelled) return;
         const apiErr = err as ApiError;
@@ -190,6 +193,28 @@ export function GamePage() {
         const attackerLoss = typeof result.attacker_loss === "number" ? result.attacker_loss : 0;
         const defenderLoss = typeof result.defender_loss === "number" ? result.defender_loss : 0;
         setDiceResult({ attacker, defender, attackerLoss, defenderLoss });
+      }
+      if (payload?.event && typeof payload.event === "object") {
+        const event = payload.event as Record<string, unknown>;
+        const nextEvent: GameEventMessage = {
+          id: typeof event.id === "string" ? event.id : `${payloadGameID}-${Date.now()}`,
+          gameID:
+            typeof event.game_id === "string"
+              ? event.game_id
+              : typeof payloadGameID === "string"
+                ? payloadGameID
+                : gameID,
+          actorUserID: typeof event.actor_user_id === "string" ? event.actor_user_id : "",
+          eventType: typeof event.event_type === "string" ? event.event_type : "game_event",
+          body: typeof event.body === "string" ? event.body : "",
+          createdAt: typeof event.created_at === "string" ? event.created_at : new Date().toISOString(),
+        };
+        if (nextEvent.body.trim() !== "") {
+          setEventMessages((prev) => {
+            if (prev.some((ev) => ev.id !== "" && ev.id === nextEvent.id)) return prev;
+            return [...prev, nextEvent];
+          });
+        }
       }
     });
     return off;
@@ -656,7 +681,18 @@ export function GamePage() {
             <span className="text-xs text-slate-500">Phase: {phase || "-"}</span>
           </div>
           <div className="h-[180px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-            <p>Event log will stream game actions here.</p>
+            {eventMessages.length === 0 ? <p>No events yet.</p> : null}
+            <ul className="grid gap-2">
+              {eventMessages.map((ev, idx) => (
+                <li key={`${ev.id}-${idx}`} className="rounded-lg bg-white px-2 py-1.5">
+                  <div className="mb-0.5 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                    <span>{ev.eventType.replaceAll("_", " ")}</span>
+                    <span>{new Date(ev.createdAt).toLocaleTimeString()}</span>
+                  </div>
+                  <p className="text-xs text-slate-700">{ev.body}</p>
+                </li>
+              ))}
+            </ul>
           </div>
         </section>
 
