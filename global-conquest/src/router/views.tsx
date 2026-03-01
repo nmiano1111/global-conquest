@@ -31,6 +31,13 @@ type GamePlayerSummary = {
   isCurrent: boolean;
 };
 
+type GameChatMessage = {
+  gameID: string;
+  userName: string;
+  body: string;
+  createdAt: string;
+};
+
 function summarizeGamePlayers(game: GameRecord): GamePlayerSummary[] {
   const state = game.state;
   if (state && typeof state === "object") {
@@ -689,10 +696,14 @@ export function GamePage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const { gameID } = useParams({ from: "/app/game/$gameID" });
+  const { on, send, status: wsStatus } = useSocket();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [game, setGame] = useState<GameRecord | null>(null);
+  const [chatMessages, setChatMessages] = useState<GameChatMessage[]>([]);
   const [chatDraft, setChatDraft] = useState("");
+  const [chatError, setChatError] = useState("");
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadGame = useCallback(
     async (cancelled = false) => {
@@ -732,9 +743,66 @@ export function GamePage() {
     };
   }, [loadGame]);
 
+  useEffect(() => {
+    const off = on("game_chat_message", (msg) => {
+      const payload = msg.payload as Record<string, unknown> | undefined;
+      const payloadGameID =
+        typeof payload?.game_id === "string"
+          ? payload.game_id
+          : typeof payload?.gameID === "string"
+            ? payload.gameID
+            : msg.game_id;
+      if (payloadGameID !== gameID) return;
+      const next: GameChatMessage = {
+        gameID: payloadGameID,
+        userName: typeof payload?.user_name === "string" ? payload.user_name : "anon",
+        body: typeof payload?.body === "string" ? payload.body : "",
+        createdAt:
+          typeof payload?.created_at === "string"
+            ? payload.created_at
+            : new Date().toISOString(),
+      };
+      setChatMessages((prev) => [...prev, next]);
+    });
+    return off;
+  }, [gameID, on]);
+
+  useEffect(() => {
+    if (wsStatus !== "connected") return;
+    send("game_chat_join", undefined, { game_id: gameID });
+    return () => {
+      send("game_chat_leave", undefined, { game_id: gameID });
+    };
+  }, [gameID, send, wsStatus]);
+
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chatMessages]);
+
   const players = game ? summarizeGamePlayers(game) : [];
   const state = game?.state && typeof game.state === "object" ? (game.state as Record<string, unknown>) : null;
   const phase = typeof state?.phase === "string" ? state.phase : game?.status ?? "";
+  const onSendChat = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setChatError("");
+    const body = chatDraft.trim();
+    if (!body) return;
+    if (wsStatus !== "connected") {
+      setChatError("Socket disconnected.");
+      return;
+    }
+    send(
+      "game_chat_send",
+      {
+        body,
+        username: auth.user?.username ?? "anon",
+      },
+      { game_id: gameID }
+    );
+    setChatDraft("");
+  };
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
@@ -811,17 +879,25 @@ export function GamePage() {
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">Game Chat</h3>
-          <div className="h-[260px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-            <p>Game chat will appear here.</p>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Game Chat</h3>
+            <span className="text-xs text-slate-500">Socket: {wsStatus}</span>
           </div>
-          <form
-            className="mt-3 grid gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setChatDraft("");
-            }}
-          >
+          <div ref={chatScrollRef} className="h-[260px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+            {chatMessages.length === 0 ? <p>No messages yet.</p> : null}
+            <ul className="grid gap-2">
+              {chatMessages.map((m, idx) => (
+                <li key={`${m.userName}-${m.createdAt}-${idx}`} className="rounded-lg bg-white p-2">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="font-medium text-slate-900">{m.userName}</span>
+                    <span className="text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleTimeString()}</span>
+                  </div>
+                  <p className="whitespace-pre-wrap text-slate-700">{m.body}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <form className="mt-3 grid gap-2" onSubmit={onSendChat}>
             <textarea
               className={inputClass}
               rows={3}
@@ -829,8 +905,9 @@ export function GamePage() {
               onChange={(e) => setChatDraft(e.target.value)}
               placeholder="Type a game message..."
             />
-            <button className={buttonPrimaryClass} type="submit" disabled>
-              Send (Coming Soon)
+            {chatError ? <p className="text-sm text-rose-700">{chatError}</p> : null}
+            <button className={buttonPrimaryClass} type="submit" disabled={chatDraft.trim() === "" || wsStatus !== "connected"}>
+              Send
             </button>
           </form>
         </section>

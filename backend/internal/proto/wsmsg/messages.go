@@ -13,6 +13,9 @@ const (
 	TypeListGames        Type = "list_games"
 	TypeLobbyTypingStart Type = "lobby_typing_start"
 	TypeLobbyTypingStop  Type = "lobby_typing_stop"
+	TypeGameChatJoin     Type = "game_chat_join"
+	TypeGameChatLeave    Type = "game_chat_leave"
+	TypeGameChatSend     Type = "game_chat_send"
 
 	// server->client
 	TypeError            Type = "error"
@@ -24,6 +27,7 @@ const (
 	TypePlayerLeft       Type = "player_left"
 	TypeLobbyTypingState Type = "lobby_typing_state"
 	TypeLobbyChatMessage Type = "lobby_chat_message"
+	TypeGameChatMessage  Type = "game_chat_message"
 )
 
 type Envelope struct {
@@ -116,4 +120,9 @@ type JoinedGamePayload struct {
 
 type GameListPayload struct {
 	Games []GameListItem `json:"games"`
+}
+
+type GameChatSendPayload struct {
+	Body     string `json:"body"`
+	UserName string `json:"username,omitempty"`
 }

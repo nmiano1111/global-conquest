@@ -13,14 +13,16 @@ import (
 type Server struct {
 	inbox chan any
 
-	clients map[string]*Client
-	games   map[string]*Game
-	typing  map[string]typingPresence
+	clients   map[string]*Client
+	games     map[string]*Game
+	typing    map[string]typingPresence
+	chatRooms map[string]map[string]struct{}
 }
 
 type Client struct {
-	ID   string
-	Name string
+	ID       string
+	Name     string
+	ChatRoom string
 
 	Conn Outbound // interface so game package doesn't depend on wsconn directly
 	Game string   // current game id, "" if none
@@ -56,10 +58,11 @@ type PublishLobbyChat struct {
 
 func NewServer() *Server {
 	return &Server{
-		inbox:   make(chan any, 256),
-		clients: make(map[string]*Client),
-		games:   make(map[string]*Game),
-		typing:  make(map[string]typingPresence),
+		inbox:     make(chan any, 256),
+		clients:   make(map[string]*Client),
+		games:     make(map[string]*Game),
+		typing:    make(map[string]typingPresence),
+		chatRooms: make(map[string]map[string]struct{}),
 	}
 }
 
@@ -98,6 +101,9 @@ func (s *Server) handleDisconnect(clientID string) {
 	if _, ok := s.typing[clientID]; ok {
 		delete(s.typing, clientID)
 		s.broadcastTypingState()
+	}
+	if c.ChatRoom != "" {
+		s.leaveChatRoom(c)
 	}
 	delete(s.clients, clientID)
 }
@@ -222,10 +228,85 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			s.broadcastTypingState()
 		}
 
+	case wsmsg.TypeGameChatJoin:
+		if gameID == "" {
+			c.Conn.Send(errEnv(id, "invalid_message", "game_id is required"))
+			return
+		}
+		s.joinChatRoom(c, gameID)
+
+	case wsmsg.TypeGameChatLeave:
+		if c.ChatRoom != "" && (gameID == "" || gameID == c.ChatRoom) {
+			s.leaveChatRoom(c)
+		}
+
+	case wsmsg.TypeGameChatSend:
+		if gameID == "" {
+			c.Conn.Send(errEnv(id, "invalid_message", "game_id is required"))
+			return
+		}
+		if c.ChatRoom != gameID {
+			c.Conn.Send(errEnv(id, "not_in_room", "join the game chat room first"))
+			return
+		}
+		var payload wsmsg.GameChatSendPayload
+		if err := json.Unmarshal(env.Payload, &payload); err != nil {
+			c.Conn.Send(errEnv(id, "invalid_message", "invalid payload"))
+			return
+		}
+		body := strings.TrimSpace(payload.Body)
+		if body == "" {
+			c.Conn.Send(errEnv(id, "invalid_message", "message body is required"))
+			return
+		}
+		name := strings.TrimSpace(payload.UserName)
+		if name == "" {
+			name = c.Name
+		}
+		if name == "" {
+			name = "anon"
+		}
+		s.broadcastGameChatMessage(gameID, map[string]any{
+			"game_id":    gameID,
+			"user_name":  name,
+			"body":       body,
+			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
+		})
+
 	default:
 		// generic ack
 		c.Conn.Send(envelope("ack", newID("s"), id, gameID, nil))
 	}
+}
+
+func (s *Server) joinChatRoom(c *Client, roomID string) {
+	if c.ChatRoom == roomID {
+		return
+	}
+	if c.ChatRoom != "" {
+		s.leaveChatRoom(c)
+	}
+	clients, ok := s.chatRooms[roomID]
+	if !ok {
+		clients = make(map[string]struct{})
+		s.chatRooms[roomID] = clients
+	}
+	clients[c.ID] = struct{}{}
+	c.ChatRoom = roomID
+}
+
+func (s *Server) leaveChatRoom(c *Client) {
+	roomID := c.ChatRoom
+	if roomID == "" {
+		return
+	}
+	if clients, ok := s.chatRooms[roomID]; ok {
+		delete(clients, c.ID)
+		if len(clients) == 0 {
+			delete(s.chatRooms, roomID)
+		}
+	}
+	c.ChatRoom = ""
 }
 
 func (s *Server) joinGame(c *Client, gameID string) {
@@ -309,6 +390,16 @@ func (s *Server) broadcastLobbyChat(message map[string]any) {
 	ev := envelope(string(wsmsg.TypeLobbyChatMessage), newID("s"), "", "", message)
 	for _, c := range s.clients {
 		c.Conn.Send(ev)
+	}
+}
+
+func (s *Server) broadcastGameChatMessage(roomID string, message map[string]any) {
+	ev := envelope(string(wsmsg.TypeGameChatMessage), newID("s"), "", roomID, message)
+	clientIDs := s.chatRooms[roomID]
+	for clientID := range clientIDs {
+		if c, ok := s.clients[clientID]; ok {
+			c.Conn.Send(ev)
+		}
 	}
 }
 
