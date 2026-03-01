@@ -332,6 +332,7 @@ export function GamePage() {
     }
     return 1;
   }, [phaseMode, occupyRequirement]);
+  const clampedArmiesInput = Math.max(minArmiesInput, Math.min(armiesInput, maxArmiesInput));
 
   const onSendChat = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -454,7 +455,7 @@ export function GamePage() {
       setActionError("Click a territory node first.");
       return;
     }
-    sendAction({ action: "place_reinforcement", territory: selectedTerritory, armies: armiesInput });
+    sendAction({ action: "place_reinforcement", territory: selectedTerritory, armies: clampedArmiesInput });
   };
 
   const commitFortify = () => {
@@ -462,7 +463,7 @@ export function GamePage() {
       setActionError("Select source and destination territories on the map.");
       return;
     }
-    sendAction({ action: "fortify", from: selectedFrom, to: selectedTo, armies: armiesInput });
+    sendAction({ action: "fortify", from: selectedFrom, to: selectedTo, armies: clampedArmiesInput });
   };
 
   const commitOccupy = () => {
@@ -470,11 +471,11 @@ export function GamePage() {
       setActionError("No troop movement is currently required.");
       return;
     }
-    if (armiesInput < occupyRequirement.minMove || armiesInput > occupyRequirement.maxMove) {
+    if (clampedArmiesInput < occupyRequirement.minMove || clampedArmiesInput > occupyRequirement.maxMove) {
       setActionError(`Move must be between ${occupyRequirement.minMove} and ${occupyRequirement.maxMove} armies.`);
       return;
     }
-    sendAction({ action: "occupy", armies: armiesInput });
+    sendAction({ action: "occupy", armies: clampedArmiesInput });
   };
 
   return (
@@ -526,7 +527,7 @@ export function GamePage() {
                 type="number"
                 min={minArmiesInput}
                 max={maxArmiesInput}
-                value={armiesInput}
+                value={clampedArmiesInput}
                 onChange={(e) => {
                   const n = Number(e.target.value) || 1;
                   setArmiesInput(Math.max(minArmiesInput, Math.min(n, maxArmiesInput)));
