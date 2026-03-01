@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"backend/internal/db"
 	"backend/internal/risk"
@@ -28,6 +29,7 @@ var (
 	ErrGameNotJoinable     = errors.New("game is not joinable")
 	ErrGameAlreadyJoined   = errors.New("player already joined this game")
 	ErrGamePlayerCountFull = errors.New("game is already full")
+	ErrGameForbidden       = errors.New("game access forbidden")
 )
 
 func NewGamesService(db gameDB, games store.GamesStore) *GamesService {
@@ -37,6 +39,25 @@ func NewGamesService(db gameDB, games store.GamesStore) *GamesService {
 type lobbyState struct {
 	PlayerCount int      `json:"player_count"`
 	PlayerIDs   []string `json:"player_ids"`
+}
+
+type GameBootstrapPlayer struct {
+	UserID     string `json:"user_id"`
+	UserName   string `json:"user_name"`
+	CardCount  int    `json:"card_count"`
+	Eliminated bool   `json:"eliminated"`
+}
+
+type GameBootstrap struct {
+	ID            string                `json:"id"`
+	OwnerUserID   string                `json:"owner_user_id"`
+	Status        string                `json:"status"`
+	Phase         string                `json:"phase"`
+	CurrentPlayer int                   `json:"current_player"`
+	Players       []GameBootstrapPlayer `json:"players"`
+	Territories   json.RawMessage       `json:"territories"`
+	CreatedAt     time.Time             `json:"created_at"`
+	UpdatedAt     time.Time             `json:"updated_at"`
 }
 
 func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int) (store.Game, error) {
@@ -177,6 +198,126 @@ func (s *GamesService) UpdateGameState(ctx context.Context, gameID, status strin
 		return store.Game{}, err
 	}
 	return g, nil
+}
+
+func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (GameBootstrap, error) {
+	if gameID == "" || requesterUserID == "" {
+		return GameBootstrap{}, ErrInvalidGameInput
+	}
+	g, err := s.GetGame(ctx, gameID)
+	if err != nil {
+		return GameBootstrap{}, err
+	}
+
+	out := GameBootstrap{
+		ID:          g.ID,
+		OwnerUserID: g.OwnerUserID,
+		Status:      g.Status,
+		CreatedAt:   g.CreatedAt,
+		UpdatedAt:   g.UpdatedAt,
+	}
+
+	switch g.Status {
+	case "lobby":
+		lobby, err := decodeLobbyState(g.State)
+		if err != nil {
+			return GameBootstrap{}, err
+		}
+		if !containsID(lobby.PlayerIDs, requesterUserID) {
+			return GameBootstrap{}, ErrGameForbidden
+		}
+		names, err := s.userNamesByIDs(ctx, lobby.PlayerIDs)
+		if err != nil {
+			return GameBootstrap{}, err
+		}
+		out.Phase = "lobby"
+		out.CurrentPlayer = -1
+		out.Players = make([]GameBootstrapPlayer, 0, len(lobby.PlayerIDs))
+		for _, id := range lobby.PlayerIDs {
+			out.Players = append(out.Players, GameBootstrapPlayer{
+				UserID:     id,
+				UserName:   names[id],
+				CardCount:  0,
+				Eliminated: false,
+			})
+		}
+		out.Territories = json.RawMessage(`{}`)
+		return out, nil
+
+	case "in_progress":
+		var engine risk.Game
+		if err := json.Unmarshal(g.State, &engine); err != nil {
+			return GameBootstrap{}, ErrInvalidGameInput
+		}
+		ids := make([]string, 0, len(engine.Players))
+		for _, p := range engine.Players {
+			ids = append(ids, p.ID)
+		}
+		if !containsID(ids, requesterUserID) {
+			return GameBootstrap{}, ErrGameForbidden
+		}
+		names, err := s.userNamesByIDs(ctx, ids)
+		if err != nil {
+			return GameBootstrap{}, err
+		}
+		out.Phase = string(engine.Phase)
+		out.CurrentPlayer = engine.CurrentPlayer
+		out.Players = make([]GameBootstrapPlayer, 0, len(engine.Players))
+		for _, p := range engine.Players {
+			out.Players = append(out.Players, GameBootstrapPlayer{
+				UserID:     p.ID,
+				UserName:   names[p.ID],
+				CardCount:  len(p.Cards),
+				Eliminated: p.Eliminated,
+			})
+		}
+		tb, err := json.Marshal(engine.Territories)
+		if err != nil {
+			return GameBootstrap{}, err
+		}
+		out.Territories = tb
+		return out, nil
+
+	default:
+		return GameBootstrap{}, ErrInvalidGameInput
+	}
+}
+
+func (s *GamesService) userNamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+	rows, err := s.db.Queryer().Query(
+		ctx,
+		`SELECT id::text, username FROM users WHERE id::text = ANY($1::text[])`,
+		ids,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]string, len(ids))
+	for rows.Next() {
+		var id, username string
+		if err := rows.Scan(&id, &username); err != nil {
+			return nil, err
+		}
+		out[id] = username
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func containsID(ids []string, target string) bool {
+	for _, id := range ids {
+		if id == target {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeLobbyState(raw json.RawMessage) (lobbyState, error) {

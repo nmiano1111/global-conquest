@@ -40,6 +40,7 @@ func NewRouter(h *Handler) *gin.Engine {
 			games.POST("/", h.CreateGame)
 			games.POST("/:id/join", h.JoinGame)
 			games.GET("/:id", h.GetGame)
+			games.GET("/:id/bootstrap", h.GetGameBootstrap)
 			games.PUT("/:id/state", h.UpdateGameState)
 		}
 		chat := api.Group("/chat")

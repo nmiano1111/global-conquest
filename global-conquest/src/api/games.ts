@@ -17,6 +17,25 @@ export type CreateGameRequest = {
   playerCount: number;
 };
 
+export type GameBootstrapPlayer = {
+  userId: string;
+  userName: string;
+  cardCount: number;
+  eliminated: boolean;
+};
+
+export type GameBootstrap = {
+  id: string;
+  ownerUserId: string;
+  status: string;
+  phase: string;
+  currentPlayer: number;
+  players: GameBootstrapPlayer[];
+  territories: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== "object") return null;
   return value as UnknownRecord;
@@ -75,6 +94,51 @@ function normalizeGame(value: unknown): GameRecord {
   };
 }
 
+function readNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeGameBootstrap(value: unknown): GameBootstrap {
+  const record = asRecord(value);
+  if (!record) {
+    return {
+      id: "",
+      ownerUserId: "",
+      status: "",
+      phase: "",
+      currentPlayer: -1,
+      players: [],
+      territories: {},
+      createdAt: "",
+      updatedAt: "",
+    };
+  }
+  const playersRaw = Array.isArray(record.players) ? record.players : [];
+  const players = playersRaw
+    .filter((v): v is UnknownRecord => !!v && typeof v === "object")
+    .map((p) => ({
+      userId: readString(p.user_id ?? p.userId),
+      userName: readString(p.user_name ?? p.userName),
+      cardCount: readNumber(p.card_count ?? p.cardCount),
+      eliminated: p.eliminated === true,
+    }));
+  const territories =
+    record.territories && typeof record.territories === "object"
+      ? (record.territories as Record<string, unknown>)
+      : {};
+  return {
+    id: readString(record.id ?? record.ID),
+    ownerUserId: readString(record.owner_user_id ?? record.OwnerUserID),
+    status: readString(record.status ?? record.Status),
+    phase: readString(record.phase ?? record.Phase),
+    currentPlayer: readNumber(record.current_player ?? record.currentPlayer, -1),
+    players,
+    territories,
+    createdAt: readString(record.created_at ?? record.CreatedAt),
+    updatedAt: readString(record.updated_at ?? record.UpdatedAt),
+  };
+}
+
 export async function listGames(): Promise<GameRecord[]> {
   const res = await request<unknown>({ method: "GET", url: "/games/" });
   if (!Array.isArray(res)) return [];
@@ -106,4 +170,12 @@ export async function getGame(gameID: string): Promise<GameRecord> {
     url: `/games/${encodeURIComponent(gameID)}`,
   });
   return normalizeGame(res);
+}
+
+export async function getGameBootstrap(gameID: string): Promise<GameBootstrap> {
+  const res = await request<unknown>({
+    method: "GET",
+    url: `/games/${encodeURIComponent(gameID)}/bootstrap`,
+  });
+  return normalizeGameBootstrap(res);
 }

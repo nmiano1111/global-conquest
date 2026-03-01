@@ -30,6 +30,7 @@ type gameService interface {
 	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int) (store.Game, error)
 	JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error)
 	GetGame(ctx context.Context, gameID string) (store.Game, error)
+	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
 	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]store.Game, error)
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
 }
@@ -313,6 +314,42 @@ func (h *Handler) GetGame(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, g)
+}
+
+// GetGameBootstrap godoc
+// @Summary      Get game bootstrap state
+// @Description  Retrieves normalized game engine state for authenticated participants
+// @Tags         games
+// @Produce      json
+// @Param        id path string true "Game ID"
+// @Success      200 {object} service.GameBootstrap
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/games/{id}/bootstrap [get]
+func (h *Handler) GetGameBootstrap(c *gin.Context) {
+	gameID := c.Param("id")
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	out, err := h.games.GetGameBootstrap(c.Request.Context(), gameID, authUser.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrGameNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		case errors.Is(err, service.ErrGameForbidden):
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		case errors.Is(err, service.ErrInvalidGameInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch game bootstrap"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // ListGames godoc
