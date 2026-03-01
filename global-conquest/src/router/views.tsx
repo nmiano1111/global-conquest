@@ -39,6 +39,13 @@ type GameChatMessage = {
   createdAt: string;
 };
 
+type DiceRollResult = {
+  attacker: number[];
+  defender: number[];
+  attackerLoss: number;
+  defenderLoss: number;
+};
+
 type MapTerritoryNode = { x: number; y: number };
 
 const MAP_PLAYER_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7", "#06b6d4"];
@@ -820,6 +827,9 @@ export function GamePage() {
   const [chatMessages, setChatMessages] = useState<GameChatMessage[]>([]);
   const [chatDraft, setChatDraft] = useState("");
   const [chatError, setChatError] = useState("");
+  const [attackerDice, setAttackerDice] = useState(3);
+  const [defenderDice, setDefenderDice] = useState(2);
+  const [diceResult, setDiceResult] = useState<DiceRollResult | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadGame = useCallback(
@@ -946,6 +956,21 @@ export function GamePage() {
       { game_id: gameID }
     );
     setChatDraft("");
+  };
+
+  const onRollDice = () => {
+    const roll = (count: number) =>
+      Array.from({ length: count }, () => Math.floor(Math.random() * 6) + 1).sort((a, b) => b - a);
+    const attacker = roll(attackerDice);
+    const defender = roll(defenderDice);
+    const pairs = Math.min(attacker.length, defender.length);
+    let attackerLoss = 0;
+    let defenderLoss = 0;
+    for (let i = 0; i < pairs; i += 1) {
+      if (attacker[i] > defender[i]) defenderLoss += 1;
+      else attackerLoss += 1;
+    }
+    setDiceResult({ attacker, defender, attackerLoss, defenderLoss });
   };
 
   return (
@@ -1088,6 +1113,56 @@ export function GamePage() {
               </li>
             ))}
           </ul>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Dice Roller</h3>
+          </div>
+          <div className="grid gap-2">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="grid gap-1 text-xs font-medium text-slate-600">
+                Attacker Dice
+                <select
+                  className={inputClass}
+                  value={attackerDice}
+                  onChange={(e) => setAttackerDice(Number(e.target.value))}
+                >
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-slate-600">
+                Defender Dice
+                <select
+                  className={inputClass}
+                  value={defenderDice}
+                  onChange={(e) => setDefenderDice(Number(e.target.value))}
+                >
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                </select>
+              </label>
+            </div>
+            <button className={buttonPrimaryClass} type="button" onClick={onRollDice}>
+              Roll Dice
+            </button>
+          </div>
+
+          {diceResult ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              <p>
+                Attacker: <span className="font-semibold">{diceResult.attacker.join(", ")}</span>
+              </p>
+              <p>
+                Defender: <span className="font-semibold">{diceResult.defender.join(", ")}</span>
+              </p>
+              <p className="mt-1 text-xs text-slate-600">
+                Losses: Attacker {diceResult.attackerLoss}, Defender {diceResult.defenderLoss}
+              </p>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
