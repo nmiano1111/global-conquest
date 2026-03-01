@@ -1,6 +1,9 @@
 package risk
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 type seqRNG struct {
 	v []int
@@ -172,6 +175,27 @@ func TestAttackAndOccupy(t *testing.T) {
 	}
 	if g.Territories["Kamchatka"].Owner != 0 {
 		t.Fatalf("expected Kamchatka owned by attacker")
+	}
+}
+
+func TestAttackAfterJSONRoundTripUsesDefaultRNG(t *testing.T) {
+	g := mustGame(t)
+	g.Phase = PhaseAttack
+	g.CurrentPlayer = 0
+	g.Territories["Alaska"] = TerritoryState{Owner: 0, Armies: 4}
+	g.Territories["Kamchatka"] = TerritoryState{Owner: 1, Armies: 2}
+
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal game: %v", err)
+	}
+	var restored Game
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatalf("unmarshal game: %v", err)
+	}
+
+	if _, err := restored.Attack("p1", "Alaska", "Kamchatka", 1, 1); err != nil {
+		t.Fatalf("attack after round trip: %v", err)
 	}
 }
 

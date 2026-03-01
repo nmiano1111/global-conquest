@@ -44,8 +44,19 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 		Phase:                 out.Phase,
 		CurrentPlayer:         out.CurrentPlayer,
 		PendingReinforcements: out.PendingReinforcements,
-		Players:               players,
-		Territories:           out.Territories,
-		Result:                out.Result,
+		Occupy: func() *game.GameOccupyRequirement {
+			if out.Occupy == nil {
+				return nil
+			}
+			return &game.GameOccupyRequirement{
+				From:    out.Occupy.From,
+				To:      out.Occupy.To,
+				MinMove: out.Occupy.MinMove,
+				MaxMove: out.Occupy.MaxMove,
+			}
+		}(),
+		Players:     players,
+		Territories: out.Territories,
+		Result:      out.Result,
 	}, nil
 }

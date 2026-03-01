@@ -299,6 +299,7 @@ func (g *Game) PlaceReinforcement(playerID string, t Territory, armies int) erro
 }
 
 func (g *Game) Attack(playerID string, from, to Territory, attackerDice, defenderDice int) (AttackResult, error) {
+	g.ensureRNG()
 	pi, err := g.requireCurrentPlayer(playerID)
 	if err != nil {
 		return AttackResult{}, err
@@ -493,6 +494,7 @@ func (g *Game) reinforcementsFor(pi int) int {
 }
 
 func (g *Game) drawCard(pi int) {
+	g.ensureRNG()
 	if len(g.Deck) == 0 {
 		if len(g.Discard) == 0 {
 			return
@@ -611,6 +613,12 @@ func nextTradeValue(setNumber int) int {
 		return 15
 	}
 	return 15 + (setNumber-6)*5
+}
+
+func (g *Game) ensureRNG() {
+	if g.rng == nil {
+		g.rng = stdRNG{}
+	}
 }
 
 func rollDice(rng RNG, n int) []int {

@@ -51,16 +51,17 @@ type GameBootstrapPlayer struct {
 }
 
 type GameBootstrap struct {
-	ID                    string                `json:"id"`
-	OwnerUserID           string                `json:"owner_user_id"`
-	Status                string                `json:"status"`
-	Phase                 string                `json:"phase"`
-	CurrentPlayer         int                   `json:"current_player"`
-	PendingReinforcements int                   `json:"pending_reinforcements"`
-	Players               []GameBootstrapPlayer `json:"players"`
-	Territories           json.RawMessage       `json:"territories"`
-	CreatedAt             time.Time             `json:"created_at"`
-	UpdatedAt             time.Time             `json:"updated_at"`
+	ID                    string                 `json:"id"`
+	OwnerUserID           string                 `json:"owner_user_id"`
+	Status                string                 `json:"status"`
+	Phase                 string                 `json:"phase"`
+	CurrentPlayer         int                    `json:"current_player"`
+	PendingReinforcements int                    `json:"pending_reinforcements"`
+	Occupy                *GameOccupyRequirement `json:"occupy,omitempty"`
+	Players               []GameBootstrapPlayer  `json:"players"`
+	Territories           json.RawMessage        `json:"territories"`
+	CreatedAt             time.Time              `json:"created_at"`
+	UpdatedAt             time.Time              `json:"updated_at"`
 }
 
 type GameActionInput struct {
@@ -82,15 +83,23 @@ type GameActionPlayer struct {
 }
 
 type GameActionUpdate struct {
-	GameID                string             `json:"game_id"`
-	Action                string             `json:"action"`
-	ActorUserID           string             `json:"actor_user_id"`
-	Phase                 string             `json:"phase"`
-	CurrentPlayer         int                `json:"current_player"`
-	PendingReinforcements int                `json:"pending_reinforcements"`
-	Players               []GameActionPlayer `json:"players"`
-	Territories           json.RawMessage    `json:"territories"`
-	Result                any                `json:"result,omitempty"`
+	GameID                string                 `json:"game_id"`
+	Action                string                 `json:"action"`
+	ActorUserID           string                 `json:"actor_user_id"`
+	Phase                 string                 `json:"phase"`
+	CurrentPlayer         int                    `json:"current_player"`
+	PendingReinforcements int                    `json:"pending_reinforcements"`
+	Occupy                *GameOccupyRequirement `json:"occupy,omitempty"`
+	Players               []GameActionPlayer     `json:"players"`
+	Territories           json.RawMessage        `json:"territories"`
+	Result                any                    `json:"result,omitempty"`
+}
+
+type GameOccupyRequirement struct {
+	From    string `json:"from"`
+	To      string `json:"to"`
+	MinMove int    `json:"min_move"`
+	MaxMove int    `json:"max_move"`
 }
 
 func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int) (store.Game, error) {
@@ -273,15 +282,32 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				return err
 			}
 		case "attack":
-			if in.From == "" || in.To == "" || in.AttackerDice <= 0 || in.DefenderDice <= 0 {
+			if in.From == "" || in.To == "" || in.AttackerDice <= 0 {
+				return ErrInvalidGameAction
+			}
+			src, ok := engine.Territories[risk.Territory(in.From)]
+			if !ok {
+				return ErrInvalidGameAction
+			}
+			dst, ok := engine.Territories[risk.Territory(in.To)]
+			if !ok {
+				return ErrInvalidGameAction
+			}
+			maxAttackerDice := min(3, src.Armies-1)
+			if maxAttackerDice < 1 {
+				return ErrInvalidGameAction
+			}
+			attackerDice := min(max(1, in.AttackerDice), maxAttackerDice)
+			defenderDice := min(2, dst.Armies)
+			if defenderDice < 1 {
 				return ErrInvalidGameAction
 			}
 			ar, err := engine.Attack(
 				in.PlayerUserID,
 				risk.Territory(in.From),
 				risk.Territory(in.To),
-				in.AttackerDice,
-				in.DefenderDice,
+				attackerDice,
+				defenderDice,
 			)
 			if err != nil {
 				return err
@@ -344,6 +370,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			Phase:                 string(engine.Phase),
 			CurrentPlayer:         engine.CurrentPlayer,
 			PendingReinforcements: engine.PendingReinforcements,
+			Occupy:                occupyRequirement(engine.Occupy),
 			Players:               players,
 			Territories:           territories,
 			Result:                result,
@@ -389,6 +416,7 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		out.Phase = "lobby"
 		out.CurrentPlayer = -1
 		out.PendingReinforcements = 0
+		out.Occupy = nil
 		out.Players = make([]GameBootstrapPlayer, 0, len(lobby.PlayerIDs))
 		for _, id := range lobby.PlayerIDs {
 			name := names[id]
@@ -449,6 +477,7 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		out.Phase = string(engine.Phase)
 		out.CurrentPlayer = engine.CurrentPlayer
 		out.PendingReinforcements = engine.PendingReinforcements
+		out.Occupy = occupyRequirement(engine.Occupy)
 		out.Players = make([]GameBootstrapPlayer, 0, len(engine.Players))
 		for i, p := range engine.Players {
 			name := names[p.ID]
@@ -559,5 +588,17 @@ func mapGameActionErr(err error) error {
 		return ErrInvalidGameAction
 	default:
 		return err
+	}
+}
+
+func occupyRequirement(o *risk.OccupyState) *GameOccupyRequirement {
+	if o == nil {
+		return nil
+	}
+	return &GameOccupyRequirement{
+		From:    string(o.From),
+		To:      string(o.To),
+		MinMove: o.MinMove,
+		MaxMove: o.MaxMove,
 	}
 }

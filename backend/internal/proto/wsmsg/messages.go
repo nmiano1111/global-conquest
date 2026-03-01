@@ -164,7 +164,15 @@ type GameStateUpdatedPayload struct {
 	Phase                 string                   `json:"phase"`
 	CurrentPlayer         int                      `json:"current_player"`
 	PendingReinforcements int                      `json:"pending_reinforcements"`
+	Occupy                *GameOccupyRequirement   `json:"occupy,omitempty"`
 	Players               []GameStatePlayerPayload `json:"players"`
 	Territories           json.RawMessage          `json:"territories"`
 	Result                any                      `json:"result,omitempty"`
+}
+
+type GameOccupyRequirement struct {
+	From    string `json:"from"`
+	To      string `json:"to"`
+	MinMove int    `json:"min_move"`
+	MaxMove int    `json:"max_move"`
 }

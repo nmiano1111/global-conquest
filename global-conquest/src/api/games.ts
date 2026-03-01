@@ -25,6 +25,13 @@ export type GameBootstrapPlayer = {
   eliminated: boolean;
 };
 
+export type GameOccupyRequirement = {
+  from: string;
+  to: string;
+  minMove: number;
+  maxMove: number;
+};
+
 export type GameBootstrap = {
   id: string;
   ownerUserId: string;
@@ -32,6 +39,7 @@ export type GameBootstrap = {
   phase: string;
   currentPlayer: number;
   pendingReinforcements: number;
+  occupy: GameOccupyRequirement | null;
   players: GameBootstrapPlayer[];
   territories: Record<string, unknown>;
   createdAt: string;
@@ -110,6 +118,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
       phase: "",
       currentPlayer: -1,
       pendingReinforcements: 0,
+      occupy: null,
       players: [],
       territories: {},
       createdAt: "",
@@ -130,6 +139,20 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     record.territories && typeof record.territories === "object"
       ? (record.territories as Record<string, unknown>)
       : {};
+  const occupyRaw = record.occupy && typeof record.occupy === "object" ? (record.occupy as UnknownRecord) : null;
+  const occupy =
+    occupyRaw &&
+    typeof occupyRaw.from === "string" &&
+    typeof occupyRaw.to === "string" &&
+    typeof occupyRaw.min_move === "number" &&
+    typeof occupyRaw.max_move === "number"
+      ? {
+          from: occupyRaw.from,
+          to: occupyRaw.to,
+          minMove: occupyRaw.min_move,
+          maxMove: occupyRaw.max_move,
+        }
+      : null;
   return {
     id: readString(record.id ?? record.ID),
     ownerUserId: readString(record.owner_user_id ?? record.OwnerUserID),
@@ -137,6 +160,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     phase: readString(record.phase ?? record.Phase),
     currentPlayer: readNumber(record.current_player ?? record.currentPlayer, -1),
     pendingReinforcements: readNumber(record.pending_reinforcements ?? record.pendingReinforcements, 0),
+    occupy,
     players,
     territories,
     createdAt: readString(record.created_at ?? record.CreatedAt),

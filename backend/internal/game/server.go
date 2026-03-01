@@ -86,9 +86,17 @@ type GameActionUpdate struct {
 	Phase                 string
 	CurrentPlayer         int
 	PendingReinforcements int
+	Occupy                *GameOccupyRequirement
 	Players               []GameActionPlayer
 	Territories           json.RawMessage
 	Result                any
+}
+
+type GameOccupyRequirement struct {
+	From    string
+	To      string
+	MinMove int
+	MaxMove int
 }
 
 type GameActionService interface {
@@ -393,9 +401,20 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			Phase:                 updated.Phase,
 			CurrentPlayer:         updated.CurrentPlayer,
 			PendingReinforcements: updated.PendingReinforcements,
-			Players:               statePlayers,
-			Territories:           updated.Territories,
-			Result:                updated.Result,
+			Occupy: func() *wsmsg.GameOccupyRequirement {
+				if updated.Occupy == nil {
+					return nil
+				}
+				return &wsmsg.GameOccupyRequirement{
+					From:    updated.Occupy.From,
+					To:      updated.Occupy.To,
+					MinMove: updated.Occupy.MinMove,
+					MaxMove: updated.Occupy.MaxMove,
+				}
+			}(),
+			Players:     statePlayers,
+			Territories: updated.Territories,
+			Result:      updated.Result,
 		})
 
 	default:

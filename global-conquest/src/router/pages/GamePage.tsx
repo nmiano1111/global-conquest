@@ -21,8 +21,6 @@ import {
   type GameChatMessage,
 } from "./gameShared";
 
-type ActionMode = "reinforce" | "attack" | "fortify" | "occupy";
-
 export function GamePage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -35,15 +33,26 @@ export function GamePage() {
   const [chatDraft, setChatDraft] = useState("");
   const [chatError, setChatError] = useState("");
   const [actionError, setActionError] = useState("");
-  const [actionMode, setActionMode] = useState<ActionMode>("reinforce");
   const [selectedTerritory, setSelectedTerritory] = useState("");
   const [selectedFrom, setSelectedFrom] = useState("");
   const [selectedTo, setSelectedTo] = useState("");
   const [armiesInput, setArmiesInput] = useState(1);
   const [attackerDice, setAttackerDice] = useState(3);
-  const [defenderDice, setDefenderDice] = useState(2);
   const [diceResult, setDiceResult] = useState<DiceRollResult | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const parseTerritories = (raw: unknown): Record<string, unknown> => {
+    if (raw && typeof raw === "object") return raw as Record<string, unknown>;
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  };
 
   const loadGame = useCallback(
     async (cancelled = false) => {
@@ -116,14 +125,26 @@ export function GamePage() {
       const payload = msg.payload as Record<string, unknown> | undefined;
       const payloadGameID = typeof payload?.game_id === "string" ? payload.game_id : msg.game_id;
       if (payloadGameID !== gameID) return;
+      const action = typeof payload?.action === "string" ? payload.action : "";
       const phase = typeof payload?.phase === "string" ? payload.phase : "";
       const currentPlayer = typeof payload?.current_player === "number" ? payload.current_player : -1;
       const pendingReinforcements =
         typeof payload?.pending_reinforcements === "number" ? payload.pending_reinforcements : 0;
-      const territories =
-        payload?.territories && typeof payload.territories === "object"
-          ? (payload.territories as Record<string, unknown>)
-          : {};
+      const occupyRaw = payload?.occupy && typeof payload.occupy === "object" ? (payload.occupy as Record<string, unknown>) : null;
+      const occupy =
+        occupyRaw &&
+        typeof occupyRaw.from === "string" &&
+        typeof occupyRaw.to === "string" &&
+        typeof occupyRaw.min_move === "number" &&
+        typeof occupyRaw.max_move === "number"
+          ? {
+              from: occupyRaw.from,
+              to: occupyRaw.to,
+              minMove: occupyRaw.min_move,
+              maxMove: occupyRaw.max_move,
+            }
+          : null;
+      const territories = parseTerritories(payload?.territories);
       const incomingPlayersRaw = Array.isArray(payload?.players) ? payload.players : [];
       const incomingPlayers = incomingPlayersRaw
         .filter((v): v is Record<string, unknown> => !!v && typeof v === "object")
@@ -152,10 +173,24 @@ export function GamePage() {
           phase,
           currentPlayer,
           pendingReinforcements,
+          occupy,
           territories,
           players: nextPlayers,
         };
       });
+
+      if (action === "attack" && payload?.result && typeof payload.result === "object") {
+        const result = payload.result as Record<string, unknown>;
+        const attacker = Array.isArray(result.attacker_rolls)
+          ? result.attacker_rolls.filter((v): v is number => typeof v === "number")
+          : [];
+        const defender = Array.isArray(result.defender_rolls)
+          ? result.defender_rolls.filter((v): v is number => typeof v === "number")
+          : [];
+        const attackerLoss = typeof result.attacker_loss === "number" ? result.attacker_loss : 0;
+        const defenderLoss = typeof result.defender_loss === "number" ? result.defender_loss : 0;
+        setDiceResult({ attacker, defender, attackerLoss, defenderLoss });
+      }
     });
     return off;
   }, [gameID, on]);
@@ -216,10 +251,13 @@ export function GamePage() {
   const phase = game?.phase ?? "";
   const territoryState = game?.territories ?? null;
   const pendingReinforcements = game?.pendingReinforcements ?? 0;
+  const occupyRequirement = game?.occupy ?? null;
   const meIndex = useMemo(() => players.findIndex((p) => p.userId === auth.user?.id), [players, auth.user?.id]);
   const isMyTurn = meIndex >= 0 && game?.currentPlayer === meIndex;
   const canEnterAttack = pendingReinforcements === 0;
-  const phaseMode: ActionMode = phase === "attack" ? "attack" : phase === "fortify" ? "fortify" : phase === "occupy" ? "occupy" : "reinforce";
+  const phaseMode = phase === "attack" || phase === "fortify" || phase === "occupy" || phase === "reinforce" ? phase : "reinforce";
+  const activeFrom = phaseMode === "occupy" && occupyRequirement ? occupyRequirement.from : selectedFrom;
+  const activeTo = phaseMode === "occupy" && occupyRequirement ? occupyRequirement.to : selectedTo;
   const playerColors = useMemo(
     () => players.map((p, i) => p.color || MAP_PLAYER_COLORS[i % MAP_PLAYER_COLORS.length]),
     [players]
@@ -235,29 +273,65 @@ export function GamePage() {
   }, [players]);
 
   const selectedFromArmies = useMemo(() => {
-    if (!selectedFrom) return 0;
-    const tRaw = territoryState?.[selectedFrom];
+    if (!activeFrom) return 0;
+    const tRaw = territoryState?.[activeFrom];
     const t = tRaw && typeof tRaw === "object" ? (tRaw as Record<string, unknown>) : null;
     return typeof t?.armies === "number" ? t.armies : 0;
+  }, [activeFrom, territoryState]);
+  const selectedToArmies = useMemo(() => {
+    if (!activeTo) return 0;
+    const tRaw = territoryState?.[activeTo];
+    const t = tRaw && typeof tRaw === "object" ? (tRaw as Record<string, unknown>) : null;
+    return typeof t?.armies === "number" ? t.armies : 0;
+  }, [activeTo, territoryState]);
+  const selectedFromOwner = useMemo(() => {
+    if (!selectedFrom) return -1;
+    const tRaw = territoryState?.[selectedFrom];
+    const t = tRaw && typeof tRaw === "object" ? (tRaw as Record<string, unknown>) : null;
+    return typeof t?.owner === "number" ? t.owner : -1;
   }, [selectedFrom, territoryState]);
+  const selectedToOwner = useMemo(() => {
+    if (!selectedTo) return -1;
+    const tRaw = territoryState?.[selectedTo];
+    const t = tRaw && typeof tRaw === "object" ? (tRaw as Record<string, unknown>) : null;
+    return typeof t?.owner === "number" ? t.owner : -1;
+  }, [selectedTo, territoryState]);
+  const areAdjacent = useMemo(
+    () => MAP_EDGES.some(([a, b]) => (a === selectedFrom && b === selectedTo) || (a === selectedTo && b === selectedFrom)),
+    [selectedFrom, selectedTo]
+  );
+  const maxAttackDiceAllowed = useMemo(() => Math.max(1, Math.min(3, selectedFromArmies - 1)), [selectedFromArmies]);
+  const maxDefendDiceAllowed = useMemo(() => Math.max(1, Math.min(2, selectedToArmies)), [selectedToArmies]);
+  const clampedAttackerDice = Math.max(1, Math.min(attackerDice, maxAttackDiceAllowed));
+  const canAttackSelection = useMemo(() => {
+    if (!selectedFrom || !selectedTo) return false;
+    if (!areAdjacent) return false;
+    if (selectedFromOwner !== meIndex) return false;
+    if (selectedToOwner < 0 || selectedToOwner === meIndex) return false;
+    if (selectedFromArmies <= 1) return false;
+    if (selectedToArmies <= 0) return false;
+    return true;
+  }, [areAdjacent, meIndex, selectedFrom, selectedFromArmies, selectedFromOwner, selectedTo, selectedToArmies, selectedToOwner]);
 
   const maxArmiesInput = useMemo(() => {
-    if (actionMode === "reinforce") {
+    if (phaseMode === "reinforce") {
       return Math.max(1, game?.pendingReinforcements ?? 1);
     }
-    if (actionMode === "fortify" || actionMode === "occupy") {
+    if (phaseMode === "occupy" && occupyRequirement) {
+      return Math.max(occupyRequirement.minMove, occupyRequirement.maxMove);
+    }
+    if (phaseMode === "fortify") {
       return Math.max(1, selectedFromArmies - 1);
     }
     return 50;
-  }, [actionMode, game?.pendingReinforcements, selectedFromArmies]);
+  }, [phaseMode, game?.pendingReinforcements, selectedFromArmies, occupyRequirement]);
 
-  useEffect(() => {
-    setArmiesInput((prev) => Math.max(1, Math.min(prev, maxArmiesInput)));
-  }, [maxArmiesInput]);
-
-  useEffect(() => {
-    setActionMode(phaseMode);
-  }, [phaseMode]);
+  const minArmiesInput = useMemo(() => {
+    if (phaseMode === "occupy" && occupyRequirement) {
+      return Math.max(1, occupyRequirement.minMove);
+    }
+    return 1;
+  }, [phaseMode, occupyRequirement]);
 
   const onSendChat = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -280,18 +354,29 @@ export function GamePage() {
   };
 
   const onRollDice = () => {
-    const roll = (count: number) =>
-      Array.from({ length: count }, () => Math.floor(Math.random() * 6) + 1).sort((a, b) => b - a);
-    const attacker = roll(attackerDice);
-    const defender = roll(defenderDice);
-    const pairs = Math.min(attacker.length, defender.length);
-    let attackerLoss = 0;
-    let defenderLoss = 0;
-    for (let i = 0; i < pairs; i += 1) {
-      if (attacker[i] > defender[i]) defenderLoss += 1;
-      else attackerLoss += 1;
+    if (phaseMode !== "attack") {
+      setActionError("You can only roll during the attack phase.");
+      return;
     }
-    setDiceResult({ attacker, defender, attackerLoss, defenderLoss });
+    if (!isMyTurn) {
+      setActionError("It's not your turn.");
+      return;
+    }
+    if (!selectedFrom || !selectedTo) {
+      setActionError("Select attacking and defending territories first.");
+      return;
+    }
+    if (!canAttackSelection) {
+      setActionError("Selected territories do not support a legal attack.");
+      return;
+    }
+    sendAction({
+      action: "attack",
+      from: selectedFrom,
+      to: selectedTo,
+      attacker_dice: clampedAttackerDice,
+      defender_dice: maxDefendDiceAllowed,
+    });
   };
 
   const sendAction = (payload: Record<string, unknown>) => {
@@ -303,12 +388,6 @@ export function GamePage() {
     send("game_action", payload, { game_id: gameID });
   };
 
-  const resetSelection = () => {
-    setSelectedTerritory("");
-    setSelectedFrom("");
-    setSelectedTo("");
-  };
-
   const onMapTerritoryClick = (name: string) => {
     setActionError("");
     const tRaw = territoryState?.[name];
@@ -317,7 +396,7 @@ export function GamePage() {
     const isMine = owner >= 0 && owner === meIndex;
     const isEnemy = owner >= 0 && owner !== meIndex;
 
-    if (actionMode === "reinforce") {
+    if (phaseMode === "reinforce") {
       if (!isMine) {
         setActionError("Choose one of your territories for reinforcement.");
         return;
@@ -325,31 +404,35 @@ export function GamePage() {
       setSelectedTerritory(name);
       return;
     }
-    if (actionMode === "occupy") {
-      setSelectedTo(name);
+    if (phaseMode === "occupy") {
+      if (occupyRequirement) {
+        setSelectedFrom(occupyRequirement.from);
+        setSelectedTo(occupyRequirement.to);
+      }
       return;
     }
-    if (actionMode === "attack") {
+    if (phaseMode === "attack") {
       if (!canEnterAttack) {
         setActionError("Place all reinforcements before attacking.");
         return;
       }
-      if (!selectedFrom) {
-        if (!isMine) {
-          setActionError("Select your attacking territory first.");
-          return;
-        }
+      if (isMine) {
         setSelectedFrom(name);
+        setSelectedTo("");
         return;
       }
       if (!isEnemy) {
         setActionError("Select an enemy territory as attack target.");
         return;
       }
+      if (!selectedFrom) {
+        setActionError("Select your attacking territory first.");
+        return;
+      }
       setSelectedTo(name);
       return;
     }
-    if (actionMode === "fortify") {
+    if (phaseMode === "fortify") {
       if (!selectedFrom) {
         if (!isMine) {
           setActionError("Select your source territory first.");
@@ -374,26 +457,24 @@ export function GamePage() {
     sendAction({ action: "place_reinforcement", territory: selectedTerritory, armies: armiesInput });
   };
 
-  const commitAttack = () => {
-    if (!selectedFrom || !selectedTo) {
-      setActionError("Select source and target territories on the map.");
-      return;
-    }
-    sendAction({
-      action: "attack",
-      from: selectedFrom,
-      to: selectedTo,
-      attacker_dice: attackerDice,
-      defender_dice: defenderDice,
-    });
-  };
-
   const commitFortify = () => {
     if (!selectedFrom || !selectedTo) {
       setActionError("Select source and destination territories on the map.");
       return;
     }
     sendAction({ action: "fortify", from: selectedFrom, to: selectedTo, armies: armiesInput });
+  };
+
+  const commitOccupy = () => {
+    if (phaseMode !== "occupy" || !occupyRequirement) {
+      setActionError("No troop movement is currently required.");
+      return;
+    }
+    if (armiesInput < occupyRequirement.minMove || armiesInput > occupyRequirement.maxMove) {
+      setActionError(`Move must be between ${occupyRequirement.minMove} and ${occupyRequirement.maxMove} armies.`);
+      return;
+    }
+    sendAction({ action: "occupy", armies: armiesInput });
   };
 
   return (
@@ -421,6 +502,64 @@ export function GamePage() {
           <div className="mb-3 flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Map</h3>
             <span className="text-xs text-slate-500">Status: {game?.status || "-"}</span>
+          </div>
+          <div className="mb-3 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <p>
+                Phase: <span className="font-semibold">{phase || "-"}</span> | Armies To Place:{" "}
+                <span className="font-semibold">{pendingReinforcements}</span>
+              </p>
+              <p>
+                Selected: territory <span className="font-semibold">{selectedTerritory || "-"}</span>, from{" "}
+                <span className="font-semibold">{activeFrom || "-"}</span>, to{" "}
+                <span className="font-semibold">{activeTo || "-"}</span>
+              </p>
+              {phaseMode === "occupy" && occupyRequirement ? (
+                <p className="text-amber-700">
+                  Move required: {occupyRequirement.from} {"->"} {occupyRequirement.to} ({occupyRequirement.minMove}-{occupyRequirement.maxMove})
+                </p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className={`${inputClass} w-24`}
+                type="number"
+                min={minArmiesInput}
+                max={maxArmiesInput}
+                value={armiesInput}
+                onChange={(e) => {
+                  const n = Number(e.target.value) || 1;
+                  setArmiesInput(Math.max(minArmiesInput, Math.min(n, maxArmiesInput)));
+                }}
+              />
+              {phaseMode === "reinforce" ? (
+                <button className={buttonPrimaryClass} type="button" onClick={commitReinforcement} disabled={!isMyTurn}>
+                  Place
+                </button>
+              ) : null}
+              {phaseMode === "attack" ? (
+                <>
+                  <button className={buttonGhostClass} type="button" onClick={() => sendAction({ action: "end_attack" })} disabled={!isMyTurn}>
+                    End Attack
+                  </button>
+                </>
+              ) : null}
+              {phaseMode === "occupy" ? (
+                <button className={buttonPrimaryClass} type="button" onClick={commitOccupy} disabled={!isMyTurn}>
+                  Move Troops
+                </button>
+              ) : null}
+              {phaseMode === "fortify" ? (
+                <>
+                  <button className={buttonGhostClass} type="button" onClick={commitFortify} disabled={!isMyTurn}>
+                    Fortify
+                  </button>
+                  <button className={buttonPrimaryClass} type="button" onClick={() => sendAction({ action: "end_turn" })} disabled={!isMyTurn}>
+                    End Turn
+                  </button>
+                </>
+              ) : null}
+            </div>
           </div>
           <div className="relative aspect-[2048/1367] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
             <canvas
@@ -474,8 +613,8 @@ export function GamePage() {
                         r={34}
                         fill={fill}
                         fillOpacity={0.92}
-                        stroke={name === selectedTerritory || name === selectedFrom || name === selectedTo ? "#0b1220" : "#0f172a"}
-                        strokeWidth={name === selectedTerritory || name === selectedFrom || name === selectedTo ? 5 : 2.7}
+                        stroke={name === selectedTerritory || name === activeFrom || name === activeTo ? "#0b1220" : "#0f172a"}
+                        strokeWidth={name === selectedTerritory || name === activeFrom || name === activeTo ? 5 : 2.7}
                         className="cursor-pointer"
                         onClick={() => onMapTerritoryClick(name)}
                       />
@@ -520,112 +659,7 @@ export function GamePage() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Actions</h3>
-            <span className="text-xs text-slate-500">Broadcast: realtime</span>
-          </div>
-          <div className="grid gap-3">
-            <div className="flex flex-wrap gap-2">
-              <button className={actionMode === "reinforce" ? buttonPrimaryClass : buttonGhostClass} type="button" onClick={() => setActionMode("reinforce")}>
-                Reinforce
-              </button>
-              <button
-                className={actionMode === "attack" ? buttonPrimaryClass : buttonGhostClass}
-                type="button"
-                onClick={() => setActionMode("attack")}
-                disabled={!canEnterAttack}
-              >
-                Attack
-              </button>
-              <button
-                className={actionMode === "fortify" ? buttonPrimaryClass : buttonGhostClass}
-                type="button"
-                onClick={() => setActionMode("fortify")}
-                disabled={!canEnterAttack}
-              >
-                Fortify
-              </button>
-              <button
-                className={actionMode === "occupy" ? buttonPrimaryClass : buttonGhostClass}
-                type="button"
-                onClick={() => setActionMode("occupy")}
-                disabled={!canEnterAttack}
-              >
-                Occupy
-              </button>
-              <button className={buttonGhostClass} type="button" onClick={resetSelection}>
-                Clear Selection
-              </button>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-              Armies Remaining To Place: <span className="font-semibold">{pendingReinforcements}</span>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-              <label className="grid gap-1 text-xs font-medium text-slate-600">
-                Armies
-                <input
-                  className={inputClass}
-                  type="number"
-                  min={1}
-                  max={maxArmiesInput}
-                  value={armiesInput}
-                  onChange={(e) => {
-                    const n = Number(e.target.value) || 1;
-                    setArmiesInput(Math.max(1, Math.min(n, maxArmiesInput)));
-                  }}
-                />
-              </label>
-              <button
-                className={buttonPrimaryClass}
-                type="button"
-                onClick={commitReinforcement}
-                disabled={!isMyTurn || actionMode !== "reinforce"}
-              >
-                Place Reinforcement
-              </button>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                Territory: {selectedTerritory || "-"} | Max armies: {maxArmiesInput}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-              <button
-                className={buttonPrimaryClass}
-                type="button"
-                onClick={commitAttack}
-                disabled={!isMyTurn || actionMode !== "attack" || !canEnterAttack}
-              >
-                Attack
-              </button>
-              <button className={buttonGhostClass} type="button" onClick={() => sendAction({ action: "occupy", armies: armiesInput })} disabled={!isMyTurn || actionMode !== "occupy" || !canEnterAttack}>
-                Occupy
-              </button>
-              <button className={buttonGhostClass} type="button" onClick={() => sendAction({ action: "end_attack" })} disabled={!isMyTurn || !canEnterAttack}>
-                End Attack
-              </button>
-              <button className={buttonGhostClass} type="button" onClick={() => sendAction({ action: "end_turn" })} disabled={!isMyTurn || !canEnterAttack}>
-                End Turn
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-              <button
-                className={buttonGhostClass}
-                type="button"
-                onClick={commitFortify}
-                disabled={!isMyTurn || actionMode !== "fortify" || !canEnterAttack}
-              >
-                Fortify
-              </button>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">From: {selectedFrom || "-"}</div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">To: {selectedTo || "-"}</div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Turn: {isMyTurn ? "Your turn" : "Waiting"}</div>
-            </div>
-            {actionError ? <p className="text-sm text-rose-700">{actionError}</p> : null}
-          </div>
-        </section>
+        {actionError ? <p className="text-sm text-rose-700">{actionError}</p> : null}
       </section>
 
       <aside className="grid gap-4">
@@ -666,34 +700,39 @@ export function GamePage() {
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Dice Roller</h3>
           </div>
           <div className="grid gap-2">
+            <p className="text-xs text-slate-600">
+              Attack: <span className="font-semibold">{selectedFrom || "-"}</span> {"->"}{" "}
+              <span className="font-semibold">{selectedTo || "-"}</span>
+            </p>
             <div className="grid grid-cols-2 gap-2">
               <label className="grid gap-1 text-xs font-medium text-slate-600">
                 Attacker Dice
                 <select
                   className={inputClass}
-                  value={attackerDice}
-                  onChange={(e) => setAttackerDice(Number(e.target.value))}
+                  value={clampedAttackerDice}
+                  onChange={(e) => setAttackerDice(Math.max(1, Number(e.target.value) || 1))}
                 >
                   <option value={1}>1</option>
-                  <option value={2}>2</option>
-                  <option value={3}>3</option>
+                  {maxAttackDiceAllowed >= 2 ? <option value={2}>2</option> : null}
+                  {maxAttackDiceAllowed >= 3 ? <option value={3}>3</option> : null}
                 </select>
               </label>
-              <label className="grid gap-1 text-xs font-medium text-slate-600">
+              <div className="grid gap-1 text-xs font-medium text-slate-600">
                 Defender Dice
-                <select
-                  className={inputClass}
-                  value={defenderDice}
-                  onChange={(e) => setDefenderDice(Number(e.target.value))}
-                >
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                </select>
-              </label>
+                <div className={`${inputClass} bg-slate-100`}>{maxDefendDiceAllowed}</div>
+              </div>
             </div>
-            <button className={buttonPrimaryClass} type="button" onClick={onRollDice}>
+            <button
+              className={buttonPrimaryClass}
+              type="button"
+              onClick={onRollDice}
+              disabled={!isMyTurn || phaseMode !== "attack" || !canAttackSelection}
+            >
               Roll Dice
             </button>
+            {!canAttackSelection && phaseMode === "attack" ? (
+              <p className="text-xs text-slate-500">Select adjacent attacker/defender territories to roll.</p>
+            ) : null}
           </div>
 
           {diceResult ? (
