@@ -4,6 +4,7 @@ import type { ApiError } from "../api/client";
 import { login, signup } from "../api/auth";
 import { listLobbyMessages, normalizeLobbyMessage, postLobbyMessage, type LobbyMessage } from "../api/chat";
 import { createGame, getGame, joinGame, listGames, type GameRecord } from "../api/games";
+import riskBoardImage from "../assets/images/risk0.png";
 import {
   getUserByUsername,
   listAdminUsers,
@@ -274,7 +275,7 @@ export function AppShell() {
   };
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-5xl px-4 py-8">
+    <main className="mx-auto min-h-screen w-full max-w-[1700px] px-4 py-8 xl:px-6">
       <header className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-lg font-semibold tracking-tight text-slate-900">Global Conquest</h1>
@@ -856,11 +857,17 @@ export function GamePage() {
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Map</h3>
             <span className="text-xs text-slate-500">Status: {game?.status || "-"}</span>
           </div>
-          <div className="h-[520px] rounded-xl border border-slate-200 bg-slate-50 p-2">
+          <div className="aspect-[2048/1367] w-full rounded-xl border border-slate-200 bg-slate-50 p-2">
             <canvas
-              className="h-full w-full rounded-lg border border-slate-200 bg-white"
-              width={1400}
-              height={900}
+              className="h-full w-full rounded-lg border border-slate-200"
+              width={2048}
+              height={1367}
+              style={{
+                backgroundImage: `url(${riskBoardImage})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                backgroundRepeat: "no-repeat",
+              }}
               aria-label="Game map canvas placeholder"
             />
           </div>
