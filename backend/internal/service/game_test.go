@@ -174,6 +174,9 @@ func TestJoinClassicGameTransitionsWhenFull(t *testing.T) {
 			if len(g.Players) != 3 {
 				t.Fatalf("expected 3 players in risk state")
 			}
+			if g.Phase != risk.PhaseReinforce {
+				t.Fatalf("expected auto-start to begin at reinforce phase, got %s", g.Phase)
+			}
 			return store.Game{ID: "g1", Status: in.Status, State: in.State}, nil
 		},
 	})
@@ -320,5 +323,33 @@ func TestListGamesValidationAndPassThrough(t *testing.T) {
 	}
 	if !called || len(out) != 1 || out[0].ID != "g1" {
 		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestIsLegacyUninitializedSetup(t *testing.T) {
+	game := risk.Game{
+		Phase: risk.PhaseSetupClaim,
+		Players: []risk.PlayerState{
+			{ID: "u1"},
+			{ID: "u2"},
+			{ID: "u3"},
+		},
+		Territories: map[risk.Territory]risk.TerritoryState{
+			"Alaska": {Owner: -1, Armies: 0},
+			"Peru":   {Owner: -1, Armies: 0},
+		},
+	}
+	if !isLegacyUninitializedSetup(game) {
+		t.Fatalf("expected legacy setup state to be detected")
+	}
+
+	game.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	if !isLegacyUninitializedSetup(game) {
+		t.Fatalf("expected setup phases to be considered legacy setup regardless of partial claims")
+	}
+
+	game.Phase = risk.PhaseReinforce
+	if isLegacyUninitializedSetup(game) {
+		t.Fatalf("expected non-setup phase not to be considered legacy setup")
 	}
 }

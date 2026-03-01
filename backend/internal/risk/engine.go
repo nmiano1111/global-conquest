@@ -122,6 +122,46 @@ func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {
 	return g, nil
 }
 
+// NewClassicAutoStartGame creates a classic game and automatically completes setup.
+// Territories are distributed across players and remaining starting armies are placed
+// on owned territories, then the game begins at reinforce phase.
+func NewClassicAutoStartGame(playerIDs []string, rng RNG) (*Game, error) {
+	g, err := NewClassicGame(playerIDs, rng)
+	if err != nil {
+		return nil, err
+	}
+
+	order := append([]Territory(nil), g.Board.Order...)
+	shuffleTerritories(g.rng, order)
+
+	owned := make(map[int][]Territory, len(g.Players))
+	for i, t := range order {
+		owner := i % len(g.Players)
+		g.Territories[t] = TerritoryState{Owner: owner, Armies: 1}
+		g.SetupReserves[owner]--
+		owned[owner] = append(owned[owner], t)
+	}
+
+	for pi := range g.Players {
+		terr := owned[pi]
+		if len(terr) == 0 {
+			continue
+		}
+		for g.SetupReserves[pi] > 0 {
+			pick := terr[g.rng.IntN(len(terr))]
+			ts := g.Territories[pick]
+			ts.Armies++
+			g.Territories[pick] = ts
+			g.SetupReserves[pi]--
+		}
+	}
+
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+	g.startTurn()
+	return g, nil
+}
+
 func (g *Game) ClaimTerritory(playerID string, t Territory) error {
 	if g.Phase != PhaseSetupClaim {
 		return ErrInvalidPhase
@@ -585,5 +625,12 @@ func shuffleCards(rng RNG, cards []Card) {
 	for i := len(cards) - 1; i > 0; i-- {
 		j := rng.IntN(i + 1)
 		cards[i], cards[j] = cards[j], cards[i]
+	}
+}
+
+func shuffleTerritories(rng RNG, territories []Territory) {
+	for i := len(territories) - 1; i > 0; i-- {
+		j := rng.IntN(i + 1)
+		territories[i], territories[j] = territories[j], territories[i]
 	}
 }

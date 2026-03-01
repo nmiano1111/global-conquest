@@ -20,6 +20,7 @@ export type CreateGameRequest = {
 export type GameBootstrapPlayer = {
   userId: string;
   userName: string;
+  color: string;
   cardCount: number;
   eliminated: boolean;
 };
@@ -119,6 +120,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     .map((p) => ({
       userId: readString(p.user_id ?? p.userId),
       userName: readString(p.user_name ?? p.userName),
+      color: readString(p.color ?? p.Color),
       cardCount: readNumber(p.card_count ?? p.cardCount),
       eliminated: p.eliminated === true,
     }));

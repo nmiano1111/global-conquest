@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
 import { getGameBootstrap, type GameBootstrap } from "../../api/games";
@@ -143,9 +143,22 @@ export function GamePage() {
     el.scrollTop = el.scrollHeight;
   }, [chatMessages]);
 
-  const players = game?.players ?? [];
+  const players = useMemo(() => game?.players ?? [], [game?.players]);
   const phase = game?.phase ?? "";
   const territoryState = game?.territories ?? null;
+  const playerColors = useMemo(
+    () => players.map((p, i) => p.color || MAP_PLAYER_COLORS[i % MAP_PLAYER_COLORS.length]),
+    [players]
+  );
+  const chatColorByUserName = useMemo(() => {
+    const out: Record<string, string> = {};
+    players.forEach((p, i) => {
+      const key = p.userName.trim().toLowerCase();
+      if (!key) return;
+      out[key] = p.color || MAP_PLAYER_COLORS[i % MAP_PLAYER_COLORS.length];
+    });
+    return out;
+  }, [players]);
 
   const onSendChat = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -251,7 +264,7 @@ export function GamePage() {
                   const t = tRaw && typeof tRaw === "object" ? (tRaw as Record<string, unknown>) : null;
                   const owner = typeof t?.owner === "number" ? t.owner : -1;
                   const armies = typeof t?.armies === "number" ? t.armies : 0;
-                  const fill = owner >= 0 ? MAP_PLAYER_COLORS[owner % MAP_PLAYER_COLORS.length] : "#e2e8f0";
+                  const fill = owner >= 0 ? (playerColors[owner] ?? MAP_PLAYER_COLORS[owner % MAP_PLAYER_COLORS.length]) : "#e2e8f0";
                   return (
                     <g key={name}>
                       <circle cx={pos.x} cy={pos.y} r={34} fill={fill} fillOpacity={0.92} stroke="#0f172a" strokeWidth={2.7} />
@@ -310,7 +323,13 @@ export function GamePage() {
             {players.map((p) => (
               <li key={p.userId} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs text-slate-700">{p.userName || p.userId}</span>
+                  <span className="font-mono text-xs text-slate-700">
+                    <span
+                      className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full align-middle"
+                      style={{ backgroundColor: p.color || "#94a3b8" }}
+                    />
+                    <span style={{ color: p.color || "#334155" }}>{p.userName || p.userId}</span>
+                  </span>
                   {game && players[game.currentPlayer]?.userId === p.userId ? (
                     <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                       Current Turn
@@ -382,15 +401,23 @@ export function GamePage() {
           <div ref={chatScrollRef} className="h-[260px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
             {chatMessages.length === 0 ? <p>No messages yet.</p> : null}
             <ul className="grid gap-2">
-              {chatMessages.map((m, idx) => (
+              {chatMessages.map((m, idx) => {
+                const nameKey = m.userName.trim().toLowerCase();
+                const chatColor = chatColorByUserName[nameKey] ?? "#334155";
+                return (
                 <li key={`${m.userName}-${m.createdAt}-${idx}`} className="rounded-lg bg-white p-2">
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="font-medium text-slate-900">{m.userName}</span>
+                    <span className="font-medium" style={{ color: chatColor }}>
+                      {m.userName}
+                    </span>
                     <span className="text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleTimeString()}</span>
                   </div>
-                  <p className="whitespace-pre-wrap text-slate-700">{m.body}</p>
+                  <p className="whitespace-pre-wrap" style={{ color: chatColor }}>
+                    {m.body}
+                  </p>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </div>
           <form className="mt-3 grid gap-2" onSubmit={onSendChat}>

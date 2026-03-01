@@ -86,6 +86,46 @@ func TestSetupFlowToReinforce(t *testing.T) {
 	}
 }
 
+func TestAutoStartDistributesTerritoriesAndBeginsReinforce(t *testing.T) {
+	g, err := NewClassicAutoStartGame([]string{"p1", "p2", "p3", "p4"}, &seqRNG{v: []int{0}})
+	if err != nil {
+		t.Fatalf("new auto start game: %v", err)
+	}
+	if g.Phase != PhaseReinforce {
+		t.Fatalf("expected reinforce phase, got %s", g.Phase)
+	}
+	if g.PendingReinforcements < 3 {
+		t.Fatalf("expected minimum pending reinforcements, got %d", g.PendingReinforcements)
+	}
+
+	counts := make(map[int]int, len(g.Players))
+	for _, ts := range g.Territories {
+		if ts.Owner < 0 {
+			t.Fatalf("found unowned territory in auto-start state")
+		}
+		if ts.Armies < 1 {
+			t.Fatalf("found territory with no armies in auto-start state")
+		}
+		counts[ts.Owner]++
+	}
+	minC, maxC := len(g.Board.Order), 0
+	for i := range g.Players {
+		c := counts[i]
+		if c < minC {
+			minC = c
+		}
+		if c > maxC {
+			maxC = c
+		}
+		if g.SetupReserves[i] != 0 {
+			t.Fatalf("expected setup reserves to be consumed, got %d", g.SetupReserves[i])
+		}
+	}
+	if maxC-minC > 1 {
+		t.Fatalf("expected near-even territory split, got min=%d max=%d", minC, maxC)
+	}
+}
+
 func TestReinforcementIncludesContinentBonus(t *testing.T) {
 	g := mustGame(t)
 	for _, t := range g.Board.Order {

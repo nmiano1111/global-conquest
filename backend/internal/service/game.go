@@ -44,6 +44,7 @@ type lobbyState struct {
 type GameBootstrapPlayer struct {
 	UserID     string `json:"user_id"`
 	UserName   string `json:"user_name"`
+	Color      string `json:"color"`
 	CardCount  int    `json:"card_count"`
 	Eliminated bool   `json:"eliminated"`
 }
@@ -133,7 +134,7 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		nextStatus := "lobby"
 		var nextState []byte
 		if len(lobby.PlayerIDs) == lobby.PlayerCount {
-			engine, err := risk.NewClassicGame(lobby.PlayerIDs, nil)
+			engine, err := risk.NewClassicAutoStartGame(lobby.PlayerIDs, nil)
 			if err != nil {
 				return err
 			}
@@ -234,9 +235,14 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		out.CurrentPlayer = -1
 		out.Players = make([]GameBootstrapPlayer, 0, len(lobby.PlayerIDs))
 		for _, id := range lobby.PlayerIDs {
+			name := names[id]
+			if name == "" {
+				name = id
+			}
 			out.Players = append(out.Players, GameBootstrapPlayer{
 				UserID:     id,
-				UserName:   names[id],
+				UserName:   name,
+				Color:      bootstrapColor(len(out.Players)),
 				CardCount:  0,
 				Eliminated: false,
 			})
@@ -248,6 +254,30 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		var engine risk.Game
 		if err := json.Unmarshal(g.State, &engine); err != nil {
 			return GameBootstrap{}, ErrInvalidGameInput
+		}
+		if isLegacyUninitializedSetup(engine) {
+			ids := make([]string, 0, len(engine.Players))
+			for _, p := range engine.Players {
+				ids = append(ids, p.ID)
+			}
+			auto, err := risk.NewClassicAutoStartGame(ids, nil)
+			if err != nil {
+				return GameBootstrap{}, err
+			}
+			nextState, err := json.Marshal(auto)
+			if err != nil {
+				return GameBootstrap{}, err
+			}
+			updated, err := s.games.UpdateState(ctx, s.db.Queryer(), store.UpdateGameState{
+				GameID: g.ID,
+				Status: "in_progress",
+				State:  nextState,
+			})
+			if err != nil {
+				return GameBootstrap{}, err
+			}
+			g = updated
+			engine = *auto
 		}
 		ids := make([]string, 0, len(engine.Players))
 		for _, p := range engine.Players {
@@ -263,10 +293,15 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		out.Phase = string(engine.Phase)
 		out.CurrentPlayer = engine.CurrentPlayer
 		out.Players = make([]GameBootstrapPlayer, 0, len(engine.Players))
-		for _, p := range engine.Players {
+		for i, p := range engine.Players {
+			name := names[p.ID]
+			if name == "" {
+				name = p.ID
+			}
 			out.Players = append(out.Players, GameBootstrapPlayer{
 				UserID:     p.ID,
-				UserName:   names[p.ID],
+				UserName:   name,
+				Color:      bootstrapColor(i),
 				CardCount:  len(p.Cards),
 				Eliminated: p.Eliminated,
 			})
@@ -320,6 +355,14 @@ func containsID(ids []string, target string) bool {
 	return false
 }
 
+func bootstrapColor(idx int) string {
+	palette := []string{"#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7", "#06b6d4"}
+	if idx < 0 {
+		return palette[0]
+	}
+	return palette[idx%len(palette)]
+}
+
 func decodeLobbyState(raw json.RawMessage) (lobbyState, error) {
 	var lobby lobbyState
 	if err := json.Unmarshal(raw, &lobby); err != nil {
@@ -339,4 +382,14 @@ func decodeLobbyState(raw json.RawMessage) (lobbyState, error) {
 		seen[pid] = struct{}{}
 	}
 	return lobby, nil
+}
+
+func isLegacyUninitializedSetup(g risk.Game) bool {
+	if g.Phase != risk.PhaseSetupClaim && g.Phase != risk.PhaseSetupReinforce {
+		return false
+	}
+	if len(g.Players) < 3 || len(g.Players) > 6 {
+		return false
+	}
+	return true
 }
