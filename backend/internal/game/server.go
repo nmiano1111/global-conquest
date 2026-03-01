@@ -19,10 +19,12 @@ type Server struct {
 	typing    map[string]typingPresence
 	chatRooms map[string]map[string]struct{}
 	chatLog   GameChatLogStore
+	actions   GameActionService
 }
 
 type Client struct {
 	ID       string
+	UserID   string
 	Name     string
 	ChatRoom string
 
@@ -59,6 +61,40 @@ type GameChatLogStore interface {
 	ListGameMessages(ctx context.Context, gameID string, limit int) ([]GameChatLogMessage, error)
 }
 
+type GameActionInput struct {
+	GameID       string
+	PlayerUserID string
+	Action       string
+	Territory    string
+	From         string
+	To           string
+	Armies       int
+	AttackerDice int
+	DefenderDice int
+}
+
+type GameActionPlayer struct {
+	UserID     string
+	CardCount  int
+	Eliminated bool
+}
+
+type GameActionUpdate struct {
+	GameID                string
+	Action                string
+	ActorUserID           string
+	Phase                 string
+	CurrentPlayer         int
+	PendingReinforcements int
+	Players               []GameActionPlayer
+	Territories           json.RawMessage
+	Result                any
+}
+
+type GameActionService interface {
+	ApplyGameAction(ctx context.Context, in GameActionInput) (GameActionUpdate, error)
+}
+
 // --- inbox messages ---
 type Register struct{ C *Client }
 type Unregister struct{ ClientID string }
@@ -84,6 +120,10 @@ func (s *Server) Inbox() chan<- any { return s.inbox }
 
 func (s *Server) SetGameChatLogStore(chatLog GameChatLogStore) {
 	s.chatLog = chatLog
+}
+
+func (s *Server) SetGameActionService(actions GameActionService) {
+	s.actions = actions
 }
 
 func (s *Server) Run() {
@@ -299,6 +339,65 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			"created_at": createdAt.UTC().Format(time.RFC3339Nano),
 		})
 
+	case wsmsg.TypeGameAction:
+		if gameID == "" {
+			c.Conn.Send(errEnv(id, "invalid_message", "game_id is required"))
+			return
+		}
+		if c.ChatRoom != gameID {
+			c.Conn.Send(errEnv(id, "not_in_room", "join the game chat room first"))
+			return
+		}
+		if c.UserID == "" {
+			c.Conn.Send(errEnv(id, "unauthorized", "authenticated user required"))
+			return
+		}
+		if s.actions == nil {
+			c.Conn.Send(errEnv(id, "not_configured", "game action service is not configured"))
+			return
+		}
+
+		var payload wsmsg.GameActionPayload
+		if err := json.Unmarshal(env.Payload, &payload); err != nil {
+			c.Conn.Send(errEnv(id, "invalid_message", "invalid payload"))
+			return
+		}
+		updated, err := s.actions.ApplyGameAction(context.Background(), GameActionInput{
+			GameID:       gameID,
+			PlayerUserID: c.UserID,
+			Action:       strings.TrimSpace(payload.Action),
+			Territory:    strings.TrimSpace(payload.Territory),
+			From:         strings.TrimSpace(payload.From),
+			To:           strings.TrimSpace(payload.To),
+			Armies:       payload.Armies,
+			AttackerDice: payload.AttackerDice,
+			DefenderDice: payload.DefenderDice,
+		})
+		if err != nil {
+			c.Conn.Send(errEnv(id, "invalid_action", err.Error()))
+			return
+		}
+
+		statePlayers := make([]wsmsg.GameStatePlayerPayload, 0, len(updated.Players))
+		for _, p := range updated.Players {
+			statePlayers = append(statePlayers, wsmsg.GameStatePlayerPayload{
+				UserID:     p.UserID,
+				CardCount:  p.CardCount,
+				Eliminated: p.Eliminated,
+			})
+		}
+		s.broadcastGameStateUpdate(gameID, wsmsg.GameStateUpdatedPayload{
+			GameID:                updated.GameID,
+			Action:                updated.Action,
+			ActorUserID:           updated.ActorUserID,
+			Phase:                 updated.Phase,
+			CurrentPlayer:         updated.CurrentPlayer,
+			PendingReinforcements: updated.PendingReinforcements,
+			Players:               statePlayers,
+			Territories:           updated.Territories,
+			Result:                updated.Result,
+		})
+
 	default:
 		// generic ack
 		c.Conn.Send(envelope("ack", newID("s"), id, gameID, nil))
@@ -444,6 +543,16 @@ func (s *Server) broadcastLobbyChat(message map[string]any) {
 
 func (s *Server) broadcastGameChatMessage(roomID string, message map[string]any) {
 	ev := envelope(string(wsmsg.TypeGameChatMessage), newID("s"), "", roomID, message)
+	clientIDs := s.chatRooms[roomID]
+	for clientID := range clientIDs {
+		if c, ok := s.clients[clientID]; ok {
+			c.Conn.Send(ev)
+		}
+	}
+}
+
+func (s *Server) broadcastGameStateUpdate(roomID string, payload wsmsg.GameStateUpdatedPayload) {
+	ev := envelope(string(wsmsg.TypeGameStateUpdated), newID("s"), "", roomID, payload)
 	clientIDs := s.chatRooms[roomID]
 	for clientID := range clientIDs {
 		if c, ok := s.clients[clientID]; ok {

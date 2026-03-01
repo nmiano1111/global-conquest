@@ -31,6 +31,7 @@ export type GameBootstrap = {
   status: string;
   phase: string;
   currentPlayer: number;
+  pendingReinforcements: number;
   players: GameBootstrapPlayer[];
   territories: Record<string, unknown>;
   createdAt: string;
@@ -108,6 +109,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
       status: "",
       phase: "",
       currentPlayer: -1,
+      pendingReinforcements: 0,
       players: [],
       territories: {},
       createdAt: "",
@@ -134,6 +136,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     status: readString(record.status ?? record.Status),
     phase: readString(record.phase ?? record.Phase),
     currentPlayer: readNumber(record.current_player ?? record.currentPlayer, -1),
+    pendingReinforcements: readNumber(record.pending_reinforcements ?? record.pendingReinforcements, 0),
     players,
     territories,
     createdAt: readString(record.created_at ?? record.CreatedAt),

@@ -16,6 +16,7 @@ const (
 	TypeGameChatJoin     Type = "game_chat_join"
 	TypeGameChatLeave    Type = "game_chat_leave"
 	TypeGameChatSend     Type = "game_chat_send"
+	TypeGameAction       Type = "game_action"
 
 	// server->client
 	TypeError            Type = "error"
@@ -29,6 +30,7 @@ const (
 	TypeLobbyChatMessage Type = "lobby_chat_message"
 	TypeGameChatMessage  Type = "game_chat_message"
 	TypeGameChatHistory  Type = "game_chat_history"
+	TypeGameStateUpdated Type = "game_state_updated"
 )
 
 type Envelope struct {
@@ -137,4 +139,32 @@ type GameChatMessagePayload struct {
 
 type GameChatHistoryPayload struct {
 	Messages []GameChatMessagePayload `json:"messages"`
+}
+
+type GameActionPayload struct {
+	Action       string `json:"action"`
+	Territory    string `json:"territory,omitempty"`
+	From         string `json:"from,omitempty"`
+	To           string `json:"to,omitempty"`
+	Armies       int    `json:"armies,omitempty"`
+	AttackerDice int    `json:"attacker_dice,omitempty"`
+	DefenderDice int    `json:"defender_dice,omitempty"`
+}
+
+type GameStatePlayerPayload struct {
+	UserID     string `json:"user_id"`
+	CardCount  int    `json:"card_count"`
+	Eliminated bool   `json:"eliminated"`
+}
+
+type GameStateUpdatedPayload struct {
+	GameID                string                   `json:"game_id"`
+	Action                string                   `json:"action"`
+	ActorUserID           string                   `json:"actor_user_id"`
+	Phase                 string                   `json:"phase"`
+	CurrentPlayer         int                      `json:"current_player"`
+	PendingReinforcements int                      `json:"pending_reinforcements"`
+	Players               []GameStatePlayerPayload `json:"players"`
+	Territories           json.RawMessage          `json:"territories"`
+	Result                any                      `json:"result,omitempty"`
 }

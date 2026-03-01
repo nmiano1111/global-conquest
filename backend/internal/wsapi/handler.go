@@ -4,6 +4,7 @@ import (
 	"backend/internal/game"
 	"backend/internal/proto/wsmsg"
 	"backend/internal/wsconn"
+	"context"
 	"net/http"
 	"time"
 
@@ -15,6 +16,12 @@ type Options struct {
 	OriginPatterns []string
 	PingInterval   time.Duration
 	SendBuffer     int
+	Authenticate   func(ctx context.Context, token string) (AuthUser, error)
+}
+
+type AuthUser struct {
+	ID       string
+	UserName string
 }
 
 // GinHandler wires transport to the game hub.
@@ -33,14 +40,30 @@ func GinHandler(s *game.Server, opts Options) gin.HandlerFunc {
 		c.Abort()
 
 		ctx := c.Request.Context()
+		authUser := AuthUser{}
+		if opts.Authenticate != nil {
+			token := c.Query("token")
+			if token != "" {
+				u, err := opts.Authenticate(ctx, token)
+				if err != nil {
+					c.Status(http.StatusUnauthorized)
+					return
+				}
+				authUser = u
+			}
+		}
 
 		// Create client + register with hub.
-		// Name is optional for now; you can set it via "hello" later.
 		clientID := randClientID()
+		name := "anon"
+		if authUser.UserName != "" {
+			name = authUser.UserName
+		}
 		cl := &game.Client{
-			ID:   clientID,
-			Name: "anon",
-			Conn: conn,
+			ID:     clientID,
+			UserID: authUser.ID,
+			Name:   name,
+			Conn:   conn,
 		}
 		s.Inbox() <- game.Register{C: cl}
 
