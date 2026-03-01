@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, Outlet, useNavigate } from "@tanstack/react-router";
+import { Link, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import type { ApiError } from "../api/client";
 import { login, signup } from "../api/auth";
 import { listLobbyMessages, normalizeLobbyMessage, postLobbyMessage, type LobbyMessage } from "../api/chat";
-import { createGame, joinGame, listGames, type GameRecord } from "../api/games";
+import { createGame, getGame, joinGame, listGames, type GameRecord } from "../api/games";
 import {
   getUserByUsername,
   listAdminUsers,
@@ -23,6 +23,36 @@ const buttonPrimaryClass =
 
 const buttonGhostClass =
   "inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60";
+
+type GamePlayerSummary = {
+  id: string;
+  cardCount: number;
+  eliminated: boolean;
+  isCurrent: boolean;
+};
+
+function summarizeGamePlayers(game: GameRecord): GamePlayerSummary[] {
+  const state = game.state;
+  if (state && typeof state === "object") {
+    const stateRecord = state as Record<string, unknown>;
+    const rawPlayers = stateRecord.players;
+    const currentPlayer = typeof stateRecord.current_player === "number" ? stateRecord.current_player : -1;
+    if (Array.isArray(rawPlayers)) {
+      return rawPlayers
+        .filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
+        .map((p, idx) => {
+          const cards = Array.isArray(p.cards) ? p.cards : [];
+          return {
+            id: typeof p.id === "string" && p.id !== "" ? p.id : `player-${idx + 1}`,
+            cardCount: cards.length,
+            eliminated: p.eliminated === true,
+            isCurrent: idx === currentPlayer,
+          };
+        });
+    }
+  }
+  return game.playerIds.map((id) => ({ id, cardCount: 0, eliminated: false, isCurrent: false }));
+}
 
 export function RootLayout() {
   return <Outlet />;
@@ -586,21 +616,25 @@ export function LobbyPage() {
                     Players: {maxPlayers > 0 ? `${currentPlayers}/${maxPlayers}` : "unknown"}
                   </p>
                 </div>
-
-                {canJoin ? (
-                  <button
-                    className={buttonPrimaryClass}
-                    type="button"
-                    onClick={() => void onJoinGame(g.id)}
-                    disabled={joiningGameID === g.id}
-                  >
-                    {joiningGameID === g.id ? "Joining..." : "Join Game"}
-                  </button>
-                ) : (
-                  <button className={buttonGhostClass} type="button" disabled>
-                    {hasJoined ? "Joined" : isFull ? "Lobby Full" : "Not Joinable"}
-                  </button>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  <Link className={buttonGhostClass} to="/app/game/$gameID" params={{ gameID: g.id }}>
+                    Open Game
+                  </Link>
+                  {canJoin ? (
+                    <button
+                      className={buttonPrimaryClass}
+                      type="button"
+                      onClick={() => void onJoinGame(g.id)}
+                      disabled={joiningGameID === g.id}
+                    >
+                      {joiningGameID === g.id ? "Joining..." : "Join Game"}
+                    </button>
+                  ) : (
+                    <button className={buttonGhostClass} type="button" disabled>
+                      {hasJoined ? "Joined" : isFull ? "Lobby Full" : "Not Joinable"}
+                    </button>
+                  )}
+                </div>
               </li>
             );
           })}
@@ -646,6 +680,160 @@ export function LobbyPage() {
             {chatSending ? "Sending..." : "Send"}
           </button>
         </form>
+      </aside>
+    </div>
+  );
+}
+
+export function GamePage() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const { gameID } = useParams({ from: "/app/game/$gameID" });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [game, setGame] = useState<GameRecord | null>(null);
+  const [chatDraft, setChatDraft] = useState("");
+
+  const loadGame = useCallback(
+    async (cancelled = false) => {
+      setError("");
+      try {
+        const out = await getGame(gameID);
+        if (cancelled) return;
+        setGame(out);
+      } catch (err) {
+        if (cancelled) return;
+        const apiErr = err as ApiError;
+        if (apiErr.status === 401) {
+          auth.clearSession();
+          await navigate({ to: "/login" });
+          return;
+        }
+        if (apiErr.status === 404) {
+          setError("Game not found.");
+          return;
+        }
+        setError(apiErr.message || "Failed to load game.");
+      }
+    },
+    [auth, gameID, navigate]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      setLoading(true);
+      await loadGame(cancelled);
+      if (!cancelled) setLoading(false);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadGame]);
+
+  const players = game ? summarizeGamePlayers(game) : [];
+  const state = game?.state && typeof game.state === "object" ? (game.state as Record<string, unknown>) : null;
+  const phase = typeof state?.phase === "string" ? state.phase : game?.status ?? "";
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
+      <section className="grid gap-4">
+        <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">Game Room</h2>
+            <p className="font-mono text-xs text-slate-600">{gameID}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className={buttonGhostClass} type="button" onClick={() => void loadGame()} disabled={loading}>
+              Refresh
+            </button>
+            <Link className={buttonGhostClass} to="/app/lobby">
+              Back to Lobby
+            </Link>
+          </div>
+        </header>
+
+        {loading ? <p className="text-sm text-slate-600">Loading game...</p> : null}
+        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Map</h3>
+            <span className="text-xs text-slate-500">Status: {game?.status || "-"}</span>
+          </div>
+          <div className="h-[520px] rounded-xl border border-slate-200 bg-slate-50 p-2">
+            <canvas
+              className="h-full w-full rounded-lg border border-slate-200 bg-white"
+              width={1400}
+              height={900}
+              aria-label="Game map canvas placeholder"
+            />
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Event Log</h3>
+            <span className="text-xs text-slate-500">Phase: {phase || "-"}</span>
+          </div>
+          <div className="h-[180px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+            <p>Event log will stream game actions here.</p>
+          </div>
+        </section>
+      </section>
+
+      <aside className="grid gap-4">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Players</h3>
+            <span className="text-xs text-slate-500">
+              {players.length}/{game?.playerCount ?? players.length}
+            </span>
+          </div>
+          {players.length === 0 ? <p className="text-sm text-slate-500">No player data available yet.</p> : null}
+          <ul className="grid gap-2">
+            {players.map((p) => (
+              <li key={p.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-xs text-slate-700">{p.id}</span>
+                  {p.isCurrent ? (
+                    <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                      Current Turn
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-xs text-slate-600">Cards: {p.cardCount}</p>
+                <p className="text-xs text-slate-600">Status: {p.eliminated ? "Eliminated" : "Active"}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-700">Game Chat</h3>
+          <div className="h-[260px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+            <p>Game chat will appear here.</p>
+          </div>
+          <form
+            className="mt-3 grid gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setChatDraft("");
+            }}
+          >
+            <textarea
+              className={inputClass}
+              rows={3}
+              value={chatDraft}
+              onChange={(e) => setChatDraft(e.target.value)}
+              placeholder="Type a game message..."
+            />
+            <button className={buttonPrimaryClass} type="submit" disabled>
+              Send (Coming Soon)
+            </button>
+          </form>
+        </section>
       </aside>
     </div>
   );

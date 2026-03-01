@@ -99,3 +99,11 @@ export async function joinGame(gameID: string): Promise<GameRecord> {
   });
   return normalizeGame(res);
 }
+
+export async function getGame(gameID: string): Promise<GameRecord> {
+  const res = await request<unknown>({
+    method: "GET",
+    url: `/games/${encodeURIComponent(gameID)}`,
+  });
+  return normalizeGame(res);
+}

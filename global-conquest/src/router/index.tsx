@@ -8,6 +8,7 @@ import type { AuthContextValue } from "../auth";
 import {
   AdminPage,
   AppShell,
+  GamePage,
   LobbyPage,
   LoginPage,
   ProfilePage,
@@ -89,6 +90,12 @@ const profileRoute = createRoute({
   component: ProfilePage,
 });
 
+const gameRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/game/$gameID",
+  component: GamePage,
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/admin",
@@ -104,7 +111,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   signupRoute,
-  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, adminRoute]),
+  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, gameRoute, adminRoute]),
 ]);
 
 export const router = createRouter({
