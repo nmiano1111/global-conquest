@@ -768,6 +768,32 @@ export function GamePage() {
   }, [gameID, on]);
 
   useEffect(() => {
+    const off = on("game_chat_history", (msg) => {
+      const payload = msg.payload as { messages?: unknown } | undefined;
+      if (!Array.isArray(payload?.messages)) return;
+      const next = payload.messages
+        .filter((m): m is Record<string, unknown> => !!m && typeof m === "object")
+        .map((m) => {
+          const payloadGameID =
+            typeof m.game_id === "string"
+              ? m.game_id
+              : typeof msg.game_id === "string"
+                ? msg.game_id
+                : "";
+          return {
+            gameID: payloadGameID,
+            userName: typeof m.user_name === "string" ? m.user_name : "anon",
+            body: typeof m.body === "string" ? m.body : "",
+            createdAt: typeof m.created_at === "string" ? m.created_at : new Date().toISOString(),
+          } satisfies GameChatMessage;
+        })
+        .filter((m) => m.gameID === gameID);
+      setChatMessages(next);
+    });
+    return off;
+  }, [gameID, on]);
+
+  useEffect(() => {
     if (wsStatus !== "connected") return;
     send("game_chat_join", undefined, { game_id: gameID });
     return () => {

@@ -2,6 +2,7 @@ package game
 
 import (
 	"backend/internal/proto/wsmsg"
+	"context"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -17,6 +18,7 @@ type Server struct {
 	games     map[string]*Game
 	typing    map[string]typingPresence
 	chatRooms map[string]map[string]struct{}
+	chatLog   GameChatLogStore
 }
 
 type Client struct {
@@ -45,6 +47,18 @@ type typingPresence struct {
 	LastSeen time.Time
 }
 
+type GameChatLogMessage struct {
+	GameID    string
+	UserName  string
+	Body      string
+	CreatedAt time.Time
+}
+
+type GameChatLogStore interface {
+	SaveGameMessage(ctx context.Context, gameID, senderClientID, senderName, body string) (GameChatLogMessage, error)
+	ListGameMessages(ctx context.Context, gameID string, limit int) ([]GameChatLogMessage, error)
+}
+
 // --- inbox messages ---
 type Register struct{ C *Client }
 type Unregister struct{ ClientID string }
@@ -67,6 +81,10 @@ func NewServer() *Server {
 }
 
 func (s *Server) Inbox() chan<- any { return s.inbox }
+
+func (s *Server) SetGameChatLogStore(chatLog GameChatLogStore) {
+	s.chatLog = chatLog
+}
 
 func (s *Server) Run() {
 	for msg := range s.inbox {
@@ -266,11 +284,19 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 		if name == "" {
 			name = "anon"
 		}
+		createdAt := time.Now().UTC()
+		if s.chatLog != nil {
+			if saved, err := s.chatLog.SaveGameMessage(context.Background(), gameID, c.ID, name, body); err == nil {
+				createdAt = saved.CreatedAt
+				name = saved.UserName
+				body = saved.Body
+			}
+		}
 		s.broadcastGameChatMessage(gameID, map[string]any{
 			"game_id":    gameID,
 			"user_name":  name,
 			"body":       body,
-			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"created_at": createdAt.UTC().Format(time.RFC3339Nano),
 		})
 
 	default:
@@ -293,6 +319,26 @@ func (s *Server) joinChatRoom(c *Client, roomID string) {
 	}
 	clients[c.ID] = struct{}{}
 	c.ChatRoom = roomID
+
+	if s.chatLog == nil {
+		return
+	}
+	msgs, err := s.chatLog.ListGameMessages(context.Background(), roomID, 200)
+	if err != nil || len(msgs) == 0 {
+		return
+	}
+	out := make([]wsmsg.GameChatMessagePayload, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, wsmsg.GameChatMessagePayload{
+			GameID:    m.GameID,
+			UserName:  m.UserName,
+			Body:      m.Body,
+			CreatedAt: m.CreatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	c.Conn.Send(envelope(string(wsmsg.TypeGameChatHistory), newID("s"), "", roomID, wsmsg.GameChatHistoryPayload{
+		Messages: out,
+	}))
 }
 
 func (s *Server) leaveChatRoom(c *Client) {
@@ -339,6 +385,9 @@ func (s *Server) leaveGame(c *Client, disconnect bool) {
 	if !ok {
 		c.Game = ""
 		return
+	}
+	if c.ChatRoom == gid {
+		s.leaveChatRoom(c)
 	}
 
 	delete(g.Players, c.ID)

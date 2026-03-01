@@ -47,6 +47,9 @@ func main() {
 	gamesSvc := service.NewGamesService(d, gamesStore)
 	chatStore := store.NewPostgresChatStore()
 	chatSvc := service.NewChatService(d, chatStore)
+	gameChatStore := store.NewPostgresGameChatStore()
+	gameChatSvc := service.NewGameChatService(d, gameChatStore)
+	s.SetGameChatLogStore(gameChatSvc)
 
 	// http
 	h := httpapi.NewHandler(s, usersSvc, gamesSvc, chatSvc)

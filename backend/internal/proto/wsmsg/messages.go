@@ -28,6 +28,7 @@ const (
 	TypeLobbyTypingState Type = "lobby_typing_state"
 	TypeLobbyChatMessage Type = "lobby_chat_message"
 	TypeGameChatMessage  Type = "game_chat_message"
+	TypeGameChatHistory  Type = "game_chat_history"
 )
 
 type Envelope struct {
@@ -125,4 +126,15 @@ type GameListPayload struct {
 type GameChatSendPayload struct {
 	Body     string `json:"body"`
 	UserName string `json:"username,omitempty"`
+}
+
+type GameChatMessagePayload struct {
+	GameID    string `json:"game_id"`
+	UserName  string `json:"user_name"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+}
+
+type GameChatHistoryPayload struct {
+	Messages []GameChatMessagePayload `json:"messages"`
 }
