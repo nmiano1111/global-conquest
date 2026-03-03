@@ -296,6 +296,60 @@ export function GamePage() {
     });
     return out;
   }, [players]);
+  const eventColorByActorID = useMemo(() => {
+    const out: Record<string, string> = {};
+    players.forEach((p, i) => {
+      if (!p.userId) return;
+      out[p.userId] = p.color || MAP_PLAYER_COLORS[i % MAP_PLAYER_COLORS.length];
+    });
+    return out;
+  }, [players]);
+  const playerNamesByKey = useMemo(() => {
+    const out: Record<string, string> = {};
+    players.forEach((p) => {
+      const userName = p.userName.trim();
+      const userID = p.userId.trim();
+      if (userName) out[userName.toLowerCase()] = userName;
+      if (userID) out[userID.toLowerCase()] = userID;
+    });
+    return out;
+  }, [players]);
+  const territoryNameSet = useMemo(() => new Set(Object.keys(MAP_TERRITORIES)), []);
+  const eventHighlightRegex = useMemo(() => {
+    const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const terms = [
+      ...Object.values(playerNamesByKey),
+      ...Array.from(territoryNameSet),
+    ]
+      .filter((value) => value.trim() !== "")
+      .sort((a, b) => b.length - a.length);
+    if (terms.length === 0) return null;
+    return new RegExp(`(${terms.map((term) => escapeRegExp(term)).join("|")})`, "g");
+  }, [playerNamesByKey, territoryNameSet]);
+
+  const renderEventBody = (body: string) => {
+    if (!eventHighlightRegex) return body;
+    const parts = body.split(eventHighlightRegex);
+    return parts.map((part, idx) => {
+      if (!part) return null;
+      const playerKey = part.toLowerCase();
+      if (playerNamesByKey[playerKey]) {
+        return (
+          <span key={`${part}-${idx}`} className="font-extrabold">
+            {part}
+          </span>
+        );
+      }
+      if (territoryNameSet.has(part)) {
+        return (
+          <span key={`${part}-${idx}`} className="font-extrabold">
+            {part}
+          </span>
+        );
+      }
+      return <span key={`${part}-${idx}`}>{part}</span>;
+    });
+  };
 
   const selectedFromArmies = useMemo(() => {
     if (!activeFrom) return 0;
@@ -660,7 +714,7 @@ export function GamePage() {
                         y={pos.y + 28}
                         fill="#0f172a"
                         fontSize={11}
-                        fontWeight={600}
+                        fontWeight={800}
                         textAnchor="middle"
                         dominantBaseline="hanging"
                         style={{ paintOrder: "stroke", stroke: "rgba(255,255,255,0.75)", strokeWidth: 3 }}
@@ -683,15 +737,20 @@ export function GamePage() {
           <div className="h-[180px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
             {eventMessages.length === 0 ? <p>No events yet.</p> : null}
             <ul className="grid gap-2">
-              {eventMessages.map((ev, idx) => (
+              {eventMessages.map((ev, idx) => {
+                const eventColor = eventColorByActorID[ev.actorUserID] ?? "#334155";
+                return (
                 <li key={`${ev.id}-${idx}`} className="rounded-lg bg-white px-2 py-1.5">
-                  <div className="mb-0.5 flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                    <span>{ev.eventType.replaceAll("_", " ")}</span>
+                  <div className="mb-1 flex items-center justify-between gap-2 text-xs" style={{ color: eventColor }}>
+                    <span className="font-semibold">{ev.eventType.replaceAll("_", " ")}</span>
                     <span>{new Date(ev.createdAt).toLocaleTimeString()}</span>
                   </div>
-                  <p className="text-xs text-slate-700">{ev.body}</p>
+                  <p className="text-sm font-medium" style={{ color: eventColor }}>
+                    {renderEventBody(ev.body)}
+                  </p>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </div>
         </section>
@@ -712,13 +771,15 @@ export function GamePage() {
             {players.map((p) => (
               <li key={p.userId} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs text-slate-700">
-                    <span
-                      className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full align-middle"
-                      style={{ backgroundColor: p.color || "#94a3b8" }}
-                    />
-                    <span style={{ color: p.color || "#334155" }}>{p.userName || p.userId}</span>
-                  </span>
+                    <span className="font-mono text-xs text-slate-700">
+                      <span
+                        className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full align-middle"
+                        style={{ backgroundColor: p.color || "#94a3b8" }}
+                      />
+                      <span className="font-bold" style={{ color: p.color || "#334155" }}>
+                        {p.userName || p.userId}
+                      </span>
+                    </span>
                   {game && players[game.currentPlayer]?.userId === p.userId ? (
                     <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                       Current Turn
