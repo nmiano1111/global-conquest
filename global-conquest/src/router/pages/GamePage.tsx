@@ -42,6 +42,7 @@ export function GamePage() {
   const [attackerDice, setAttackerDice] = useState(3);
   const [diceResult, setDiceResult] = useState<DiceRollResult | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const eventScrollRef = useRef<HTMLDivElement | null>(null);
 
   const parseTerritories = (raw: unknown): Record<string, unknown> => {
     if (raw && typeof raw === "object") return raw as Record<string, unknown>;
@@ -271,6 +272,11 @@ export function GamePage() {
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [chatMessages]);
+  useEffect(() => {
+    const el = eventScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [eventMessages]);
 
   const players = useMemo(() => game?.players ?? [], [game?.players]);
   const phase = game?.phase ?? "";
@@ -734,7 +740,7 @@ export function GamePage() {
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Event Log</h3>
             <span className="text-xs text-slate-500">Phase: {phase || "-"}</span>
           </div>
-          <div className="h-[180px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+          <div ref={eventScrollRef} className="h-[180px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
             {eventMessages.length === 0 ? <p>No events yet.</p> : null}
             <ul className="grid gap-2">
               {eventMessages.map((ev, idx) => {
