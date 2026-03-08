@@ -126,4 +126,4 @@ aws dynamodb delete-table --table-name global-conquest-tfstate-lock
 | ECR storage | ~$0.50 |
 | **Total** | **~$40** |
 
- The ALB is the biggest fixed cost. Tear it down when not in use to save money.
+The ALB is the biggest fixed cost. Tear it down when not in use to save money.
