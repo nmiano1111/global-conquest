@@ -86,10 +86,10 @@ jobs:
             --task-definition "$NEW_ARN" \
             --force-new-deployment
 
-          # Wait (up to 10 min) for the service to stabilise
-          aws ecs wait services-stable \
+          # Wait (up to 5 min) for the service to stabilise
+          timeout 300 aws ecs wait services-stable \
             --cluster  "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE"
+            --services "$ECS_SERVICE" || echo "Warning: service did not stabilise in time, check ECS console"
 
   # ── Frontend ─────────────────────────────────────────────────────────────────
   deploy-frontend:

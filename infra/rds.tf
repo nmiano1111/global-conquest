@@ -10,8 +10,8 @@ resource "aws_ssm_parameter" "db_password" {
 }
 
 resource "aws_db_subnet_group" "main" {
-  name       = var.app_name
-  subnet_ids = aws_subnet.private[*].id
+  name       = "${var.app_name}-public"
+  subnet_ids = aws_subnet.public[*].id
 }
 
 variable "developer_ip" {
