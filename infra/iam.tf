@@ -131,6 +131,31 @@ resource "aws_iam_role_policy" "github_actions" {
         ]
       },
       {
+        Sid    = "S3TerraformState"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+        ]
+        Resource = [
+          "arn:aws:s3:::gc-tfstate-${var.aws_account_id}",
+          "arn:aws:s3:::gc-tfstate-${var.aws_account_id}/*",
+        ]
+      },
+      {
+        Sid    = "DynamoDBTerraformLock"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/global-conquest-tfstate-lock"
+      },
+      {
         Sid    = "S3Frontend"
         Effect = "Allow"
         Action = [
