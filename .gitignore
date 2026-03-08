@@ -1,0 +1,15 @@
+# Terraform
+infra/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+
+# Node
+node_modules/
+global-conquest/dist/
+
+# Go
+backend/tmp/
+
+# OS
+.DS_Store

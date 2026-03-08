@@ -607,17 +607,19 @@ export function GamePage() {
               ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <input
-                className={`${inputClass} w-24`}
-                type="number"
-                min={minArmiesInput}
-                max={maxArmiesInput}
-                value={clampedArmiesInput}
-                onChange={(e) => {
-                  const n = Number(e.target.value) || 1;
-                  setArmiesInput(Math.max(minArmiesInput, Math.min(n, maxArmiesInput)));
-                }}
-              />
+              {phaseMode !== "attack" ? (
+                <input
+                  className={`${inputClass} w-24`}
+                  type="number"
+                  min={minArmiesInput}
+                  max={maxArmiesInput}
+                  value={clampedArmiesInput}
+                  onChange={(e) => {
+                    const n = Number(e.target.value) || 1;
+                    setArmiesInput(Math.max(minArmiesInput, Math.min(n, maxArmiesInput)));
+                  }}
+                />
+              ) : null}
               {phaseMode === "reinforce" ? (
                 <button className={buttonPrimaryClass} type="button" onClick={commitReinforcement} disabled={!isMyTurn}>
                   Place

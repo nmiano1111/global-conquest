@@ -1,0 +1,145 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "infra/**"
+      - "*.md"
+      - "ARCHITECTURE.md"
+      - "MISSING_FUNCTIONALITY.md"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION:      us-east-1
+  AWS_ACCOUNT_ID:  "294342039804"
+  ECR_REPO:        global-conquest-backend
+  ECS_CLUSTER:     global-conquest
+  ECS_SERVICE:     global-conquest-backend
+  ECS_FAMILY:      global-conquest-backend
+  S3_BUCKET:       global-conquest-frontend-294342039804
+  ALB_NAME:        global-conquest
+
+jobs:
+  # ── Backend ──────────────────────────────────────────────────────────────────
+  deploy-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::294342039804:role/global-conquest-github-actions
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          REGISTRY:  ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            -t "$REGISTRY/$ECR_REPO:$IMAGE_TAG" \
+            -t "$REGISTRY/$ECR_REPO:latest" \
+            ./backend
+          docker push "$REGISTRY/$ECR_REPO:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_REPO:latest"
+          echo "image=$REGISTRY/$ECR_REPO:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+        id: build
+
+      - name: Update ECS service
+        env:
+          REGISTRY:  ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Fetch current task definition (strip read-only fields)
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition "$ECS_FAMILY" \
+            --query taskDefinition \
+            --output json \
+            | jq 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy)')
+
+          # Swap in the new image
+          NEW_TASK_DEF=$(echo "$TASK_DEF" \
+            | jq --arg IMG "$REGISTRY/$ECR_REPO:$IMAGE_TAG" \
+                 '.containerDefinitions[0].image = $IMG')
+
+          # Register the new revision
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query taskDefinition.taskDefinitionArn \
+            --output text)
+
+          # Deploy
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service  "$ECS_SERVICE" \
+            --task-definition "$NEW_ARN" \
+            --force-new-deployment
+
+          # Wait (up to 10 min) for the service to stabilise
+          aws ecs wait services-stable \
+            --cluster  "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    needs: deploy-backend   # ensures backend is healthy before we bake the URL
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::294342039804:role/global-conquest-github-actions
+          aws-region: us-east-1
+
+      - name: Get ALB DNS name
+        id: alb
+        run: |
+          DNS=$(aws elbv2 describe-load-balancers \
+            --names "$ALB_NAME" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+          echo "dns=$DNS" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: global-conquest/package-lock.json
+
+      - name: Install dependencies
+        working-directory: global-conquest
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: global-conquest
+        env:
+          VITE_API_BASE_URL: "http://${{ steps.alb.outputs.dns }}/api"
+          VITE_WS_URL:       "ws://${{ steps.alb.outputs.dns }}/ws"
+        run: npm run build
+
+      - name: Sync to S3
+        working-directory: global-conquest
+        run: |
+          aws s3 sync dist/ "s3://$S3_BUCKET/" \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html"
+
+          # index.html must never be cached so deploys take effect immediately
+          aws s3 cp dist/index.html "s3://$S3_BUCKET/index.html" \
+            --cache-control "no-cache, no-store, must-revalidate"

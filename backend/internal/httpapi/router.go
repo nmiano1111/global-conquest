@@ -3,9 +3,12 @@ package httpapi
 import (
 	"backend/internal/wsapi"
 	"context"
+	"net/http"
+	"os"
+	"strings"
+
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -60,8 +63,13 @@ func NewRouter(h *Handler) *gin.Engine {
 
 	}
 
+	origins := []string{"localhost:*", "127.0.0.1:*"}
+	if v := os.Getenv("WS_ALLOWED_ORIGINS"); v != "" {
+		origins = strings.Split(v, ",")
+	}
+
 	r.GET("/ws", wsapi.GinHandler(h.gameServer, wsapi.Options{
-		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
+		OriginPatterns: origins,
 		SendBuffer:     16,
 		Authenticate: func(ctx context.Context, token string) (wsapi.AuthUser, error) {
 			u, err := h.users.AuthenticateSession(ctx, token)

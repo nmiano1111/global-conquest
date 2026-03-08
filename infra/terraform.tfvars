@@ -1,0 +1,5 @@
+aws_region     = "us-east-1"
+aws_account_id = "294342039804"
+github_repo    = "nmiano1111/global-conquest"
+db_name        = "globalconq"
+db_username    = "globalconq"
