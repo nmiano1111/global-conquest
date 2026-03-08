@@ -35,6 +35,7 @@ resource "aws_ecs_task_definition" "backend" {
       { name = "DB_NAME", value = var.db_name },
       # Allow WebSocket connections from any origin (HTTP-only test deployment)
       { name = "WS_ALLOWED_ORIGINS", value = "*" },
+      { name = "DB_SSL_MODE", value = "require" },
     ]
 
     secrets = [{

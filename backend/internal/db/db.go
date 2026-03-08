@@ -16,6 +16,7 @@ type Config struct {
 	User     string
 	Password string
 	Database string
+	SSLMode  string
 
 	MaxConns int32
 }
@@ -36,16 +37,16 @@ func ConfigFromEnv() (Config, error) {
 		User:     getenv("DB_USER", "globalconq"),
 		Password: getenv("DB_PASSWORD", "globalconq"),
 		Database: getenv("DB_NAME", "globalconq"),
+		SSLMode:  getenv("DB_SSL_MODE", "disable"),
 		MaxConns: 10,
 	}
 	return cfg, nil
 }
 
 func (c Config) ConnString() string {
-	// local dev
 	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
-		c.User, c.Password, c.Host, c.Port, c.Database,
+		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		c.User, c.Password, c.Host, c.Port, c.Database, c.SSLMode,
 	)
 }
 
