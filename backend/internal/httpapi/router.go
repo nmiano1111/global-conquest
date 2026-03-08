@@ -18,6 +18,22 @@ func NewRouter(h *Handler) *gin.Engine {
 
 	r.Use(gin.Logger(), gin.Recovery())
 
+	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")
+	r.Use(func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if origin != "" && origin == allowedOrigin {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	})
+
 	api := r.Group("/api")
 	{
 		api.GET("/ping", func(c *gin.Context) {
