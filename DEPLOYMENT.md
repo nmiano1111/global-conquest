@@ -109,7 +109,7 @@ terraform destroy
 
 Then delete the Terraform state bucket manually if desired:
 ```bash
-aws s3 rb s3://global-conquest-tfstate-294342039804 --force
+aws s3 rb s3://gc-tfstate-294342039804 --force
 aws dynamodb delete-table --table-name global-conquest-tfstate-lock
 ```
 

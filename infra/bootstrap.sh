@@ -6,7 +6,7 @@ set -euo pipefail
 
 ACCOUNT_ID="294342039804"
 REGION="us-east-1"
-BUCKET="global-conquest-tfstate-${ACCOUNT_ID}"
+BUCKET="gc-tfstate-${ACCOUNT_ID}"
 TABLE="global-conquest-tfstate-lock"
 
 echo "==> Creating Terraform state bucket: ${BUCKET}"

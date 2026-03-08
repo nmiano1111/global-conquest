@@ -15,7 +15,7 @@ terraform {
   # State is stored in S3. Run infra/bootstrap.sh once before the first
   # `terraform init` to create the bucket and DynamoDB lock table.
   backend "s3" {
-    bucket         = "global-conquest-tfstate-294342039804"
+    bucket         = "gc-tfstate-294342039804"
     key            = "global-conquest/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "global-conquest-tfstate-lock"
