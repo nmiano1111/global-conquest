@@ -36,7 +36,7 @@ export class TerritoryNode extends Container {
     this.hitArea = new Circle(0, 0, TERRITORY_RADIUS + 4);
     this.eventMode = "static";
     this.cursor = "pointer";
-    this.on("pointerdown", () => onClick(name));
+    this.on("pointertap", () => onClick(name));
 
     this.circleGfx = new Graphics();
     this.addChild(this.circleGfx);
