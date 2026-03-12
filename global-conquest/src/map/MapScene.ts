@@ -4,7 +4,6 @@ import {
   Container,
   type FederatedPointerEvent,
   Graphics,
-  Rectangle,
   Sprite,
   Texture,
 } from "pixi.js";
@@ -23,17 +22,30 @@ import {
 import { TerritoryNode } from "./TerritoryNode";
 import type { TerritoryDisplayState } from "./types";
 
-// The world renders at this fixed scale regardless of viewport size.
-// viewport (resizes) → worldContainer (fixed scale, pans) → map + territories
-const WORLD_SCALE = 1024 / MAP_VIEWBOX_WIDTH; // world = 1024 × 683 px
+const MAX_ZOOM = 4.0;
 
 export class MapScene {
   private readonly app: Application;
-  /** Fixed-scale world container — position changes when the user pans. */
+
+  /**
+   * The world container lives in map-coordinate space (MAP_VIEWBOX_WIDTH ×
+   * MAP_VIEWBOX_HEIGHT). The camera is expressed entirely as this container's
+   * position and uniform scale — nothing else moves.
+   */
   private readonly worldContainer: Container;
-  /** Plain grouping layer for edges and territory nodes. */
+
+  /**
+   * Applies the static overlay transform that aligns territory coordinates
+   * (defined in SVG space) onto the background sprite. This is an internal
+   * positioning detail; it is not part of the camera.
+   */
   private readonly overlayContainer: Container;
   private readonly nodes: Map<string, TerritoryNode> = new Map();
+
+  // Camera state — always kept in sync with worldContainer via applyCamera().
+  private camScale = 1;
+  private camX = 0;
+  private camY = 0;
 
   private constructor(app: Application) {
     this.app = app;
@@ -66,16 +78,17 @@ export class MapScene {
   }
 
   private async buildScene(onTerritoryClick: (name: string) => void) {
-    // --- Background ---
+    // --- Background sprite (world space: 0,0 → MAP_VIEWBOX_WIDTH × MAP_VIEWBOX_HEIGHT) ---
     const texture = await Assets.load<Texture>(riskBoardImage);
     const bg = new Sprite(texture);
     bg.width = MAP_VIEWBOX_WIDTH;
     bg.height = MAP_VIEWBOX_HEIGHT;
     this.worldContainer.addChild(bg);
 
-    // --- Overlay layer — mirrors the SVG <g> transform ---
-    // SVG: translate(cx+ox, cy+oy) scale(s) translate(-cx, -cy)
-    // Pixi: pivot at (cx, cy), position at (cx+ox, cy+oy), scale s — identical result
+    // --- Territory overlay (static alignment transform, not part of the camera) ---
+    // Territory coordinates in MAP_TERRITORIES are in SVG space. This transform
+    // maps them onto the correct positions over the background sprite, mirroring
+    // the original SVG <g> transform: translate(cx+ox, cy+oy) scale(s) translate(-cx,-cy).
     this.overlayContainer.pivot.set(MAP_CENTER_X, MAP_CENTER_Y);
     this.overlayContainer.position.set(
       MAP_CENTER_X + MAP_OVERLAY_OFFSET_X,
@@ -104,92 +117,162 @@ export class MapScene {
 
     this.app.stage.addChild(this.worldContainer);
 
-    // Fix the world scale — it never changes after this point.
-    this.worldContainer.scale.set(WORLD_SCALE);
+    // Fit the entire map into the initial viewport.
+    this.fitToViewport();
 
-    // Center the world in the initial viewport.
-    this.centerWorld();
-
-    // Wire up drag-to-pan.
-    this.setupPan();
+    // Wire up pan and pinch-to-zoom.
+    this.setupInteraction();
   }
 
   // ---------------------------------------------------------------------------
-  // Viewport helpers
+  // Camera helpers
   // ---------------------------------------------------------------------------
 
-  private get vw() { return this.app.screen.width; }
-  private get vh() { return this.app.screen.height; }
-  private get worldW() { return MAP_VIEWBOX_WIDTH * WORLD_SCALE; }
-  private get worldH() { return MAP_VIEWBOX_HEIGHT * WORLD_SCALE; }
+  /** Scale at which the full map exactly fits inside the current viewport. */
+  private get minZoom(): number {
+    return Math.min(
+      this.app.screen.width / MAP_VIEWBOX_WIDTH,
+      this.app.screen.height / MAP_VIEWBOX_HEIGHT,
+    );
+  }
 
-  /** Place the world centered in the current viewport, then clamp. */
-  private centerWorld() {
-    this.worldContainer.x = Math.round((this.vw - this.worldW) / 2);
-    this.worldContainer.y = Math.round((this.vh - this.worldH) / 2);
-    this.clampWorld();
+  private applyCamera() {
+    this.worldContainer.scale.set(this.camScale);
+    this.worldContainer.position.set(this.camX, this.camY);
   }
 
   /**
-   * Prevent the world from being dragged so far that the viewport shows only
-   * empty space. If the world is larger than the viewport in a given axis,
-   * constrain so both edges of the world remain reachable but neither goes
-   * beyond the viewport edge. If the world fits, keep it centered.
+   * Clamp camX/camY so the world never exposes empty space beyond its edges.
+   * When the world fits inside the viewport on an axis, center it instead.
    */
-  private clampWorld() {
-    const { vw, vh, worldW, worldH } = this;
+  private clampCamera() {
+    const vw = this.app.screen.width;
+    const vh = this.app.screen.height;
+    const ww = MAP_VIEWBOX_WIDTH * this.camScale;
+    const wh = MAP_VIEWBOX_HEIGHT * this.camScale;
 
-    if (worldW >= vw) {
-      // World wider than viewport — allow panning across the full world width.
-      this.worldContainer.x = Math.max(vw - worldW, Math.min(0, this.worldContainer.x));
+    if (ww <= vw) {
+      this.camX = (vw - ww) / 2;
     } else {
-      // World fits horizontally — center it.
-      this.worldContainer.x = Math.round((vw - worldW) / 2);
+      this.camX = Math.min(0, Math.max(vw - ww, this.camX));
     }
 
-    if (worldH >= vh) {
-      this.worldContainer.y = Math.max(vh - worldH, Math.min(0, this.worldContainer.y));
+    if (wh <= vh) {
+      this.camY = (vh - wh) / 2;
     } else {
-      this.worldContainer.y = Math.round((vh - worldH) / 2);
+      this.camY = Math.min(0, Math.max(vh - wh, this.camY));
     }
   }
 
+  /**
+   * Zoom to newScale while keeping the screen-space point (pivotX, pivotY)
+   * fixed over the same world point — i.e., zoom toward the cursor / pinch midpoint.
+   */
+  private zoomToward(newScale: number, pivotX: number, pivotY: number) {
+    const clamped = Math.max(this.minZoom, Math.min(MAX_ZOOM, newScale));
+    // World-space point currently under the pivot must stay under it after zoom.
+    const worldX = (pivotX - this.camX) / this.camScale;
+    const worldY = (pivotY - this.camY) / this.camScale;
+    this.camScale = clamped;
+    this.camX = pivotX - worldX * this.camScale;
+    this.camY = pivotY - worldY * this.camScale;
+    this.clampCamera();
+    this.applyCamera();
+  }
+
+  /** Scale and center the world to fit the current viewport. */
+  private fitToViewport() {
+    this.camScale = this.minZoom;
+    const vw = this.app.screen.width;
+    const vh = this.app.screen.height;
+    this.camX = (vw - MAP_VIEWBOX_WIDTH * this.camScale) / 2;
+    this.camY = (vh - MAP_VIEWBOX_HEIGHT * this.camScale) / 2;
+    this.applyCamera();
+  }
+
   // ---------------------------------------------------------------------------
-  // Drag-to-pan
+  // Interaction (pan + pinch-to-zoom)
   // ---------------------------------------------------------------------------
 
-  private setupPan() {
-    let dragging = false;
-    let dragStart = { x: 0, y: 0 };
-    let worldStart = { x: 0, y: 0 };
-
+  private setupInteraction() {
     const stage = this.app.stage;
     stage.eventMode = "static";
-    // Ensure the stage captures pointer events across the full canvas area.
-    stage.hitArea = new Rectangle(0, 0, 100_000, 100_000);
+    // app.screen is the live rectangle that tracks the renderer size.
+    stage.hitArea = this.app.screen;
+
+    // Active pointers tracked by pointerId → current screen position.
+    const pointers = new Map<number, { x: number; y: number }>();
+
+    // Single-finger pan state.
+    let panActive = false;
+    let panStartX = 0;
+    let panStartY = 0;
+    let camStartX = 0;
+    let camStartY = 0;
+
+    // Two-finger pinch state.
+    let pinchStartDist = 0;
+    let pinchStartScale = 0;
+    let pinchMidX = 0;
+    let pinchMidY = 0;
+
+    const beginPan = (x: number, y: number) => {
+      panActive = true;
+      panStartX = x;
+      panStartY = y;
+      camStartX = this.camX;
+      camStartY = this.camY;
+      this.app.canvas.style.cursor = "grabbing";
+    };
 
     stage.on("pointerdown", (e: FederatedPointerEvent) => {
-      dragging = true;
-      dragStart = { x: e.globalX, y: e.globalY };
-      worldStart = { x: this.worldContainer.x, y: this.worldContainer.y };
-      this.app.canvas.style.cursor = "grabbing";
+      pointers.set(e.pointerId, { x: e.globalX, y: e.globalY });
+
+      if (pointers.size === 2) {
+        // Transition from pan to pinch.
+        panActive = false;
+        const pts = [...pointers.values()];
+        pinchMidX = (pts[0].x + pts[1].x) / 2;
+        pinchMidY = (pts[0].y + pts[1].y) / 2;
+        pinchStartDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        pinchStartScale = this.camScale;
+      } else {
+        beginPan(e.globalX, e.globalY);
+      }
     });
 
     stage.on("pointermove", (e: FederatedPointerEvent) => {
-      if (!dragging) return;
-      this.worldContainer.x = worldStart.x + (e.globalX - dragStart.x);
-      this.worldContainer.y = worldStart.y + (e.globalY - dragStart.y);
-      this.clampWorld();
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.globalX, y: e.globalY });
+
+      if (pointers.size === 2) {
+        const pts = [...pointers.values()];
+        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        this.zoomToward(pinchStartScale * (dist / pinchStartDist), pinchMidX, pinchMidY);
+      } else if (panActive) {
+        this.camX = camStartX + (e.globalX - panStartX);
+        this.camY = camStartY + (e.globalY - panStartY);
+        this.clampCamera();
+        this.applyCamera();
+      }
     });
 
-    const stopDrag = () => {
-      dragging = false;
-      this.app.canvas.style.cursor = "grab";
-    };
-    stage.on("pointerup", stopDrag);
-    stage.on("pointerupoutside", stopDrag);
+    const onPointerUp = (e: FederatedPointerEvent) => {
+      pointers.delete(e.pointerId);
 
-    // Default cursor when not dragging.
+      if (pointers.size === 0) {
+        panActive = false;
+        this.app.canvas.style.cursor = "grab";
+      } else if (pointers.size === 1) {
+        // One finger lifted during pinch — resume single-finger pan from here.
+        const [remaining] = [...pointers.values()];
+        beginPan(remaining.x, remaining.y);
+      }
+    };
+
+    stage.on("pointerup", onPointerUp);
+    stage.on("pointerupoutside", onPointerUp);
+
     this.app.canvas.style.cursor = "grab";
   }
 
@@ -198,13 +281,19 @@ export class MapScene {
   // ---------------------------------------------------------------------------
 
   /**
-   * Called by ResizeObserver when the viewport div changes size.
-   * Only the canvas is resized — world scale and position are preserved,
-   * then re-clamped so the world stays in a valid position.
+   * Called by a ResizeObserver when the viewport container changes size.
+   * Resizes the renderer, clamps the camera, and ensures zoom never falls
+   * below the new fit scale.
    */
   resize(width: number, height: number) {
     this.app.renderer.resize(width, height);
-    this.clampWorld();
+    // Enforce min zoom in case the viewport grew and the current scale would
+    // now expose empty space beyond the map edges.
+    if (this.camScale < this.minZoom) {
+      this.camScale = this.minZoom;
+    }
+    this.clampCamera();
+    this.applyCamera();
   }
 
   updateTerritories(
