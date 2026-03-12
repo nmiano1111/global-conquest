@@ -44,7 +44,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	runMigrations(ctx, pool)
+	// runMigrations(ctx, pool)
 
 	d := db.New(pool)
 

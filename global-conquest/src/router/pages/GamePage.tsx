@@ -2,21 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
 import { getGameBootstrap, type GameBootstrap } from "../../api/games";
-import riskBoardImage from "../../assets/images/risk0.png";
 import { useAuth } from "../../auth";
+import { GameMap } from "../../map/GameMap";
 import { useSocket } from "../../realtime";
 import { buttonGhostClass, buttonPrimaryClass, inputClass } from "./styles";
 import {
-  MAP_CENTER_X,
-  MAP_CENTER_Y,
   MAP_EDGES,
-  MAP_OVERLAY_OFFSET_X,
-  MAP_OVERLAY_OFFSET_Y,
-  MAP_OVERLAY_SCALE,
   MAP_PLAYER_COLORS,
   MAP_TERRITORIES,
-  MAP_VIEWBOX_HEIGHT,
-  MAP_VIEWBOX_WIDTH,
   type DiceRollResult,
   type GameChatMessage,
   type GameEventMessage,
@@ -649,92 +642,14 @@ export function GamePage() {
               ) : null}
             </div>
           </div>
-          <div className="relative aspect-[2048/1367] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-            <canvas
-              className="h-full w-full rounded-lg border border-slate-200"
-              width={2048}
-              height={1367}
-              style={{
-                backgroundImage: `url(${riskBoardImage})`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-                backgroundRepeat: "no-repeat",
-              }}
-              aria-label="Game map canvas placeholder"
-            />
-            <svg
-              className="absolute inset-0 h-full w-full"
-              viewBox={`0 0 ${MAP_VIEWBOX_WIDTH} ${MAP_VIEWBOX_HEIGHT}`}
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <g
-                transform={`translate(${MAP_CENTER_X + MAP_OVERLAY_OFFSET_X} ${MAP_CENTER_Y + MAP_OVERLAY_OFFSET_Y}) scale(${MAP_OVERLAY_SCALE}) translate(${-MAP_CENTER_X} ${-MAP_CENTER_Y})`}
-              >
-                {MAP_EDGES.map(([a, b]) => {
-                  const from = MAP_TERRITORIES[a];
-                  const to = MAP_TERRITORIES[b];
-                  if (!from || !to) return null;
-                  return (
-                    <line
-                      key={`${a}|${b}`}
-                      x1={from.x}
-                      y1={from.y}
-                      x2={to.x}
-                      y2={to.y}
-                      stroke="#0f172a"
-                      strokeOpacity={0.35}
-                      strokeWidth={3}
-                    />
-                  );
-                })}
-                {Object.entries(MAP_TERRITORIES).map(([name, pos]) => {
-                  const tRaw = territoryState?.[name];
-                  const t = tRaw && typeof tRaw === "object" ? (tRaw as Record<string, unknown>) : null;
-                  const owner = typeof t?.owner === "number" ? t.owner : -1;
-                  const armies = typeof t?.armies === "number" ? t.armies : 0;
-                  const fill = owner >= 0 ? (playerColors[owner] ?? MAP_PLAYER_COLORS[owner % MAP_PLAYER_COLORS.length]) : "#e2e8f0";
-                  return (
-                    <g key={name}>
-                      <circle
-                        cx={pos.x}
-                        cy={pos.y}
-                        r={34}
-                        fill={fill}
-                        fillOpacity={0.92}
-                        stroke={name === selectedTerritory || name === activeFrom || name === activeTo ? "#0b1220" : "#0f172a"}
-                        strokeWidth={name === selectedTerritory || name === activeFrom || name === activeTo ? 5 : 2.7}
-                        className="cursor-pointer"
-                        onClick={() => onMapTerritoryClick(name)}
-                      />
-                      <text
-                        x={pos.x}
-                        y={pos.y + 1}
-                        fill="#ffffff"
-                        fontSize={20}
-                        fontWeight={700}
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                      >
-                        {armies}
-                      </text>
-                      <text
-                        x={pos.x}
-                        y={pos.y + 28}
-                        fill="#0f172a"
-                        fontSize={11}
-                        fontWeight={800}
-                        textAnchor="middle"
-                        dominantBaseline="hanging"
-                        style={{ paintOrder: "stroke", stroke: "rgba(255,255,255,0.75)", strokeWidth: 3 }}
-                      >
-                        {name}
-                      </text>
-                    </g>
-                  );
-                })}
-              </g>
-            </svg>
-          </div>
+          <GameMap
+            game={game}
+            selectedTerritory={selectedTerritory}
+            activeFrom={activeFrom}
+            activeTo={activeTo}
+            playerColors={playerColors}
+            onTerritoryClick={onMapTerritoryClick}
+          />
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
