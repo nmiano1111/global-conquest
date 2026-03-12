@@ -496,6 +496,8 @@ export function GamePage() {
         return;
       }
       if (isMine) {
+        // Clear stale reinforce highlight whenever a new attacker is picked.
+        setSelectedTerritory("");
         setSelectedFrom(name);
         setSelectedTo("");
         return;
@@ -512,16 +514,23 @@ export function GamePage() {
       return;
     }
     if (phaseMode === "fortify") {
-      if (!selectedFrom) {
-        if (!isMine) {
-          setActionError("Select your source territory first.");
-          return;
-        }
-        setSelectedFrom(name);
+      // Clear stale reinforce highlight on any fortify interaction.
+      setSelectedTerritory("");
+      if (!isMine) {
+        setActionError("Select one of your territories.");
         return;
       }
-      if (!isMine) {
-        setActionError("Select one of your territories as fortify destination.");
+      // If no source yet, OR both source+dest already chosen → start fresh.
+      // This lets the player change their source at any point.
+      if (!selectedFrom || selectedTo) {
+        setSelectedFrom(name);
+        setSelectedTo("");
+        return;
+      }
+      // Source set, destination not yet — must be adjacent.
+      const adjacent = MAP_EDGES.some(([a, b]) => (a === selectedFrom && b === name) || (b === selectedFrom && a === name));
+      if (!adjacent) {
+        setActionError(`${name} is not adjacent to ${selectedFrom}. Armies can only move to a neighboring territory.`);
         return;
       }
       setSelectedTo(name);
@@ -620,7 +629,7 @@ export function GamePage() {
               ) : null}
               {phaseMode === "attack" ? (
                 <>
-                  <button className={buttonGhostClass} type="button" onClick={() => sendAction({ action: "end_attack" })} disabled={!isMyTurn}>
+                  <button className={buttonGhostClass} type="button" onClick={() => { sendAction({ action: "end_attack" }); setSelectedFrom(""); setSelectedTo(""); setSelectedTerritory(""); }} disabled={!isMyTurn}>
                     End Attack
                   </button>
                 </>
@@ -635,7 +644,7 @@ export function GamePage() {
                   <button className={buttonGhostClass} type="button" onClick={commitFortify} disabled={!isMyTurn}>
                     Fortify
                   </button>
-                  <button className={buttonPrimaryClass} type="button" onClick={() => sendAction({ action: "end_turn" })} disabled={!isMyTurn}>
+                  <button className={buttonPrimaryClass} type="button" onClick={() => { sendAction({ action: "end_turn" }); setSelectedFrom(""); setSelectedTo(""); setSelectedTerritory(""); }} disabled={!isMyTurn}>
                     End Turn
                   </button>
                 </>
