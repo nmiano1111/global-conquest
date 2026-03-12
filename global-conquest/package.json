@@ -13,6 +13,7 @@
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-router": "^1.163.3",
     "axios": "^1.13.2",
+    "pixi.js": "^8.17.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.2.1"
