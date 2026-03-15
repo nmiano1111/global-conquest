@@ -55,11 +55,12 @@ type lobbyState struct {
 }
 
 type GameBootstrapPlayer struct {
-	UserID     string `json:"user_id"`
-	UserName   string `json:"user_name"`
-	Color      string `json:"color"`
-	CardCount  int    `json:"card_count"`
-	Eliminated bool   `json:"eliminated"`
+	UserID     string      `json:"user_id"`
+	UserName   string      `json:"user_name"`
+	Color      string      `json:"color"`
+	CardCount  int         `json:"card_count"`
+	Cards      []risk.Card `json:"cards,omitempty"`
+	Eliminated bool        `json:"eliminated"`
 }
 
 type GameBootstrap struct {
@@ -69,6 +70,7 @@ type GameBootstrap struct {
 	Phase                 string                 `json:"phase"`
 	CurrentPlayer         int                    `json:"current_player"`
 	PendingReinforcements int                    `json:"pending_reinforcements"`
+	SetsTraded            int                    `json:"sets_traded"`
 	Occupy                *GameOccupyRequirement `json:"occupy,omitempty"`
 	Players               []GameBootstrapPlayer  `json:"players"`
 	Territories           json.RawMessage        `json:"territories"`
@@ -87,6 +89,7 @@ type GameActionInput struct {
 	Armies       int
 	AttackerDice int
 	DefenderDice int
+	CardIndices  [3]int
 }
 
 type GameActionPlayer struct {
@@ -102,11 +105,13 @@ type GameActionUpdate struct {
 	Phase                 string                 `json:"phase"`
 	CurrentPlayer         int                    `json:"current_player"`
 	PendingReinforcements int                    `json:"pending_reinforcements"`
+	SetsTraded            int                    `json:"sets_traded"`
 	Occupy                *GameOccupyRequirement `json:"occupy,omitempty"`
 	Players               []GameActionPlayer     `json:"players"`
 	Territories           json.RawMessage        `json:"territories"`
 	Result                any                    `json:"result,omitempty"`
 	Event                 *GameEventEntry        `json:"event,omitempty"`
+	ActorCards            []risk.Card            `json:"-"`
 }
 
 type GameEventEntry struct {
@@ -437,6 +442,14 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			eventType = "turn_ended"
 			eventBody = fmt.Sprintf("%s ended their turn. %s is up next.", displayName(names, in.PlayerUserID), displayName(names, nextPlayer))
+		case "trade_cards":
+			armies, err := engine.TradeCards(in.PlayerUserID, in.CardIndices)
+			if err != nil {
+				return err
+			}
+			result = map[string]int{"armies": armies}
+			eventType = "cards_traded"
+			eventBody = fmt.Sprintf("%s traded cards for %d armies.", displayName(names, in.PlayerUserID), armies)
 		default:
 			return ErrInvalidGameAction
 		}
@@ -465,6 +478,13 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				Eliminated: p.Eliminated,
 			})
 		}
+		var actorCards []risk.Card
+		for _, p := range engine.Players {
+			if p.ID == in.PlayerUserID {
+				actorCards = p.Cards
+				break
+			}
+		}
 		out = GameActionUpdate{
 			GameID:                g.ID,
 			Action:                in.Action,
@@ -472,10 +492,12 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			Phase:                 string(engine.Phase),
 			CurrentPlayer:         engine.CurrentPlayer,
 			PendingReinforcements: engine.PendingReinforcements,
+			SetsTraded:            engine.SetsTraded,
 			Occupy:                occupyRequirement(engine.Occupy),
 			Players:               players,
 			Territories:           territories,
 			Result:                result,
+			ActorCards:            actorCards,
 		}
 		if s.gameEvent != nil && strings.TrimSpace(eventBody) != "" {
 			saved, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, in.PlayerUserID, eventType, eventBody)
@@ -610,6 +632,7 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		out.Phase = string(engine.Phase)
 		out.CurrentPlayer = engine.CurrentPlayer
 		out.PendingReinforcements = engine.PendingReinforcements
+		out.SetsTraded = engine.SetsTraded
 		out.Occupy = occupyRequirement(engine.Occupy)
 		out.Players = make([]GameBootstrapPlayer, 0, len(engine.Players))
 		for i, p := range engine.Players {
@@ -617,11 +640,16 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 			if name == "" {
 				name = p.ID
 			}
+			var cards []risk.Card
+			if p.ID == requesterUserID {
+				cards = p.Cards
+			}
 			out.Players = append(out.Players, GameBootstrapPlayer{
 				UserID:     p.ID,
 				UserName:   name,
 				Color:      bootstrapColor(i),
 				CardCount:  len(p.Cards),
+				Cards:      cards,
 				Eliminated: p.Eliminated,
 			})
 		}

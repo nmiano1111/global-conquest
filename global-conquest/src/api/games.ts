@@ -17,11 +17,17 @@ export type CreateGameRequest = {
   playerCount: number;
 };
 
+export type Card = {
+  territory: string;
+  symbol: string;
+};
+
 export type GameBootstrapPlayer = {
   userId: string;
   userName: string;
   color: string;
   cardCount: number;
+  cards: Card[];
   eliminated: boolean;
 };
 
@@ -48,6 +54,7 @@ export type GameBootstrap = {
   phase: string;
   currentPlayer: number;
   pendingReinforcements: number;
+  setsTraded: number;
   occupy: GameOccupyRequirement | null;
   players: GameBootstrapPlayer[];
   territories: Record<string, unknown>;
@@ -128,6 +135,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
       phase: "",
       currentPlayer: -1,
       pendingReinforcements: 0,
+      setsTraded: 0,
       occupy: null,
       players: [],
       territories: {},
@@ -139,13 +147,23 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
   const playersRaw = Array.isArray(record.players) ? record.players : [];
   const players = playersRaw
     .filter((v): v is UnknownRecord => !!v && typeof v === "object")
-    .map((p) => ({
-      userId: readString(p.user_id ?? p.userId),
-      userName: readString(p.user_name ?? p.userName),
-      color: readString(p.color ?? p.Color),
-      cardCount: readNumber(p.card_count ?? p.cardCount),
-      eliminated: p.eliminated === true,
-    }));
+    .map((p) => {
+      const cardsRaw = Array.isArray(p.cards) ? p.cards : [];
+      const cards: Card[] = cardsRaw
+        .filter((c): c is UnknownRecord => !!c && typeof c === "object")
+        .map((c) => ({
+          territory: readString(c.territory ?? c.Territory),
+          symbol: readString(c.symbol ?? c.Symbol),
+        }));
+      return {
+        userId: readString(p.user_id ?? p.userId),
+        userName: readString(p.user_name ?? p.userName),
+        color: readString(p.color ?? p.Color),
+        cardCount: readNumber(p.card_count ?? p.cardCount),
+        cards,
+        eliminated: p.eliminated === true,
+      };
+    });
   const territories =
     record.territories && typeof record.territories === "object"
       ? (record.territories as Record<string, unknown>)
@@ -182,6 +200,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     phase: readString(record.phase ?? record.Phase),
     currentPlayer: readNumber(record.current_player ?? record.currentPlayer, -1),
     pendingReinforcements: readNumber(record.pending_reinforcements ?? record.pendingReinforcements, 0),
+    setsTraded: readNumber(record.sets_traded ?? record.setsTraded, 0),
     occupy,
     players,
     territories,

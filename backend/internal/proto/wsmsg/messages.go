@@ -20,6 +20,7 @@ const (
 
 	// server->client
 	TypeError            Type = "error"
+	TypeYourCards        Type = "your_cards"
 	TypeGameCreated      Type = "game_created"
 	TypeJoinedGame       Type = "joined_game"
 	TypeLeftGame         Type = "left_game"
@@ -149,6 +150,16 @@ type GameActionPayload struct {
 	Armies       int    `json:"armies,omitempty"`
 	AttackerDice int    `json:"attacker_dice,omitempty"`
 	DefenderDice int    `json:"defender_dice,omitempty"`
+	CardIndices  [3]int `json:"card_indices"`
+}
+
+type CardPayload struct {
+	Territory string `json:"territory"`
+	Symbol    string `json:"symbol"`
+}
+
+type YourCardsPayload struct {
+	Cards []CardPayload `json:"cards"`
 }
 
 type GameStatePlayerPayload struct {
@@ -164,6 +175,7 @@ type GameStateUpdatedPayload struct {
 	Phase                 string                   `json:"phase"`
 	CurrentPlayer         int                      `json:"current_player"`
 	PendingReinforcements int                      `json:"pending_reinforcements"`
+	SetsTraded            int                      `json:"sets_traded"`
 	Occupy                *GameOccupyRequirement   `json:"occupy,omitempty"`
 	Players               []GameStatePlayerPayload `json:"players"`
 	Territories           json.RawMessage          `json:"territories"`
