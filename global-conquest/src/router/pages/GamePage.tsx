@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
-import { getGameBootstrap, type GameBootstrap } from "../../api/games";
+import { getGameBootstrap, type GameBootstrap, type Card } from "../../api/games";
 import { useAuth } from "../../auth";
 import { GameMap } from "../../map/GameMap";
 import { useSocket } from "../../realtime";
@@ -34,6 +34,8 @@ export function GamePage() {
   const [armiesInput, setArmiesInput] = useState(1);
   const [attackerDice, setAttackerDice] = useState(3);
   const [diceResult, setDiceResult] = useState<DiceRollResult | null>(null);
+  const [myCards, setMyCards] = useState<Card[]>([]);
+  const [selectedCardIndices, setSelectedCardIndices] = useState<number[]>([]);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const eventScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -58,6 +60,8 @@ export function GamePage() {
         if (cancelled) return;
         setGame(out);
         setEventMessages(out.events ?? []);
+        const me = out.players.find((p) => p.userId === auth.user?.id);
+        if (me) setMyCards(me.cards ?? []);
       } catch (err) {
         if (cancelled) return;
         const apiErr = err as ApiError;
@@ -127,6 +131,7 @@ export function GamePage() {
       const currentPlayer = typeof payload?.current_player === "number" ? payload.current_player : -1;
       const pendingReinforcements =
         typeof payload?.pending_reinforcements === "number" ? payload.pending_reinforcements : 0;
+      const setsTraded = typeof payload?.sets_traded === "number" ? payload.sets_traded : undefined;
       const occupyRaw = payload?.occupy && typeof payload.occupy === "object" ? (payload.occupy as Record<string, unknown>) : null;
       const occupy =
         occupyRaw &&
@@ -162,6 +167,7 @@ export function GamePage() {
             userName: meta?.userName || p.userId,
             color: meta?.color || MAP_PLAYER_COLORS[idx % MAP_PLAYER_COLORS.length],
             cardCount: p.cardCount,
+            cards: meta?.cards ?? [],
             eliminated: p.eliminated,
           };
         });
@@ -170,6 +176,7 @@ export function GamePage() {
           phase,
           currentPlayer,
           pendingReinforcements,
+          setsTraded: setsTraded ?? prev.setsTraded,
           occupy,
           territories,
           players: nextPlayers,
@@ -227,6 +234,22 @@ export function GamePage() {
   }, [on]);
 
   useEffect(() => {
+    const off = on("your_cards", (msg) => {
+      const payload = msg.payload as Record<string, unknown> | undefined;
+      const cardsRaw = Array.isArray(payload?.cards) ? payload.cards : [];
+      const cards: Card[] = cardsRaw
+        .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+        .map((c) => ({
+          territory: typeof c.territory === "string" ? c.territory : "",
+          symbol: typeof c.symbol === "string" ? c.symbol : "",
+        }));
+      setMyCards(cards);
+      setSelectedCardIndices([]);
+    });
+    return off;
+  }, [on]);
+
+  useEffect(() => {
     const off = on("game_chat_history", (msg) => {
       const payload = msg.payload as { messages?: unknown } | undefined;
       if (!Array.isArray(payload?.messages)) return;
@@ -273,6 +296,13 @@ export function GamePage() {
 
   const players = useMemo(() => game?.players ?? [], [game?.players]);
   const phase = game?.phase ?? "";
+  const setsTraded = game?.setsTraded ?? 0;
+  const nextTradeBonus = useMemo(() => {
+    const n = setsTraded + 1;
+    if (n <= 5) return 2 * n + 2;
+    if (n === 6) return 15;
+    return 15 + (n - 6) * 5;
+  }, [setsTraded]);
   const territoryState = game?.territories ?? null;
   const pendingReinforcements = game?.pendingReinforcements ?? 0;
   const occupyRequirement = game?.occupy ?? null;
@@ -565,6 +595,24 @@ export function GamePage() {
     sendAction({ action: "occupy", armies: clampedArmiesInput });
   };
 
+  const toggleCardSelection = (idx: number) => {
+    setSelectedCardIndices((prev) => {
+      if (prev.includes(idx)) return prev.filter((i) => i !== idx);
+      if (prev.length >= 3) return prev;
+      return [...prev, idx];
+    });
+  };
+
+  const commitTradeCards = () => {
+    if (selectedCardIndices.length !== 3) {
+      setActionError("Select exactly 3 cards to trade.");
+      return;
+    }
+    const [i0, i1, i2] = selectedCardIndices;
+    sendAction({ action: "trade_cards", card_indices: [i0, i1, i2] });
+    setSelectedCardIndices([]);
+  };
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
       <section className="grid gap-4">
@@ -724,6 +772,66 @@ export function GamePage() {
             ))}
           </ul>
         </section>
+
+        {meIndex >= 0 && game?.status === "in_progress" ? (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">My Cards</h3>
+              <span className="text-xs text-slate-500">
+                {myCards.length} card{myCards.length !== 1 ? "s" : ""} · next trade: <span className="font-semibold text-indigo-700">+{nextTradeBonus}</span>
+              </span>
+            </div>
+            {myCards.length === 0 ? (
+              <p className="text-xs text-slate-500">No cards yet. Earn one by conquering a territory.</p>
+            ) : (
+              <ul className="grid gap-1.5">
+                {myCards.map((card, idx) => {
+                  const isSelected = selectedCardIndices.includes(idx);
+                  const symbolIcon = card.symbol === "infantry" ? "🪖" : card.symbol === "cavalry" ? "🐴" : card.symbol === "artillery" ? "💣" : "⭐";
+                  return (
+                    <li key={idx}>
+                      <button
+                        type="button"
+                        onClick={() => toggleCardSelection(idx)}
+                        className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                          isSelected
+                            ? "border-indigo-400 bg-indigo-50 text-indigo-800"
+                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className="mr-1.5">{symbolIcon}</span>
+                        <span className="font-semibold capitalize">{card.symbol}</span>
+                        {card.territory ? (
+                          <span className="ml-1.5 text-slate-500">— {card.territory}</span>
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {myCards.length >= 5 && isMyTurn && phaseMode === "reinforce" ? (
+              <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">
+                You must trade cards before placing reinforcements (5+ cards held).
+              </p>
+            ) : null}
+            {isMyTurn && phaseMode === "reinforce" && myCards.length >= 3 ? (
+              <div className="mt-3 grid gap-2">
+                <p className="text-xs text-slate-500">
+                  {selectedCardIndices.length}/3 selected
+                </p>
+                <button
+                  type="button"
+                  className={buttonPrimaryClass}
+                  onClick={commitTradeCards}
+                  disabled={selectedCardIndices.length !== 3}
+                >
+                  Trade Selected Cards
+                </button>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between gap-2">

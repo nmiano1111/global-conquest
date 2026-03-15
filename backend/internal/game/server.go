@@ -71,6 +71,7 @@ type GameActionInput struct {
 	Armies       int
 	AttackerDice int
 	DefenderDice int
+	CardIndices  [3]int
 }
 
 type GameActionPlayer struct {
@@ -86,11 +87,13 @@ type GameActionUpdate struct {
 	Phase                 string
 	CurrentPlayer         int
 	PendingReinforcements int
+	SetsTraded            int
 	Occupy                *GameOccupyRequirement
 	Players               []GameActionPlayer
 	Territories           json.RawMessage
 	Result                any
 	Event                 *GameEventMessage
+	ActorCards            []wsmsg.CardPayload
 }
 
 type GameOccupyRequirement struct {
@@ -390,6 +393,7 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			Armies:       payload.Armies,
 			AttackerDice: payload.AttackerDice,
 			DefenderDice: payload.DefenderDice,
+			CardIndices:  payload.CardIndices,
 		})
 		if err != nil {
 			c.Conn.Send(errEnv(id, "invalid_action", err.Error()))
@@ -411,6 +415,7 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			Phase:                 updated.Phase,
 			CurrentPlayer:         updated.CurrentPlayer,
 			PendingReinforcements: updated.PendingReinforcements,
+			SetsTraded:            updated.SetsTraded,
 			Occupy: func() *wsmsg.GameOccupyRequirement {
 				if updated.Occupy == nil {
 					return nil
@@ -439,6 +444,13 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 				}
 			}(),
 		})
+
+		// Send the actor's current hand privately so they can see their cards.
+		if updated.ActorCards != nil {
+			c.Conn.Send(envelope(string(wsmsg.TypeYourCards), newID("s"), id, gameID, wsmsg.YourCardsPayload{
+				Cards: updated.ActorCards,
+			}))
+		}
 
 	default:
 		// generic ack

@@ -2,6 +2,7 @@ package service
 
 import (
 	"backend/internal/game"
+	"backend/internal/proto/wsmsg"
 	"context"
 )
 
@@ -24,6 +25,7 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 		Armies:       in.Armies,
 		AttackerDice: in.AttackerDice,
 		DefenderDice: in.DefenderDice,
+		CardIndices:  in.CardIndices,
 	})
 	if err != nil {
 		return game.GameActionUpdate{}, err
@@ -37,6 +39,13 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 			Eliminated: p.Eliminated,
 		})
 	}
+	actorCards := make([]wsmsg.CardPayload, 0, len(out.ActorCards))
+	for _, c := range out.ActorCards {
+		actorCards = append(actorCards, wsmsg.CardPayload{
+			Territory: string(c.Territory),
+			Symbol:    string(c.Symbol),
+		})
+	}
 	return game.GameActionUpdate{
 		GameID:                out.GameID,
 		Action:                out.Action,
@@ -44,6 +53,7 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 		Phase:                 out.Phase,
 		CurrentPlayer:         out.CurrentPlayer,
 		PendingReinforcements: out.PendingReinforcements,
+		SetsTraded:            out.SetsTraded,
 		Occupy: func() *game.GameOccupyRequirement {
 			if out.Occupy == nil {
 				return nil
@@ -58,6 +68,7 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 		Players:     players,
 		Territories: out.Territories,
 		Result:      out.Result,
+		ActorCards:  actorCards,
 		Event: func() *game.GameEventMessage {
 			if out.Event == nil {
 				return nil
