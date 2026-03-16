@@ -174,8 +174,8 @@ func TestJoinClassicGameTransitionsWhenFull(t *testing.T) {
 			if len(g.Players) != 3 {
 				t.Fatalf("expected 3 players in risk state")
 			}
-			if g.Phase != risk.PhaseReinforce {
-				t.Fatalf("expected auto-start to begin at reinforce phase, got %s", g.Phase)
+			if g.Phase != risk.PhaseSetupReinforce {
+				t.Fatalf("expected game to begin at setup_reinforce phase, got %s", g.Phase)
 			}
 			return store.Game{ID: "g1", Status: in.Status, State: in.State}, nil
 		},

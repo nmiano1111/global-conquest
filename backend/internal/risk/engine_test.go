@@ -47,19 +47,29 @@ func claimAllRoundRobin(t *testing.T, g *Game) {
 func finishSetup(t *testing.T, g *Game) {
 	t.Helper()
 	for g.Phase == PhaseSetupReinforce {
-		pid := g.Players[g.CurrentPlayer].ID
-		var terr Territory
-		for t, ts := range g.Territories {
-			if ts.Owner == g.CurrentPlayer {
-				terr = t
-				break
+		placed := false
+		for pi, p := range g.Players {
+			if g.SetupReserves[pi] <= 0 {
+				continue
 			}
+			var terr Territory
+			for tt, ts := range g.Territories {
+				if ts.Owner == pi {
+					terr = tt
+					break
+				}
+			}
+			if terr == "" {
+				t.Fatalf("player %s has no territory during setup reinforce", p.ID)
+			}
+			if err := g.PlaceInitialArmy(p.ID, terr); err != nil {
+				t.Fatalf("place setup army: %v", err)
+			}
+			placed = true
+			break
 		}
-		if terr == "" {
-			t.Fatalf("player %s has no territory during setup reinforce", pid)
-		}
-		if err := g.PlaceInitialArmy(pid, terr); err != nil {
-			t.Fatalf("place setup army: %v", err)
+		if !placed {
+			t.Fatalf("setup stuck: no player has reserves but phase is still setup_reinforce")
 		}
 	}
 }

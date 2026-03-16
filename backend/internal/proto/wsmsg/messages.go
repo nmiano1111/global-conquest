@@ -163,9 +163,10 @@ type YourCardsPayload struct {
 }
 
 type GameStatePlayerPayload struct {
-	UserID     string `json:"user_id"`
-	CardCount  int    `json:"card_count"`
-	Eliminated bool   `json:"eliminated"`
+	UserID      string `json:"user_id"`
+	CardCount   int    `json:"card_count"`
+	SetupArmies int    `json:"setup_armies"`
+	Eliminated  bool   `json:"eliminated"`
 }
 
 type GameStateUpdatedPayload struct {

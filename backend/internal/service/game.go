@@ -55,12 +55,13 @@ type lobbyState struct {
 }
 
 type GameBootstrapPlayer struct {
-	UserID     string      `json:"user_id"`
-	UserName   string      `json:"user_name"`
-	Color      string      `json:"color"`
-	CardCount  int         `json:"card_count"`
-	Cards      []risk.Card `json:"cards,omitempty"`
-	Eliminated bool        `json:"eliminated"`
+	UserID      string      `json:"user_id"`
+	UserName    string      `json:"user_name"`
+	Color       string      `json:"color"`
+	CardCount   int         `json:"card_count"`
+	Cards       []risk.Card `json:"cards,omitempty"`
+	SetupArmies int         `json:"setup_armies"`
+	Eliminated  bool        `json:"eliminated"`
 }
 
 type GameBootstrap struct {
@@ -93,9 +94,10 @@ type GameActionInput struct {
 }
 
 type GameActionPlayer struct {
-	UserID     string `json:"user_id"`
-	CardCount  int    `json:"card_count"`
-	Eliminated bool   `json:"eliminated"`
+	UserID      string `json:"user_id"`
+	CardCount   int    `json:"card_count"`
+	SetupArmies int    `json:"setup_armies"`
+	Eliminated  bool   `json:"eliminated"`
 }
 
 type GameActionUpdate struct {
@@ -207,7 +209,7 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		nextStatus := "lobby"
 		var nextState []byte
 		if len(lobby.PlayerIDs) == lobby.PlayerCount {
-			engine, err := risk.NewClassicAutoStartGame(lobby.PlayerIDs, nil)
+			engine, err := risk.NewClassicRandomTerritoryGame(lobby.PlayerIDs, nil)
 			if err != nil {
 				return err
 			}
@@ -226,7 +228,7 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "player_joined", joinBody); err != nil {
 					return err
 				}
-				startBody := fmt.Sprintf("All players joined. The game has started. %s goes first.", displayName(names, engine.Players[engine.CurrentPlayer].ID))
+				startBody := fmt.Sprintf("All players joined. Territories have been randomly assigned. %s places first.", displayName(names, engine.Players[engine.CurrentPlayer].ID))
 				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "game_started", startBody); err != nil {
 					return err
 				}
@@ -450,6 +452,15 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			result = map[string]int{"armies": armies}
 			eventType = "cards_traded"
 			eventBody = fmt.Sprintf("%s traded cards for %d armies.", displayName(names, in.PlayerUserID), armies)
+		case "place_initial_army":
+			if in.Territory == "" {
+				return ErrInvalidGameAction
+			}
+			if err := engine.PlaceInitialArmy(in.PlayerUserID, risk.Territory(in.Territory)); err != nil {
+				return err
+			}
+			eventType = "initial_army_placed"
+			eventBody = fmt.Sprintf("%s placed an army on %s.", displayName(names, in.PlayerUserID), in.Territory)
 		default:
 			return ErrInvalidGameAction
 		}
@@ -471,11 +482,12 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			return err
 		}
 		players := make([]GameActionPlayer, 0, len(engine.Players))
-		for _, p := range engine.Players {
+		for i, p := range engine.Players {
 			players = append(players, GameActionPlayer{
-				UserID:     p.ID,
-				CardCount:  len(p.Cards),
-				Eliminated: p.Eliminated,
+				UserID:      p.ID,
+				CardCount:   len(p.Cards),
+				SetupArmies: engine.SetupReserves[i],
+				Eliminated:  p.Eliminated,
 			})
 		}
 		var actorCards []risk.Card
@@ -645,12 +657,13 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 				cards = p.Cards
 			}
 			out.Players = append(out.Players, GameBootstrapPlayer{
-				UserID:     p.ID,
-				UserName:   name,
-				Color:      bootstrapColor(i),
-				CardCount:  len(p.Cards),
-				Cards:      cards,
-				Eliminated: p.Eliminated,
+				UserID:      p.ID,
+				UserName:    name,
+				Color:       bootstrapColor(i),
+				CardCount:   len(p.Cards),
+				Cards:       cards,
+				SetupArmies: engine.SetupReserves[i],
+				Eliminated:  p.Eliminated,
 			})
 		}
 		tb, err := json.Marshal(engine.Territories)
@@ -767,7 +780,7 @@ func decodeLobbyState(raw json.RawMessage) (lobbyState, error) {
 }
 
 func isLegacyUninitializedSetup(g risk.Game) bool {
-	if g.Phase != risk.PhaseSetupClaim && g.Phase != risk.PhaseSetupReinforce {
+	if g.Phase != risk.PhaseSetupClaim {
 		return false
 	}
 	if len(g.Players) < 3 || len(g.Players) > 6 {
@@ -781,7 +794,7 @@ func mapGameActionErr(err error) error {
 	case errors.Is(err, risk.ErrOutOfTurn),
 		errors.Is(err, risk.ErrInvalidMove),
 		errors.Is(err, risk.ErrInvalidPhase):
-		return ErrInvalidGameAction
+		return fmt.Errorf("%w: %v", ErrInvalidGameAction, err)
 	default:
 		return err
 	}

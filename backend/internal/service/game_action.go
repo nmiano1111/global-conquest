@@ -34,9 +34,10 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 	players := make([]game.GameActionPlayer, 0, len(out.Players))
 	for _, p := range out.Players {
 		players = append(players, game.GameActionPlayer{
-			UserID:     p.UserID,
-			CardCount:  p.CardCount,
-			Eliminated: p.Eliminated,
+			UserID:      p.UserID,
+			CardCount:   p.CardCount,
+			SetupArmies: p.SetupArmies,
+			Eliminated:  p.Eliminated,
 		})
 	}
 	actorCards := make([]wsmsg.CardPayload, 0, len(out.ActorCards))

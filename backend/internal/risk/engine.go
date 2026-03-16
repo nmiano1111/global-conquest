@@ -162,6 +162,29 @@ func NewClassicAutoStartGame(playerIDs []string, rng RNG) (*Game, error) {
 	return g, nil
 }
 
+// NewClassicRandomTerritoryGame creates a classic game with territories randomly
+// pre-assigned to players (1 army each), then starts in PhaseSetupReinforce so
+// players can manually place their remaining starting armies before the game begins.
+func NewClassicRandomTerritoryGame(playerIDs []string, rng RNG) (*Game, error) {
+	g, err := NewClassicGame(playerIDs, rng)
+	if err != nil {
+		return nil, err
+	}
+
+	order := append([]Territory(nil), g.Board.Order...)
+	shuffleTerritories(g.rng, order)
+
+	for i, t := range order {
+		owner := i % len(g.Players)
+		g.Territories[t] = TerritoryState{Owner: owner, Armies: 1}
+		g.SetupReserves[owner]--
+	}
+
+	g.CurrentPlayer = 0
+	g.Phase = PhaseSetupReinforce
+	return g, nil
+}
+
 func (g *Game) ClaimTerritory(playerID string, t Territory) error {
 	if g.Phase != PhaseSetupClaim {
 		return ErrInvalidPhase
@@ -193,9 +216,15 @@ func (g *Game) PlaceInitialArmy(playerID string, t Territory) error {
 	if g.Phase != PhaseSetupReinforce {
 		return ErrInvalidPhase
 	}
-	pi, err := g.requireCurrentPlayer(playerID)
-	if err != nil {
-		return err
+	pi := -1
+	for i, p := range g.Players {
+		if p.ID == playerID {
+			pi = i
+			break
+		}
+	}
+	if pi == -1 {
+		return ErrOutOfTurn
 	}
 	if g.SetupReserves[pi] <= 0 {
 		return fmt.Errorf("%w: no reserves left", ErrInvalidMove)
@@ -212,9 +241,7 @@ func (g *Game) PlaceInitialArmy(playerID string, t Territory) error {
 		g.Phase = PhaseReinforce
 		g.CurrentPlayer = 0
 		g.startTurn()
-		return nil
 	}
-	g.advanceTurnInSetup()
 	return nil
 }
 

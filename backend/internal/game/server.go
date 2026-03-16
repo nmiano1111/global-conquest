@@ -75,9 +75,10 @@ type GameActionInput struct {
 }
 
 type GameActionPlayer struct {
-	UserID     string
-	CardCount  int
-	Eliminated bool
+	UserID      string
+	CardCount   int
+	SetupArmies int
+	Eliminated  bool
 }
 
 type GameActionUpdate struct {
@@ -403,9 +404,10 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 		statePlayers := make([]wsmsg.GameStatePlayerPayload, 0, len(updated.Players))
 		for _, p := range updated.Players {
 			statePlayers = append(statePlayers, wsmsg.GameStatePlayerPayload{
-				UserID:     p.UserID,
-				CardCount:  p.CardCount,
-				Eliminated: p.Eliminated,
+				UserID:      p.UserID,
+				CardCount:   p.CardCount,
+				SetupArmies: p.SetupArmies,
+				Eliminated:  p.Eliminated,
 			})
 		}
 		s.broadcastGameStateUpdate(gameID, wsmsg.GameStateUpdatedPayload{

@@ -153,6 +153,7 @@ export function GamePage() {
         .map((p) => ({
           userId: typeof p.user_id === "string" ? p.user_id : "",
           cardCount: typeof p.card_count === "number" ? p.card_count : 0,
+          setupArmies: typeof p.setup_armies === "number" ? p.setup_armies : 0,
           eliminated: p.eliminated === true,
         }))
         .filter((p) => p.userId !== "");
@@ -168,6 +169,7 @@ export function GamePage() {
             color: meta?.color || MAP_PLAYER_COLORS[idx % MAP_PLAYER_COLORS.length],
             cardCount: p.cardCount,
             cards: meta?.cards ?? [],
+            setupArmies: p.setupArmies,
             eliminated: p.eliminated,
           };
         });
@@ -309,7 +311,8 @@ export function GamePage() {
   const meIndex = useMemo(() => players.findIndex((p) => p.userId === auth.user?.id), [players, auth.user?.id]);
   const isMyTurn = meIndex >= 0 && game?.currentPlayer === meIndex;
   const canEnterAttack = pendingReinforcements === 0;
-  const phaseMode = phase === "attack" || phase === "fortify" || phase === "occupy" || phase === "reinforce" ? phase : "reinforce";
+  const phaseMode = phase === "attack" || phase === "fortify" || phase === "occupy" || phase === "reinforce" || phase === "setup_reinforce" ? phase : "reinforce";
+  const mySetupArmies = useMemo(() => players[meIndex]?.setupArmies ?? 0, [players, meIndex]);
   const activeFrom = phaseMode === "occupy" && occupyRequirement ? occupyRequirement.from : selectedFrom;
   const activeTo = phaseMode === "occupy" && occupyRequirement ? occupyRequirement.to : selectedTo;
   const playerColors = useMemo(
@@ -505,6 +508,19 @@ export function GamePage() {
     const isMine = owner >= 0 && owner === meIndex;
     const isEnemy = owner >= 0 && owner !== meIndex;
 
+    if (phaseMode === "setup_reinforce") {
+      if (!isMine) {
+        setActionError("You can only place armies on your own territories.");
+        return;
+      }
+      if (mySetupArmies <= 0) {
+        setActionError("You have no armies left to place.");
+        return;
+      }
+      setSelectedTerritory(name);
+      sendAction({ action: "place_initial_army", territory: name });
+      return;
+    }
     if (phaseMode === "reinforce") {
       if (!isMine) {
         setActionError("Choose one of your territories for reinforcement.");
@@ -639,6 +655,16 @@ export function GamePage() {
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Map</h3>
             <span className="text-xs text-slate-500">Status: {game?.status || "-"}</span>
           </div>
+          {phaseMode === "setup_reinforce" ? (
+            <div className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-800">
+              <p className="font-semibold">Initial Troop Placement</p>
+              <p className="mt-0.5">
+                {mySetupArmies > 0
+                  ? `Click one of your territories to place an army. You have ${mySetupArmies} left.`
+                  : "You've placed all your armies. Waiting for other players to finish."}
+              </p>
+            </div>
+          ) : null}
           <div className="mb-3 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 md:grid-cols-[1fr_auto] md:items-center">
             <div>
               <p>
@@ -657,7 +683,7 @@ export function GamePage() {
               ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {phaseMode !== "attack" ? (
+              {phaseMode !== "attack" && phaseMode !== "setup_reinforce" ? (
                 <input
                   className={`${inputClass} w-24`}
                   type="number"
@@ -766,7 +792,11 @@ export function GamePage() {
                     </span>
                   ) : null}
                 </div>
-                <p className="mt-1 text-xs text-slate-600">Cards: {p.cardCount}</p>
+                {phaseMode === "setup_reinforce" ? (
+                  <p className="mt-1 text-xs text-slate-600">Armies to place: <span className="font-semibold">{p.setupArmies}</span></p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-600">Cards: {p.cardCount}</p>
+                )}
                 <p className="text-xs text-slate-600">Status: {p.eliminated ? "Eliminated" : "Active"}</p>
               </li>
             ))}

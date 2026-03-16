@@ -28,6 +28,7 @@ export type GameBootstrapPlayer = {
   color: string;
   cardCount: number;
   cards: Card[];
+  setupArmies: number;
   eliminated: boolean;
 };
 
@@ -161,6 +162,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
         color: readString(p.color ?? p.Color),
         cardCount: readNumber(p.card_count ?? p.cardCount),
         cards,
+        setupArmies: readNumber(p.setup_armies ?? p.setupArmies),
         eliminated: p.eliminated === true,
       };
     });
