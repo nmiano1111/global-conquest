@@ -3,7 +3,6 @@ import {
   Assets,
   Container,
   type FederatedPointerEvent,
-  Graphics,
   Sprite,
   Texture,
 } from "pixi.js";
@@ -11,7 +10,6 @@ import riskBoardImage from "../assets/images/risk0.png";
 import {
   MAP_CENTER_X,
   MAP_CENTER_Y,
-  MAP_EDGES,
   MAP_OVERLAY_OFFSET_X,
   MAP_OVERLAY_OFFSET_Y,
   MAP_OVERLAY_SCALE,
@@ -96,17 +94,6 @@ export class MapScene {
     );
     this.overlayContainer.scale.set(MAP_OVERLAY_SCALE);
     this.worldContainer.addChild(this.overlayContainer);
-
-    // --- Edges ---
-    const edges = new Graphics();
-    for (const [a, b] of MAP_EDGES) {
-      const from = MAP_TERRITORIES[a];
-      const to = MAP_TERRITORIES[b];
-      if (!from || !to) continue;
-      edges.moveTo(from.x, from.y).lineTo(to.x, to.y);
-    }
-    edges.stroke({ color: "#0f172a", alpha: 0.35, width: 3 });
-    this.overlayContainer.addChild(edges);
 
     // --- Territory nodes ---
     for (const [name, pos] of Object.entries(MAP_TERRITORIES)) {
