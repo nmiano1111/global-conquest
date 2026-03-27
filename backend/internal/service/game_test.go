@@ -86,12 +86,12 @@ func TestCreateClassicGameValidation(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	_, err := svc.CreateClassicGame(context.Background(), "", 3)
+	_, err := svc.CreateClassicGame(context.Background(), "", 3, "")
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", 2)
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 2, "")
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}
@@ -124,7 +124,7 @@ func TestCreateClassicGamePersistsLobbyState(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	out, err := svc.CreateClassicGame(context.Background(), "u1", 4)
+	out, err := svc.CreateClassicGame(context.Background(), "u1", 4, "")
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestCreateClassicGameRejectsUnknownOwner(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	_, err := svc.CreateClassicGame(context.Background(), "u1", 3)
+	_, err := svc.CreateClassicGame(context.Background(), "u1", 3, "")
 	if !errors.Is(err, ErrUnknownPlayerIDs) {
 		t.Fatalf("expected ErrUnknownPlayerIDs, got %v", err)
 	}
@@ -174,8 +174,8 @@ func TestJoinClassicGameTransitionsWhenFull(t *testing.T) {
 			if len(g.Players) != 3 {
 				t.Fatalf("expected 3 players in risk state")
 			}
-			if g.Phase != risk.PhaseSetupReinforce {
-				t.Fatalf("expected game to begin at setup_reinforce phase, got %s", g.Phase)
+			if g.Phase != risk.PhaseReinforce {
+				t.Fatalf("expected game to begin at reinforce phase (random default), got %s", g.Phase)
 			}
 			return store.Game{ID: "g1", Status: in.Status, State: in.State}, nil
 		},
@@ -187,6 +187,33 @@ func TestJoinClassicGameTransitionsWhenFull(t *testing.T) {
 	}
 	if out.Status != "in_progress" {
 		t.Fatalf("unexpected status: %s", out.Status)
+	}
+}
+
+func TestJoinClassicGameManualSetupMode(t *testing.T) {
+	lobby := json.RawMessage(`{"player_count":3,"player_ids":["u1","u2"],"setup_mode":"manual"}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "lobby", State: lobby}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(_ context.Context, _ db.Querier, in store.UpdateGameState) (store.Game, error) {
+			var g risk.Game
+			if err := json.Unmarshal(in.State, &g); err != nil {
+				t.Fatalf("expected risk game state: %v", err)
+			}
+			if g.Phase != risk.PhaseSetupReinforce {
+				t.Fatalf("expected game to begin at setup_reinforce phase for manual mode, got %s", g.Phase)
+			}
+			return store.Game{ID: "g1", Status: in.Status, State: in.State}, nil
+		},
+	})
+
+	_, err := svc.JoinClassicGame(context.Background(), "g1", "u3")
+	if err != nil {
+		t.Fatalf("join game: %v", err)
 	}
 }
 

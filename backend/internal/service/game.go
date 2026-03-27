@@ -52,6 +52,7 @@ func (s *GamesService) SetGameEventStore(gameEvent gameEventStore) {
 type lobbyState struct {
 	PlayerCount int      `json:"player_count"`
 	PlayerIDs   []string `json:"player_ids"`
+	SetupMode   string   `json:"setup_mode,omitempty"`
 }
 
 type GameBootstrapPlayer struct {
@@ -132,7 +133,7 @@ type GameOccupyRequirement struct {
 	MaxMove int    `json:"max_move"`
 }
 
-func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int) (store.Game, error) {
+func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string) (store.Game, error) {
 	if ownerUserID == "" {
 		return store.Game{}, ErrInvalidGameInput
 	}
@@ -155,6 +156,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 	state, err := json.Marshal(lobbyState{
 		PlayerCount: playerCount,
 		PlayerIDs:   []string{ownerUserID},
+		SetupMode:   setupMode,
 	})
 	if err != nil {
 		return store.Game{}, err
@@ -209,7 +211,12 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		nextStatus := "lobby"
 		var nextState []byte
 		if len(lobby.PlayerIDs) == lobby.PlayerCount {
-			engine, err := risk.NewClassicRandomTerritoryGame(lobby.PlayerIDs, nil)
+			var engine *risk.Game
+			if lobby.SetupMode == "manual" {
+				engine, err = risk.NewClassicRandomTerritoryGame(lobby.PlayerIDs, nil)
+			} else {
+				engine, err = risk.NewClassicAutoStartGame(lobby.PlayerIDs, nil)
+			}
 			if err != nil {
 				return err
 			}
@@ -228,7 +235,12 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "player_joined", joinBody); err != nil {
 					return err
 				}
-				startBody := fmt.Sprintf("All players joined. Territories have been randomly assigned. %s places first.", displayName(names, engine.Players[engine.CurrentPlayer].ID))
+				var startBody string
+				if lobby.SetupMode == "manual" {
+					startBody = fmt.Sprintf("All players joined. Territories have been randomly assigned. %s places first.", displayName(names, engine.Players[engine.CurrentPlayer].ID))
+				} else {
+					startBody = fmt.Sprintf("All players joined. Armies have been randomly distributed. %s goes first.", displayName(names, engine.Players[engine.CurrentPlayer].ID))
+				}
 				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "game_started", startBody); err != nil {
 					return err
 				}

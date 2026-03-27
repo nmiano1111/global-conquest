@@ -14,6 +14,7 @@ export function LobbyPage() {
   const [error, setError] = useState("");
   const [games, setGames] = useState<GameRecord[]>([]);
   const [playerCount, setPlayerCount] = useState(3);
+  const [setupMode, setSetupMode] = useState<"random" | "manual">("random");
   const [creatingGame, setCreatingGame] = useState(false);
   const [createError, setCreateError] = useState("");
   const [joiningGameID, setJoiningGameID] = useState("");
@@ -148,7 +149,7 @@ export function LobbyPage() {
 
     setCreatingGame(true);
     try {
-      await createGame({ playerCount });
+      await createGame({ playerCount, setupMode: auth.user?.role === "admin" ? setupMode : undefined });
       await loadGames();
     } catch (err) {
       const apiErr = err as ApiError;
@@ -258,6 +259,19 @@ export function LobbyPage() {
                 required
               />
             </label>
+            {auth.user?.role === "admin" && (
+              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                Setup Mode
+                <select
+                  className={`${inputClass} w-36`}
+                  value={setupMode}
+                  onChange={(e) => setSetupMode(e.target.value as "random" | "manual")}
+                >
+                  <option value="random">Random</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </label>
+            )}
             <button className={buttonPrimaryClass} type="submit" disabled={creatingGame}>
               {creatingGame ? "Creating..." : "Create"}
             </button>

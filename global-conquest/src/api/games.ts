@@ -15,6 +15,7 @@ export type GameRecord = {
 
 export type CreateGameRequest = {
   playerCount: number;
+  setupMode?: string;
 };
 
 export type Card = {
@@ -219,13 +220,9 @@ export async function listGames(): Promise<GameRecord[]> {
 }
 
 export async function createGame(input: CreateGameRequest): Promise<GameRecord> {
-  const res = await request<unknown>({
-    method: "POST",
-    url: "/games/",
-    data: {
-      player_count: input.playerCount,
-    },
-  });
+  const data: Record<string, unknown> = { player_count: input.playerCount };
+  if (input.setupMode) data.setup_mode = input.setupMode;
+  const res = await request<unknown>({ method: "POST", url: "/games/", data });
   return normalizeGame(res);
 }
 

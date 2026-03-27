@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
@@ -27,7 +28,7 @@ type userService interface {
 }
 
 type gameService interface {
-	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int) (store.Game, error)
+	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string) (store.Game, error)
 	JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error)
 	GetGame(ctx context.Context, gameID string) (store.Game, error)
 	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
@@ -69,7 +70,8 @@ type loginResp struct {
 }
 
 type createGameReq struct {
-	PlayerCount int `json:"player_count" binding:"required,min=3,max=6"`
+	PlayerCount int    `json:"player_count" binding:"required,min=3,max=6"`
+	SetupMode   string `json:"setup_mode"`
 }
 
 type updateGameStateReq struct {
@@ -237,7 +239,16 @@ func (h *Handler) CreateGame(c *gin.Context) {
 		return
 	}
 
-	g, err := h.games.CreateClassicGame(c.Request.Context(), authUser.ID, req.PlayerCount)
+	setupMode := ""
+	if req.SetupMode == "manual" {
+		if !strings.EqualFold(authUser.Role, "admin") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "admin role required to set setup_mode"})
+			return
+		}
+		setupMode = "manual"
+	}
+
+	g, err := h.games.CreateClassicGame(c.Request.Context(), authUser.ID, req.PlayerCount, setupMode)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidGameInput),
