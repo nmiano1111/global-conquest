@@ -376,7 +376,7 @@ export function LobbyPage() {
               <li key={m.id || `${m.userId}-${m.createdAt}-${m.body}`} className="rounded-lg bg-white p-2 text-sm">
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <span className="font-medium text-slate-900">{m.userName || "unknown"}</span>
-                  <span className="text-[11px] text-slate-500">{m.createdAt ? new Date(m.createdAt).toLocaleTimeString() : ""}</span>
+                  <span className="text-[11px] text-slate-500">{m.createdAt ? new Date(m.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}</span>
                 </div>
                 <p className="whitespace-pre-wrap text-slate-700">{m.body}</p>
               </li>

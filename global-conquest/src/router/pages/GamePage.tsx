@@ -749,7 +749,7 @@ export function GamePage() {
                 <li key={`${ev.id}-${idx}`} className="rounded-lg bg-white px-2 py-1.5">
                   <div className="mb-1 flex items-center justify-between gap-2 text-xs" style={{ color: eventColor }}>
                     <span className="font-semibold">{ev.eventType.replaceAll("_", " ")}</span>
-                    <span>{new Date(ev.createdAt).toLocaleTimeString()}</span>
+                    <span>{new Date(ev.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
                   </div>
                   <p className="text-sm font-medium" style={{ color: eventColor }}>
                     {renderEventBody(ev.body)}
@@ -935,7 +935,7 @@ export function GamePage() {
                     <span className="font-medium" style={{ color: chatColor }}>
                       {m.userName}
                     </span>
-                    <span className="text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleTimeString()}</span>
+                    <span className="text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
                   </div>
                   <p className="whitespace-pre-wrap" style={{ color: chatColor }}>
                     {m.body}
