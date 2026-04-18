@@ -647,37 +647,11 @@ export function MobileGameView(props: MobileGameViewProps) {
           playerColors={playerColors}
           onTerritoryClick={onMapTerritoryClick}
         />
-        {/* Zoom controls */}
-        <div className="absolute bottom-2 right-2 flex flex-col gap-1">
-          <button
-            type="button"
-            onClick={() => mapRef.current?.zoomIn()}
-            className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-800/80 text-lg font-bold text-white backdrop-blur-sm active:bg-slate-700"
-            aria-label="Zoom in"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            onClick={() => mapRef.current?.resetZoom()}
-            className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-800/80 text-sm text-slate-300 backdrop-blur-sm active:bg-slate-700"
-            aria-label="Reset zoom"
-          >
-            ⌖
-          </button>
-          <button
-            type="button"
-            onClick={() => mapRef.current?.zoomOut()}
-            className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-800/80 text-lg font-bold text-white backdrop-blur-sm active:bg-slate-700"
-            aria-label="Zoom out"
-          >
-            −
-          </button>
-        </div>
       </div>
 
       {/* ── Players strip ── */}
-      <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-slate-700 bg-slate-800/80 px-3 py-1.5">
+      <div className="flex shrink-0 items-center gap-2 border-t border-slate-700 bg-slate-800/80 px-3 py-1.5">
+        <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
         {players.map((p, i) => {
           const isCurrent = i === currentPlayerIndex;
           return (
@@ -701,6 +675,33 @@ export function MobileGameView(props: MobileGameViewProps) {
             </div>
           );
         })}
+        </div>
+        <div className="flex shrink-0 items-center gap-1 border-l border-slate-700 pl-2">
+          <button
+            type="button"
+            onClick={() => mapRef.current?.zoomOut()}
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-700 text-base font-bold text-white active:bg-slate-600"
+            aria-label="Zoom out"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            onClick={() => mapRef.current?.resetZoom()}
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-700 text-xs text-slate-300 active:bg-slate-600"
+            aria-label="Reset zoom"
+          >
+            ⌖
+          </button>
+          <button
+            type="button"
+            onClick={() => mapRef.current?.zoomIn()}
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-700 text-base font-bold text-white active:bg-slate-600"
+            aria-label="Zoom in"
+          >
+            +
+          </button>
+        </div>
       </div>
 
       {/* ── Bottom sheet ── */}
