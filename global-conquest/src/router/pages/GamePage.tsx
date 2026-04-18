@@ -696,7 +696,7 @@ export function GamePage() {
                   }}
                 />
               ) : null}
-              {phaseMode === "reinforce" ? (
+              {phaseMode === "reinforce" && (game?.pendingReinforcements ?? 0) > 0 ? (
                 <button className={buttonPrimaryClass} type="button" onClick={commitReinforcement} disabled={!isMyTurn}>
                   Place
                 </button>
@@ -842,7 +842,9 @@ export function GamePage() {
             )}
             {myCards.length >= 5 && isMyTurn && phaseMode === "reinforce" ? (
               <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">
-                You must trade cards before placing reinforcements (5+ cards held).
+                {(game?.pendingReinforcements ?? 0) === 0
+                  ? "You captured an opponent's cards and now hold 5 or more. Trade in a valid set before continuing your attack."
+                  : "You must trade cards before placing reinforcements (5+ cards held)."}
               </p>
             ) : null}
             {isMyTurn && phaseMode === "reinforce" && myCards.length >= 3 ? (

@@ -77,6 +77,7 @@ type Game struct {
 	ConqueredThisTurn     bool         `json:"conquered_this_turn"`
 	TerritoryBonusUsed    bool         `json:"territory_bonus_used"`
 	HasFortified          bool         `json:"has_fortified"`
+	ForcedCardTrade       bool         `json:"forced_card_trade"`
 	Occupy                *OccupyState `json:"occupy"`
 
 	Deck       []Card `json:"deck"`
@@ -301,6 +302,10 @@ func (g *Game) TradeCards(playerID string, idx [3]int) (int, error) {
 		g.Discard = append(g.Discard, p.Cards[j])
 		p.Cards = append(p.Cards[:j], p.Cards[j+1:]...)
 	}
+	if g.ForcedCardTrade && len(p.Cards) < 5 && g.PendingReinforcements == 0 {
+		g.ForcedCardTrade = false
+		g.Phase = PhaseAttack
+	}
 	return value + bonus, nil
 }
 
@@ -327,6 +332,7 @@ func (g *Game) PlaceReinforcement(playerID string, t Territory, armies int) erro
 	g.PendingReinforcements -= armies
 	if g.PendingReinforcements == 0 {
 		g.Phase = PhaseAttack
+		g.ForcedCardTrade = false
 	}
 	return nil
 }
@@ -435,6 +441,10 @@ func (g *Game) OccupyTerritory(playerID string, armies int) error {
 	g.Occupy = nil
 	g.Phase = PhaseAttack
 	g.checkWinner()
+	if g.Phase != PhaseGameOver && len(g.Players[pi].Cards) >= 5 {
+		g.ForcedCardTrade = true
+		g.Phase = PhaseReinforce
+	}
 	return nil
 }
 
@@ -504,6 +514,7 @@ func (g *Game) startTurn() {
 	g.ConqueredThisTurn = false
 	g.TerritoryBonusUsed = false
 	g.HasFortified = false
+	g.ForcedCardTrade = false
 	g.Occupy = nil
 	g.PendingReinforcements = g.reinforcementsFor(g.CurrentPlayer)
 }
