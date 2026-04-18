@@ -211,6 +211,33 @@ export function MobileGameView(props: MobileGameViewProps) {
     if (error) return <p className="p-4 text-sm text-rose-400">{error}</p>;
     if (!game) return null;
 
+    if (!isMyTurn && phaseMode !== "setup_reinforce") {
+      return (
+        <div className="grid gap-3 p-4">
+          <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-4 text-center">
+            <p className="text-2xl">⏳</p>
+            <p className="mt-2 text-sm font-semibold text-slate-300">
+              {currentPlayer?.userName ?? "Opponent"}'s turn
+            </p>
+            <p className="mt-1 text-xs text-slate-500 capitalize">{phaseLabel} phase</p>
+          </div>
+          <div className="grid gap-1.5">
+            {players.map((p, i) => {
+              const isCurrent = i === currentPlayerIndex;
+              return (
+                <div key={p.userId} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs ${isCurrent ? "bg-slate-700" : ""}`}>
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: playerColors[i] ?? "#94a3b8" }} />
+                  <span className="font-medium" style={{ color: playerColors[i] ?? "#94a3b8" }}>{p.userName}</span>
+                  {isCurrent && <span className="ml-auto text-[10px] font-semibold text-slate-400 uppercase tracking-wide">playing</span>}
+                  {p.eliminated && <span className="ml-auto text-[10px] text-slate-600 line-through">eliminated</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
     if (phaseMode === "setup_reinforce") {
       return (
         <div className="grid gap-3 p-4">
@@ -610,7 +637,7 @@ export function MobileGameView(props: MobileGameViewProps) {
       )}
 
       {/* ── Map ── */}
-      <div className="relative min-h-0 flex-1 bg-slate-950">
+      <div className="relative min-h-0 flex-1 bg-slate-900 flex items-center overflow-hidden">
         <GameMap
           ref={mapRef}
           game={game}
@@ -679,7 +706,7 @@ export function MobileGameView(props: MobileGameViewProps) {
       {/* ── Bottom sheet ── */}
       <div
         className="flex shrink-0 flex-col border-t border-slate-700 bg-slate-800"
-        style={{ maxHeight: "46vh" }}
+        style={{ height: "280px" }}
       >
         {/* Tab bar */}
         <div className="flex shrink-0 border-b border-slate-700">
@@ -704,7 +731,7 @@ export function MobileGameView(props: MobileGameViewProps) {
           ))}
         </div>
 
-        {/* Tab content */}
+        {/* Tab content — fixed height, scrolls internally */}
         <div className="min-h-0 flex-1 overflow-y-auto">
           {activeTab === "actions" && renderActionsTab()}
           {activeTab === "cards" && renderCardsTab()}
