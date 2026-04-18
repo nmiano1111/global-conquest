@@ -534,6 +534,7 @@ export function GamePage() {
       return;
     }
     if (phaseMode === "reinforce") {
+      if (!isMyTurn) return;
       if (!isMine) {
         setActionError("Choose one of your territories for reinforcement.");
         return;
@@ -549,6 +550,7 @@ export function GamePage() {
       return;
     }
     if (phaseMode === "attack") {
+      if (!isMyTurn) return;
       if (!canEnterAttack) {
         setActionError("Place all reinforcements before attacking.");
         return;
@@ -572,6 +574,7 @@ export function GamePage() {
       return;
     }
     if (phaseMode === "fortify") {
+      if (!isMyTurn) return;
       // Clear stale reinforce highlight on any fortify interaction.
       setSelectedTerritory("");
       if (!isMine) {
