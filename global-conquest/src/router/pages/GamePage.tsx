@@ -14,6 +14,7 @@ import {
   type GameChatMessage,
   type GameEventMessage,
 } from "./gameShared";
+import { MobileGameView } from "./MobileGameView";
 
 export function GamePage() {
   const auth = useAuth();
@@ -38,6 +39,17 @@ export function GamePage() {
   const [selectedCardIndices, setSelectedCardIndices] = useState<number[]>([]);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const eventScrollRef = useRef<HTMLDivElement | null>(null);
+  const [mobileUI, setMobileUI] = useState<boolean>(() => {
+    const stored = localStorage.getItem("gc.mobile.ui");
+    if (stored !== null) return stored === "true";
+    return typeof window !== "undefined" && window.innerWidth < 768;
+  });
+  const toggleMobileUI = () => {
+    setMobileUI((prev) => {
+      localStorage.setItem("gc.mobile.ui", String(!prev));
+      return !prev;
+    });
+  };
 
   const parseTerritories = (raw: unknown): Record<string, unknown> => {
     if (raw && typeof raw === "object") return raw as Record<string, unknown>;
@@ -367,7 +379,7 @@ export function GamePage() {
       const playerKey = part.toLowerCase();
       if (playerNamesByKey[playerKey]) {
         return (
-          <span key={`${part}-${idx}`} className="font-extrabold">
+          <span key={`${part}-${idx}`} className="font-extrabold" style={{ color: chatColorByUserName[playerKey] }}>
             {part}
           </span>
         );
@@ -624,6 +636,67 @@ export function GamePage() {
     setSelectedCardIndices([]);
   };
 
+  if (mobileUI) {
+    return (
+      <MobileGameView
+        game={game}
+        loading={loading}
+        error={error}
+        actionError={actionError}
+        chatMessages={chatMessages}
+        eventMessages={eventMessages}
+        chatDraft={chatDraft}
+        chatError={chatError}
+        wsStatus={wsStatus}
+        gameID={gameID}
+        phase={phase}
+        phaseMode={phaseMode}
+        meIndex={meIndex}
+        isMyTurn={isMyTurn}
+        canEnterAttack={canEnterAttack}
+        players={players}
+        playerColors={playerColors}
+        territoryState={territoryState}
+        myCards={myCards}
+        selectedCardIndices={selectedCardIndices}
+        mySetupArmies={mySetupArmies}
+        nextTradeBonus={nextTradeBonus}
+        pendingReinforcements={pendingReinforcements}
+        occupyRequirement={occupyRequirement}
+        diceResult={diceResult}
+        selectedTerritory={selectedTerritory}
+        activeFrom={activeFrom}
+        activeTo={activeTo}
+        armiesInput={armiesInput}
+        clampedArmiesInput={clampedArmiesInput}
+        clampedAttackerDice={clampedAttackerDice}
+        minArmiesInput={minArmiesInput}
+        maxArmiesInput={maxArmiesInput}
+        maxAttackDiceAllowed={maxAttackDiceAllowed}
+        maxDefendDiceAllowed={maxDefendDiceAllowed}
+        canAttackSelection={canAttackSelection}
+        renderEventBody={renderEventBody}
+        onMapTerritoryClick={onMapTerritoryClick}
+        commitReinforcement={commitReinforcement}
+        commitFortify={commitFortify}
+        commitOccupy={commitOccupy}
+        commitTradeCards={commitTradeCards}
+        toggleCardSelection={toggleCardSelection}
+        onRollDice={onRollDice}
+        setAttackerDice={setAttackerDice}
+        setArmiesInput={setArmiesInput}
+        setChatDraft={setChatDraft}
+        onSendChat={onSendChat}
+        sendAction={sendAction}
+        setSelectedFrom={setSelectedFrom}
+        setSelectedTo={setSelectedTo}
+        setSelectedTerritory={setSelectedTerritory}
+        onRefresh={() => void loadGame()}
+        onToggleDesktop={toggleMobileUI}
+      />
+    );
+  }
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
       <section className="grid gap-4">
@@ -635,6 +708,9 @@ export function GamePage() {
           <div className="flex flex-wrap gap-2">
             <button className={buttonGhostClass} type="button" onClick={() => void loadGame()} disabled={loading}>
               Refresh
+            </button>
+            <button className={buttonGhostClass} type="button" onClick={toggleMobileUI}>
+              Mobile View
             </button>
             <Link className={buttonGhostClass} to="/app/lobby">
               Back to Lobby

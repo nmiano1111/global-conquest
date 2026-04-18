@@ -306,6 +306,22 @@ export class MapScene {
     }
   }
 
+  zoomIn() {
+    const cx = this.app.screen.width / 2;
+    const cy = this.app.screen.height / 2;
+    this.zoomToward(this.camScale * 1.35, cx, cy);
+  }
+
+  zoomOut() {
+    const cx = this.app.screen.width / 2;
+    const cy = this.app.screen.height / 2;
+    this.zoomToward(this.camScale / 1.35, cx, cy);
+  }
+
+  resetZoom() {
+    this.fitToViewport();
+  }
+
   destroy() {
     this.app.destroy(true);
   }

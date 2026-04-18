@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { GameBootstrap } from "../api/games";
 import { MapScene } from "./MapScene";
 
@@ -11,16 +11,28 @@ interface GameMapProps {
   onTerritoryClick: (name: string) => void;
 }
 
-export function GameMap({
+export interface GameMapHandle {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetZoom: () => void;
+}
+
+export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap({
   game,
   selectedTerritory,
   activeFrom,
   activeTo,
   playerColors,
   onTerritoryClick,
-}: GameMapProps) {
+}, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<MapScene | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    zoomIn: () => sceneRef.current?.zoomIn(),
+    zoomOut: () => sceneRef.current?.zoomOut(),
+    resetZoom: () => sceneRef.current?.resetZoom(),
+  }));
 
   // Always-current snapshot of props so the async init handler can apply
   // initial game state without needing to redeclare the init effect.
@@ -120,4 +132,4 @@ export function GameMap({
       className="relative aspect-[2048/1367] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900"
     />
   );
-}
+});
