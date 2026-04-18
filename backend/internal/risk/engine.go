@@ -108,7 +108,13 @@ func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {
 		Deck:          ClassicDeck(b.Order),
 		rng:           rng,
 	}
-	for i, id := range playerIDs {
+	shuffled := make([]string, len(playerIDs))
+	copy(shuffled, playerIDs)
+	for i := len(shuffled) - 1; i > 0; i-- {
+		j := rng.IntN(i + 1)
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	}
+	for i, id := range shuffled {
 		g.Players[i] = PlayerState{ID: id}
 	}
 	starting := map[int]int{3: 35, 4: 30, 5: 25, 6: 20}[len(playerIDs)]

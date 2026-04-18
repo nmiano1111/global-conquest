@@ -161,13 +161,14 @@ func TestAttackAndOccupy(t *testing.T) {
 	g := mustGame(t)
 	g.Phase = PhaseAttack
 	g.CurrentPlayer = 0
+	p0 := g.Players[0].ID
 	g.Territories["Alaska"] = TerritoryState{Owner: 0, Armies: 4}
 	g.Territories["Kamchatka"] = TerritoryState{Owner: 1, Armies: 1}
 	g.Territories["Peru"] = TerritoryState{Owner: 1, Armies: 1}
 
 	// attacker roll: 6 (5%6+1), defender roll: 1 (0%6+1)
 	g.rng = &seqRNG{v: []int{5, 0}}
-	res, err := g.Attack("p1", "Alaska", "Kamchatka", 1, 1)
+	res, err := g.Attack(p0, "Alaska", "Kamchatka", 1, 1)
 	if err != nil {
 		t.Fatalf("attack: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestAttackAndOccupy(t *testing.T) {
 	if g.Phase != PhaseOccupy || g.Occupy == nil {
 		t.Fatalf("expected occupy phase")
 	}
-	if err := g.OccupyTerritory("p1", 1); err != nil {
+	if err := g.OccupyTerritory(p0, 1); err != nil {
 		t.Fatalf("occupy: %v", err)
 	}
 	if g.Phase != PhaseAttack {
@@ -192,6 +193,7 @@ func TestAttackAfterJSONRoundTripUsesDefaultRNG(t *testing.T) {
 	g := mustGame(t)
 	g.Phase = PhaseAttack
 	g.CurrentPlayer = 0
+	p0 := g.Players[0].ID
 	g.Territories["Alaska"] = TerritoryState{Owner: 0, Armies: 4}
 	g.Territories["Kamchatka"] = TerritoryState{Owner: 1, Armies: 2}
 
@@ -204,7 +206,7 @@ func TestAttackAfterJSONRoundTripUsesDefaultRNG(t *testing.T) {
 		t.Fatalf("unmarshal game: %v", err)
 	}
 
-	if _, err := restored.Attack("p1", "Alaska", "Kamchatka", 1, 1); err != nil {
+	if _, err := restored.Attack(p0, "Alaska", "Kamchatka", 1, 1); err != nil {
 		t.Fatalf("attack after round trip: %v", err)
 	}
 }
@@ -223,6 +225,7 @@ func TestCardTradeAndTerritoryBonus(t *testing.T) {
 	g := mustGame(t)
 	g.Phase = PhaseReinforce
 	g.CurrentPlayer = 0
+	p0 := g.Players[0].ID
 	g.PendingReinforcements = 0
 	g.Players[0].Cards = []Card{
 		{Territory: "Alaska", Symbol: Infantry},
@@ -231,7 +234,7 @@ func TestCardTradeAndTerritoryBonus(t *testing.T) {
 	}
 	g.Territories["Alaska"] = TerritoryState{Owner: 0, Armies: 3}
 
-	got, err := g.TradeCards("p1", [3]int{0, 1, 2})
+	got, err := g.TradeCards(p0, [3]int{0, 1, 2})
 	if err != nil {
 		t.Fatalf("trade cards: %v", err)
 	}
@@ -250,7 +253,7 @@ func TestEndTurnDrawsCardIfConquered(t *testing.T) {
 	g.CurrentPlayer = 0
 	g.ConqueredThisTurn = true
 	deckBefore := len(g.Deck)
-	if err := g.EndTurn("p1"); err != nil {
+	if err := g.EndTurn(g.Players[0].ID); err != nil {
 		t.Fatalf("end turn: %v", err)
 	}
 	if len(g.Players[0].Cards) != 1 {
