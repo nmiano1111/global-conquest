@@ -573,12 +573,7 @@ export function GamePage() {
         setSelectedTo("");
         return;
       }
-      // Source set, destination not yet — must be adjacent.
-      const adjacent = MAP_EDGES.some(([a, b]) => (a === selectedFrom && b === name) || (b === selectedFrom && a === name));
-      if (!adjacent) {
-        setActionError(`${name} is not adjacent to ${selectedFrom}. Armies can only move to a neighboring territory.`);
-        return;
-      }
+      // Source set, destination not yet — any owned territory is valid (server checks contiguity).
       setSelectedTo(name);
     }
   };

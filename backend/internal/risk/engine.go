@@ -470,13 +470,13 @@ func (g *Game) Fortify(playerID string, from, to Territory, armies int) error {
 	if g.HasFortified {
 		return fmt.Errorf("%w: already fortified this turn", ErrInvalidMove)
 	}
-	if !g.Board.IsAdjacent(from, to) {
-		return fmt.Errorf("%w: territories not adjacent", ErrInvalidMove)
-	}
 	src := g.Territories[from]
 	dst := g.Territories[to]
 	if src.Owner != pi || dst.Owner != pi {
 		return fmt.Errorf("%w: both territories must be owned by player", ErrInvalidMove)
+	}
+	if !g.isContiguous(from, to, pi) {
+		return fmt.Errorf("%w: territories not connected through owned territories", ErrInvalidMove)
 	}
 	if armies <= 0 || armies >= src.Armies {
 		return fmt.Errorf("%w: invalid fortify armies", ErrInvalidMove)
@@ -575,6 +575,25 @@ func (g *Game) playerTerritoryCount(pi int) int {
 		}
 	}
 	return count
+}
+
+func (g *Game) isContiguous(from, to Territory, pi int) bool {
+	visited := map[Territory]bool{from: true}
+	queue := []Territory{from}
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+		for neighbor := range g.Board.Adjacent[curr] {
+			if neighbor == to {
+				return true
+			}
+			if !visited[neighbor] && g.Territories[neighbor].Owner == pi {
+				visited[neighbor] = true
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+	return false
 }
 
 func (g *Game) requireCurrentPlayer(playerID string) (int, error) {
