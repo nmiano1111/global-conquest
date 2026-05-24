@@ -1,13 +1,8 @@
-name: Deploy
+name: Deploy (ECS — production)
+# Auto-trigger disabled while running the minimal EC2 setup.
+# Re-enable by restoring the push trigger when switching back to ECS/ALB/RDS.
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "infra/**"
-      - "*.md"
-      - "ARCHITECTURE.md"
-      - "MISSING_FUNCTIONALITY.md"
   workflow_dispatch:
 
 permissions:

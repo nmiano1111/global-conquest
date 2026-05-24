@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: globalconq
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: globalconq
+    ports:
+      - "127.0.0.1:5432:5432"   # loopback only — reachable via SSH tunnel, not public internet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U globalconq -d globalconq"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend:
+    image: ${ECR_IMAGE}
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: globalconq
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: globalconq
+      DB_SSLMODE: disable
+      WS_ALLOWED_ORIGINS: "*"
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

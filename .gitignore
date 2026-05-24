@@ -1,8 +1,11 @@
 # Terraform
 infra/.terraform/
+infra-ec2/.terraform/
 *.tfstate
 *.tfstate.backup
 *.tfplan
+# Deploy secrets
+deploy/.env
 
 # Node
 node_modules/

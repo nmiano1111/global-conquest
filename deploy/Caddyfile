@@ -1,0 +1,14 @@
+# HTTP-only mode — no domain required, matches current setup.
+#
+# To enable HTTPS later:
+#   1. Point an A record at this server's IP
+#   2. Replace the :80 block below with your domain:
+#        risk.yourdomain.com {
+#            reverse_proxy backend:8080
+#        }
+#   3. docker compose restart caddy
+#   Caddy will fetch a Let's Encrypt certificate automatically.
+
+:80 {
+    reverse_proxy backend:8080
+}
