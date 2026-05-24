@@ -50,6 +50,8 @@ resource "aws_instance" "main" {
 
     mkdir -p /home/ubuntu/deploy
     chown ubuntu:ubuntu /home/ubuntu/deploy
+
+    # v2
   EOF
 
   user_data_replace_on_change = true
