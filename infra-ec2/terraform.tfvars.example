@@ -1,8 +1,5 @@
 aws_region = "us-east-1"
 app_name   = "global-conquest"
 
-# Your public IP — find it with: curl -s https://checkip.amazonaws.com
-my_ip = "1.2.3.4/32"
-
 # Contents of your SSH public key, e.g. ~/.ssh/id_ed25519.pub
 public_key = "ssh-ed25519 AAAA..."
