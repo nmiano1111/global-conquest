@@ -51,6 +51,11 @@ jobs:
           docker push "$REGISTRY/$ECR_REPO:$IMAGE_TAG"
           docker push "$REGISTRY/$ECR_REPO:latest"
 
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
       - name: Deploy to EC2
         env:
           REGISTRY:  ${{ steps.ecr-login.outputs.registry }}
@@ -58,24 +63,19 @@ jobs:
         run: |
           FULL_IMAGE="$REGISTRY/$ECR_REPO:$IMAGE_TAG"
 
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > /tmp/key.pem
-          chmod 600 /tmp/key.pem
-
-          # Sync compose config (Caddyfile and compose file) so changes deploy automatically.
-          # The .env file is NOT synced — it lives only on the server and holds secrets.
-          scp -o StrictHostKeyChecking=no -i /tmp/key.pem \
+          # Sync compose config so changes deploy automatically.
+          # .env is NOT synced — it lives only on the server and holds secrets.
+          scp -o StrictHostKeyChecking=no \
             deploy/docker-compose.prod.yml \
             deploy/Caddyfile \
             ubuntu@${{ vars.EC2_HOST }}:~/deploy/
 
-          ssh -o StrictHostKeyChecking=no -i /tmp/key.pem ubuntu@${{ vars.EC2_HOST }} "
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ vars.EC2_HOST }} "
             cd ~/deploy &&
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $REGISTRY &&
             ECR_IMAGE=$FULL_IMAGE docker compose -f docker-compose.prod.yml pull backend &&
             ECR_IMAGE=$FULL_IMAGE docker compose -f docker-compose.prod.yml up -d
           "
-
-          rm -f /tmp/key.pem
 
   deploy-frontend:
     runs-on: ubuntu-latest
