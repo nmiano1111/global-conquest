@@ -54,6 +54,10 @@ resource "aws_instance" "main" {
 
   user_data_replace_on_change = true
 
+  lifecycle {
+    replace_triggered_by = [aws_key_pair.main]
+  }
+
   tags = { Name = var.app_name }
 }
 
