@@ -44,14 +44,19 @@ resource "aws_instance" "main" {
       | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
     apt-get update
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin awscli
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin unzip
 
     usermod -aG docker ubuntu
+
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install
+    rm -rf /tmp/aws /tmp/awscliv2.zip
 
     mkdir -p /home/ubuntu/deploy
     chown ubuntu:ubuntu /home/ubuntu/deploy
 
-    # v2
+    # v3
   EOF
 
   user_data_replace_on_change = true
