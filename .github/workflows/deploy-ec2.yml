@@ -58,7 +58,7 @@ jobs:
         run: |
           FULL_IMAGE="$REGISTRY/$ECR_REPO:$IMAGE_TAG"
 
-          echo "${{ secrets.EC2_SSH_KEY }}" | base64 -d > /tmp/key.pem
+          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > /tmp/key.pem
           chmod 600 /tmp/key.pem
 
           # Sync compose config (Caddyfile and compose file) so changes deploy automatically.
