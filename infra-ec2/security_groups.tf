@@ -4,7 +4,7 @@ resource "aws_security_group" "ec2" {
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
-    description = "SSH — key auth required, open to allow GitHub Actions deploys"
+    description = "SSH - open to all, key auth required for GitHub Actions deploys"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
