@@ -170,6 +170,10 @@ export function GamePage() {
         }))
         .filter((p) => p.userId !== "");
 
+      if (occupy) {
+        setArmiesInput(occupy.maxMove);
+      }
+
       setGame((prev) => {
         if (!prev) return prev;
         const metaByID = new Map(prev.players.map((p) => [p.userId, p]));
