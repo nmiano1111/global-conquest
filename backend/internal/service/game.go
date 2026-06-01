@@ -19,10 +19,17 @@ type gameDB interface {
 	WithTxQ(ctx context.Context, fn func(q db.Querier) error) error
 }
 
+type gamePlayersStore interface {
+	InsertGamePlayers(ctx context.Context, q db.Querier, players []store.NewGamePlayer) error
+	SetGameWinner(ctx context.Context, q db.Querier, gameID, winnerUserID string) error
+	GetLeaderboard(ctx context.Context, q db.Querier, limit int) ([]store.LeaderboardEntry, error)
+}
+
 type GamesService struct {
-	db        gameDB
-	games     store.GamesStore
-	gameEvent gameEventStore
+	db          gameDB
+	games       store.GamesStore
+	gameEvent   gameEventStore
+	gamePlayers gamePlayersStore
 }
 
 var (
@@ -47,6 +54,10 @@ type gameEventStore interface {
 
 func (s *GamesService) SetGameEventStore(gameEvent gameEventStore) {
 	s.gameEvent = gameEvent
+}
+
+func (s *GamesService) SetGamePlayersStore(gp gamePlayersStore) {
+	s.gamePlayers = gp
 }
 
 type lobbyState struct {
@@ -210,18 +221,18 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		}
 		nextStatus := "lobby"
 		var nextState []byte
+		var startedEngine *risk.Game
 		if len(lobby.PlayerIDs) == lobby.PlayerCount {
-			var engine *risk.Game
 			if lobby.SetupMode == "manual" {
-				engine, err = risk.NewClassicRandomTerritoryGame(lobby.PlayerIDs, nil)
+				startedEngine, err = risk.NewClassicRandomTerritoryGame(lobby.PlayerIDs, nil)
 			} else {
-				engine, err = risk.NewClassicAutoStartGame(lobby.PlayerIDs, nil)
+				startedEngine, err = risk.NewClassicAutoStartGame(lobby.PlayerIDs, nil)
 			}
 			if err != nil {
 				return err
 			}
 			nextStatus = "in_progress"
-			nextState, err = json.Marshal(engine)
+			nextState, err = json.Marshal(startedEngine)
 			if err != nil {
 				return err
 			}
@@ -237,9 +248,9 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 				}
 				var startBody string
 				if lobby.SetupMode == "manual" {
-					startBody = fmt.Sprintf("All players joined. Territories have been randomly assigned. %s places first.", displayName(names, engine.Players[engine.CurrentPlayer].ID))
+					startBody = fmt.Sprintf("All players joined. Territories have been randomly assigned. %s places first.", displayName(names, startedEngine.Players[startedEngine.CurrentPlayer].ID))
 				} else {
-					startBody = fmt.Sprintf("All players joined. Armies have been randomly distributed. %s goes first.", displayName(names, engine.Players[engine.CurrentPlayer].ID))
+					startBody = fmt.Sprintf("All players joined. Armies have been randomly distributed. %s goes first.", displayName(names, startedEngine.Players[startedEngine.CurrentPlayer].ID))
 				}
 				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "game_started", startBody); err != nil {
 					return err
@@ -268,9 +279,37 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 			Status: nextStatus,
 			State:  nextState,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+
+		if startedEngine != nil && s.gamePlayers != nil {
+			players := make([]store.NewGamePlayer, len(startedEngine.Players))
+			for i, p := range startedEngine.Players {
+				players[i] = store.NewGamePlayer{
+					GameID:      g.ID,
+					UserID:      p.ID,
+					PlayerIndex: i,
+				}
+			}
+			if err := s.gamePlayers.InsertGamePlayers(ctx, q, players); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 	return out, err
+}
+
+func (s *GamesService) GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if s.gamePlayers == nil {
+		return []store.LeaderboardEntry{}, nil
+	}
+	return s.gamePlayers.GetLeaderboard(ctx, s.db.Queryer(), limit)
 }
 
 func (s *GamesService) GetGame(ctx context.Context, gameID string) (store.Game, error) {
@@ -481,12 +520,21 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 		if err != nil {
 			return err
 		}
+		gameStatus := "in_progress"
+		if engine.Phase == risk.PhaseGameOver {
+			gameStatus = "completed"
+		}
 		if _, err := s.games.UpdateState(ctx, q, store.UpdateGameState{
 			GameID: g.ID,
-			Status: "in_progress",
+			Status: gameStatus,
 			State:  nextState,
 		}); err != nil {
 			return err
+		}
+		if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.gamePlayers != nil {
+			if err := s.gamePlayers.SetGameWinner(ctx, q, g.ID, engine.Winner); err != nil {
+				return err
+			}
 		}
 
 		territories, err := json.Marshal(engine.Territories)

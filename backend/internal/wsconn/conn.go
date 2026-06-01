@@ -4,6 +4,7 @@ import (
 	"backend/internal/proto/wsmsg"
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -11,8 +12,10 @@ import (
 )
 
 type Conn struct {
-	ws   *websocket.Conn
-	send chan wsmsg.Envelope
+	ws        *websocket.Conn
+	send      chan wsmsg.Envelope
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 type Options struct {
@@ -41,6 +44,7 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 	c := &Conn{
 		ws:   ws,
 		send: make(chan wsmsg.Envelope, opts.SendBuffer),
+		done: make(chan struct{}),
 	}
 
 	ctx := r.Context()
@@ -52,6 +56,8 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 		for {
 			select {
 			case <-ctx.Done():
+				return
+			case <-c.done:
 				return
 			case <-t.C:
 				_ = ws.Ping(ctx)
@@ -65,10 +71,9 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 			select {
 			case <-ctx.Done():
 				return
-			case msg, ok := <-c.send:
-				if !ok {
-					return
-				}
+			case <-c.done:
+				return
+			case msg := <-c.send:
 				_ = wsjson.Write(ctx, ws, msg)
 			}
 		}
@@ -77,12 +82,21 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 	return c, nil
 }
 
+// Close signals the writer goroutine to stop and closes the WebSocket.
+// Safe to call multiple times.
 func (c *Conn) Close(code websocket.StatusCode, reason string) error {
-	close(c.send)
+	c.closeOnce.Do(func() { close(c.done) })
 	return c.ws.Close(code, reason)
 }
 
+// Send enqueues env for delivery. Returns false if the buffer is full or the
+// connection is already closed. Never panics.
 func (c *Conn) Send(env wsmsg.Envelope) bool {
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
 	select {
 	case c.send <- env:
 		return true

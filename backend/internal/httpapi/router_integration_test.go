@@ -107,6 +107,10 @@ func (f *fakeGamesService) UpdateGameState(ctx context.Context, gameID, status s
 	return f.updateGameStateFn(ctx, gameID, status, state)
 }
 
+func (f *fakeGamesService) GetLeaderboard(_ context.Context, _ int) ([]store.LeaderboardEntry, error) {
+	return nil, nil
+}
+
 func (f *fakeChatService) ListLobbyMessages(ctx context.Context, limit int) ([]store.ChatMessage, error) {
 	return f.listLobbyMessagesFn(ctx, limit)
 }

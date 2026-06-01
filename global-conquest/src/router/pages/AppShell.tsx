@@ -29,6 +29,12 @@ export function AppShell() {
             >
               Profile
             </Link>
+            <Link
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              to="/app/leaderboard"
+            >
+              Leaderboard
+            </Link>
             {auth.user?.role === "admin" ? (
               <Link
                 className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"

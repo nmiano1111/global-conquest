@@ -52,6 +52,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if err := seedCompletedGames(ctx, pool, users); err != nil {
+		log.Fatal(err)
+	}
+
 	log.Printf("seed complete: users=%d", len(users))
 }
 
@@ -173,19 +177,29 @@ func seedGames(ctx context.Context, pool *pgxpool.Pool, users []seededUser) erro
 				}
 			}
 			for engine.Phase == risk.PhaseSetupReinforce {
-				pid := engine.Players[engine.CurrentPlayer].ID
-				var owned risk.Territory
-				for t, ts := range engine.Territories {
-					if ts.Owner == engine.CurrentPlayer {
-						owned = t
-						break
+				placed := false
+				for pi, p := range engine.Players {
+					if engine.SetupReserves[pi] <= 0 {
+						continue
 					}
+					var owned risk.Territory
+					for t, ts := range engine.Territories {
+						if ts.Owner == pi {
+							owned = t
+							break
+						}
+					}
+					if owned == "" {
+						continue
+					}
+					if err := engine.PlaceInitialArmy(p.ID, owned); err != nil {
+						return fmt.Errorf("place initial army: %w", err)
+					}
+					placed = true
+					break
 				}
-				if owned == "" {
-					return fmt.Errorf("no owned territory for initial reinforce")
-				}
-				if err := engine.PlaceInitialArmy(pid, owned); err != nil {
-					return fmt.Errorf("place initial army: %w", err)
+				if !placed {
+					break
 				}
 			}
 			state, err = json.Marshal(engine)
@@ -203,6 +217,74 @@ func seedGames(ctx context.Context, pool *pgxpool.Pool, users []seededUser) erro
 	}
 
 	return cleanupOldSeedGames(ctx, pool)
+}
+
+func seedCompletedGames(ctx context.Context, pool *pgxpool.Pool, users []seededUser) error {
+	byName := map[string]seededUser{}
+	for _, u := range users {
+		byName[u.Username] = u
+	}
+
+	type completedGameDef struct {
+		owner   string
+		players []string
+		winner  string
+	}
+
+	// bob wins 2, alice wins 1, cara wins 1, erin wins 1; dan and frank have losses only
+	defs := []completedGameDef{
+		{owner: "test_alice", players: []string{"test_alice", "test_bob", "test_cara"}, winner: "test_bob"},
+		{owner: "test_bob", players: []string{"test_bob", "test_dan", "test_erin"}, winner: "test_bob"},
+		{owner: "test_cara", players: []string{"test_cara", "test_dan", "test_frank"}, winner: "test_cara"},
+		{owner: "test_alice", players: []string{"test_alice", "test_erin", "test_frank"}, winner: "test_alice"},
+		{owner: "test_erin", players: []string{"test_erin", "test_bob", "test_alice"}, winner: "test_erin"},
+	}
+
+	const insertGame = `
+		INSERT INTO games (owner_user_id, status, state)
+		VALUES ($1::uuid, $2, $3::jsonb)
+		RETURNING id::text
+	`
+	const insertPlayer = `
+		INSERT INTO game_players (game_id, user_id, player_index, won)
+		VALUES ($1::uuid, $2::uuid, $3, $4)
+		ON CONFLICT (game_id, user_id) DO NOTHING
+	`
+
+	for _, def := range defs {
+		playerIDs := make([]string, 0, len(def.players))
+		for _, p := range def.players {
+			u, ok := byName[p]
+			if !ok {
+				return fmt.Errorf("missing seeded user %q", p)
+			}
+			playerIDs = append(playerIDs, u.ID)
+		}
+
+		engine, err := risk.NewClassicGame(playerIDs, nil)
+		if err != nil {
+			return fmt.Errorf("build completed game state: %w", err)
+		}
+		state, err := json.Marshal(engine)
+		if err != nil {
+			return fmt.Errorf("marshal completed game state: %w", err)
+		}
+
+		owner := byName[def.owner]
+		var gameID string
+		if err := pool.QueryRow(ctx, insertGame, owner.ID, "completed", state).Scan(&gameID); err != nil {
+			return fmt.Errorf("insert completed game for %s: %w", def.owner, err)
+		}
+
+		winnerID := byName[def.winner].ID
+		for i, uid := range playerIDs {
+			if _, err := pool.Exec(ctx, insertPlayer, gameID, uid, i, uid == winnerID); err != nil {
+				return fmt.Errorf("insert game_player for game %s user %s: %w", gameID, uid, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func cleanupOldSeedGames(ctx context.Context, pool *pgxpool.Pool) error {

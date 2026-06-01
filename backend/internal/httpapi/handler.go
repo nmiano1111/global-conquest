@@ -34,6 +34,7 @@ type gameService interface {
 	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
 	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]store.Game, error)
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
+	GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error)
 }
 
 type chatService interface {
@@ -580,4 +581,13 @@ func (h *Handler) RevokeUserSessions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"revoked": revoked})
+}
+
+func (h *Handler) GetLeaderboard(c *gin.Context) {
+	entries, err := h.games.GetLeaderboard(c.Request.Context(), 50)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch leaderboard"})
+		return
+	}
+	c.JSON(http.StatusOK, entries)
 }

@@ -9,6 +9,7 @@ import {
   AdminPage,
   AppShell,
   GamePage,
+  LeaderboardPage,
   LobbyPage,
   LoginPage,
   ProfilePage,
@@ -96,6 +97,12 @@ const gameRoute = createRoute({
   component: GamePage,
 });
 
+const leaderboardRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/leaderboard",
+  component: LeaderboardPage,
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/admin",
@@ -111,7 +118,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   signupRoute,
-  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, gameRoute, adminRoute]),
+  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, adminRoute]),
 ]);
 
 export const router = createRouter({

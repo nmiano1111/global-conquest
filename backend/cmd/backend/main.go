@@ -44,7 +44,9 @@ func main() {
 	}
 	defer pool.Close()
 
-	runMigrations(ctx, pool)
+	if os.Getenv("SKIP_MIGRATIONS") != "true" {
+		runMigrations(ctx, pool)
+	}
 
 	d := db.New(pool)
 
@@ -55,6 +57,8 @@ func main() {
 	gamesSvc := service.NewGamesService(d, gamesStore)
 	gameEventStore := store.NewPostgresGameEventStore()
 	gamesSvc.SetGameEventStore(gameEventStore)
+	gamePlayersStore := store.NewPostgresGamePlayersStore()
+	gamesSvc.SetGamePlayersStore(gamePlayersStore)
 	gameActionSvc := service.NewGameActionService(gamesSvc)
 	chatStore := store.NewPostgresChatStore()
 	chatSvc := service.NewChatService(d, chatStore)
