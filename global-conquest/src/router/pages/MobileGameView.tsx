@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type { Card, GameBootstrap } from "../../api/games";
 import { GameMap, type GameMapHandle } from "../../map/GameMap";
@@ -113,6 +113,18 @@ export function MobileGameView(props: MobileGameViewProps) {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const eventScrollRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<GameMapHandle>(null);
+
+  useEffect(() => {
+    if (activeTab !== "chat") return;
+    const el = chatScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatMessages, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "events") return;
+    const el = eventScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [eventMessages, activeTab]);
 
   const currentPlayerIndex = game?.currentPlayer ?? -1;
   const currentPlayer = players[currentPlayerIndex];
