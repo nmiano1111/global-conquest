@@ -754,84 +754,89 @@ export function GamePage() {
               <p>
                 Phase:{" "}
                 <span className="font-semibold capitalize text-gc-accent">{phase || "—"}</span>
-                {" · "}
-                Armies to place:{" "}
-                <span className="font-semibold">{pendingReinforcements}</span>
+                {isMyTurn && pendingReinforcements > 0 ? (
+                  <>
+                    {" · "}Armies to place:{" "}
+                    <span className="font-semibold">{pendingReinforcements}</span>
+                  </>
+                ) : null}
               </p>
-              <p className="text-gc-muted">
-                Territory{" "}
-                <span className="font-medium text-gc-text">{selectedTerritory || "—"}</span>
-                {" · "}From{" "}
-                <span className="font-medium text-gc-text">{activeFrom || "—"}</span>
-                {" · "}To{" "}
-                <span className="font-medium text-gc-text">{activeTo || "—"}</span>
-              </p>
+              {isMyTurn ? (
+                <p className="text-gc-muted">
+                  Territory{" "}
+                  <span className="font-medium text-gc-text">{selectedTerritory || "—"}</span>
+                  {" · "}From{" "}
+                  <span className="font-medium text-gc-text">{activeFrom || "—"}</span>
+                  {" · "}To{" "}
+                  <span className="font-medium text-gc-text">{activeTo || "—"}</span>
+                </p>
+              ) : null}
               {phaseMode === "occupy" && occupyRequirement ? (
                 <p className="text-gc-warning">
                   Move required: {occupyRequirement.from} → {occupyRequirement.to} ({occupyRequirement.minMove}–{occupyRequirement.maxMove})
                 </p>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {phaseMode !== "attack" && phaseMode !== "setup_reinforce" ? (
-                <input
-                  className={`${inputClass} w-24`}
-                  type="number"
-                  min={minArmiesInput}
-                  max={maxArmiesInput}
-                  value={clampedArmiesInput}
-                  onChange={(e) => {
-                    const n = Number(e.target.value) || 1;
-                    setArmiesInput(Math.max(minArmiesInput, Math.min(n, maxArmiesInput)));
-                  }}
-                />
-              ) : null}
-              {phaseMode === "reinforce" && (game?.pendingReinforcements ?? 0) > 0 ? (
-                <button className={buttonPrimaryClass} type="button" onClick={commitReinforcement} disabled={!isMyTurn}>
-                  Place
-                </button>
-              ) : null}
-              {phaseMode === "attack" ? (
-                <button
-                  className={buttonGhostClass}
-                  type="button"
-                  onClick={() => {
-                    sendAction({ action: "end_attack" });
-                    setSelectedFrom("");
-                    setSelectedTo("");
-                    setSelectedTerritory("");
-                  }}
-                  disabled={!isMyTurn}
-                >
-                  End Attack
-                </button>
-              ) : null}
-              {phaseMode === "occupy" ? (
-                <button className={buttonPrimaryClass} type="button" onClick={commitOccupy} disabled={!isMyTurn}>
-                  Move Troops
-                </button>
-              ) : null}
-              {phaseMode === "fortify" ? (
-                <>
-                  <button className={buttonGhostClass} type="button" onClick={commitFortify} disabled={!isMyTurn}>
-                    Fortify
+            {isMyTurn ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {phaseMode !== "attack" && phaseMode !== "setup_reinforce" ? (
+                  <input
+                    className={`${inputClass} w-24`}
+                    type="number"
+                    min={minArmiesInput}
+                    max={maxArmiesInput}
+                    value={clampedArmiesInput}
+                    onChange={(e) => {
+                      const n = Number(e.target.value) || 1;
+                      setArmiesInput(Math.max(minArmiesInput, Math.min(n, maxArmiesInput)));
+                    }}
+                  />
+                ) : null}
+                {phaseMode === "reinforce" && (game?.pendingReinforcements ?? 0) > 0 ? (
+                  <button className={buttonPrimaryClass} type="button" onClick={commitReinforcement}>
+                    Place
                   </button>
+                ) : null}
+                {phaseMode === "attack" ? (
                   <button
-                    className={buttonPrimaryClass}
+                    className={buttonGhostClass}
                     type="button"
                     onClick={() => {
-                      sendAction({ action: "end_turn" });
+                      sendAction({ action: "end_attack" });
                       setSelectedFrom("");
                       setSelectedTo("");
                       setSelectedTerritory("");
                     }}
-                    disabled={!isMyTurn}
                   >
-                    End Turn
+                    End Attack
                   </button>
-                </>
-              ) : null}
-            </div>
+                ) : null}
+                {phaseMode === "occupy" ? (
+                  <button className={buttonPrimaryClass} type="button" onClick={commitOccupy}>
+                    Move Troops
+                  </button>
+                ) : null}
+                {phaseMode === "fortify" ? (
+                  <>
+                    <button className={buttonGhostClass} type="button" onClick={commitFortify}>
+                      Fortify
+                    </button>
+                    <button
+                      className={buttonPrimaryClass}
+                      type="button"
+                      onClick={() => {
+                        sendAction({ action: "end_turn" });
+                        setSelectedFrom("");
+                        setSelectedTo("");
+                        setSelectedTerritory("");
+                      }}
+                    >
+                      End Turn
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <GameMap
@@ -1005,8 +1010,8 @@ export function GamePage() {
           </section>
         ) : null}
 
-        {/* Dice roller */}
-        <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
+        {/* Dice roller — only shown during your attack turn */}
+        {isMyTurn && phaseMode === "attack" ? <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
           <h3 className="mb-3 text-sm font-semibold text-gc-text">Dice Roller</h3>
           <div className="grid gap-2">
             <p className="text-xs text-gc-muted">
@@ -1061,7 +1066,7 @@ export function GamePage() {
               </div>
             </div>
           ) : null}
-        </section>
+        </section> : null}
 
         {/* Game chat */}
         <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
