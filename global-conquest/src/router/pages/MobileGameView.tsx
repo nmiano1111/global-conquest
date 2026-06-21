@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type { Card, GameBootstrap } from "../../api/games";
 import { GameMap, type GameMapHandle } from "../../map/GameMap";
@@ -112,17 +112,22 @@ export function MobileGameView(props: MobileGameViewProps) {
   const [activeTab, setActiveTab] = useState<Tab>("actions");
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const eventScrollRef = useRef<HTMLDivElement>(null);
+  const tabContentRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<GameMapHandle>(null);
 
-  useEffect(() => {
+  // useLayoutEffect fires after DOM commit but before paint, so the ref is
+  // guaranteed to be attached even for freshly-mounted tab content.
+  useLayoutEffect(() => {
     if (activeTab !== "chat") return;
     const el = chatScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [chatMessages, activeTab]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (activeTab !== "events") return;
-    const el = eventScrollRef.current;
+    // eventScrollRef's div has no overflow — the actual scroll container is
+    // the outer tabContentRef div, so scroll that instead.
+    const el = tabContentRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [eventMessages, activeTab]);
 
@@ -745,7 +750,7 @@ export function MobileGameView(props: MobileGameViewProps) {
         </div>
 
         {/* Tab content — fixed height, scrolls internally */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={tabContentRef} className="min-h-0 flex-1 overflow-y-auto">
           {activeTab === "actions" && renderActionsTab()}
           {activeTab === "cards" && renderCardsTab()}
           {activeTab === "events" && renderEventsTab()}
