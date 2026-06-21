@@ -98,46 +98,64 @@ export function AdminPage() {
   };
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <div>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Admin Dashboard</h2>
-          <p className="text-sm text-slate-600">Manage user access and active sessions.</p>
+          <h2 className="text-xl font-semibold text-gc-text">Admin</h2>
+          <p className="mt-0.5 text-sm text-gc-muted">Manage user access and sessions.</p>
         </div>
-        <button className={buttonGhostClass} type="button" onClick={() => void load()} disabled={loading || !!busyUserID}>
+        <button
+          className={buttonGhostClass}
+          type="button"
+          onClick={() => void load()}
+          disabled={loading || !!busyUserID}
+        >
           Refresh
         </button>
       </div>
 
-      {loading ? <p className="text-sm text-slate-600">Loading users...</p> : null}
-      {error ? <p className="mb-3 text-sm text-rose-700">{error}</p> : null}
+      {loading ? <p className="text-sm text-gc-muted">Loading users…</p> : null}
+      {error ? (
+        <p className="mb-4 rounded-lg border border-gc-danger/30 bg-gc-danger/10 px-3 py-2 text-sm text-gc-danger">
+          {error}
+        </p>
+      ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
-          <thead className="bg-slate-50">
+      <section className="overflow-x-auto rounded-xl border border-gc-border bg-gc-surface">
+        <table className="min-w-full divide-y divide-gc-border text-sm">
+          <thead className="bg-gc-surface-2">
             <tr>
-              <th className="px-3 py-2 text-left font-semibold text-slate-700">User</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-700">Role</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-700">Access</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-700">Sessions</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-700">Actions</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">User</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Role</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Sessions</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 bg-white">
+          <tbody className="divide-y divide-gc-border/60">
             {users.map((u) => {
               const isBusy = busyUserID === u.id;
               const isBlocked = u.accessStatus === "blocked";
-              const accessLabel = isBlocked ? "Blocked" : "Active";
               return (
-                <tr key={u.id}>
-                  <td className="px-3 py-2">
-                    <p className="font-medium text-slate-900">{u.username}</p>
-                    <p className="font-mono text-[11px] text-slate-500">{u.id}</p>
+                <tr key={u.id} className="transition-colors hover:bg-gc-surface-2">
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-gc-text">{u.username}</p>
+                    <p className="font-mono text-[11px] text-gc-muted">{u.id}</p>
                   </td>
-                  <td className="px-3 py-2 text-slate-700">{u.role}</td>
-                  <td className="px-3 py-2 text-slate-700">{accessLabel}</td>
-                  <td className="px-3 py-2 text-slate-700">{u.activeSessions}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3 capitalize text-gc-muted">{u.role}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        isBlocked
+                          ? "border border-gc-danger/40 bg-gc-danger/10 text-gc-danger"
+                          : "border border-gc-success/40 bg-gc-success/10 text-gc-success"
+                      }`}
+                    >
+                      {isBlocked ? "Blocked" : "Active"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-gc-muted">{u.activeSessions}</td>
+                  <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-2">
                       {isBlocked ? (
                         <button
@@ -158,7 +176,12 @@ export function AdminPage() {
                           Block
                         </button>
                       )}
-                      <button className={buttonPrimaryClass} type="button" disabled={isBusy} onClick={() => void onRevokeSessions(u)}>
+                      <button
+                        className={buttonPrimaryClass}
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void onRevokeSessions(u)}
+                      >
                         Revoke Sessions
                       </button>
                     </div>
@@ -168,7 +191,7 @@ export function AdminPage() {
             })}
           </tbody>
         </table>
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }

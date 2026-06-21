@@ -45,27 +45,58 @@ export function ProfilePage() {
     };
   }, [auth, navigate]);
 
+  const username = profile?.username ?? auth.user?.username ?? "";
+  const initials = username.slice(0, 2).toUpperCase();
+
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Profile</h2>
-      {loading ? <p className="mt-3 text-sm text-slate-600">Loading profile...</p> : null}
-      {error ? <p className="mt-3 text-sm text-rose-700">{error}</p> : null}
-      {!loading && !error ? (
-        <dl className="mt-4 grid gap-2 text-sm text-slate-700">
-          <div className="grid grid-cols-[100px_1fr] gap-2">
-            <dt className="text-slate-500">Username</dt>
-            <dd className="font-medium text-slate-900">{profile?.username ?? auth.user?.username ?? "-"}</dd>
-          </div>
-          <div className="grid grid-cols-[100px_1fr] gap-2">
-            <dt className="text-slate-500">User ID</dt>
-            <dd className="font-mono text-xs text-slate-700">{profile?.id ?? auth.user?.id ?? "-"}</dd>
-          </div>
-          <div className="grid grid-cols-[100px_1fr] gap-2">
-            <dt className="text-slate-500">Role</dt>
-            <dd className="font-medium text-slate-900">{profile?.role ?? auth.user?.role ?? "-"}</dd>
-          </div>
-        </dl>
+    <div className="mx-auto max-w-lg">
+      <h2 className="mb-4 text-xl font-semibold text-gc-text">Profile</h2>
+
+      {loading ? (
+        <div className="rounded-xl border border-gc-border bg-gc-surface p-6">
+          <p className="text-sm text-gc-muted">Loading profile…</p>
+        </div>
       ) : null}
-    </section>
+
+      {error ? (
+        <div className="rounded-xl border border-gc-danger/30 bg-gc-danger/10 p-4">
+          <p className="text-sm text-gc-danger">{error}</p>
+        </div>
+      ) : null}
+
+      {!loading && !error ? (
+        <section className="rounded-xl border border-gc-border bg-gc-surface p-6">
+          <div className="flex items-center gap-4 pb-5 border-b border-gc-border">
+            <div
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gc-surface-2 text-lg font-bold text-gc-accent"
+              aria-hidden
+            >
+              {initials || "?"}
+            </div>
+            <div>
+              <p className="font-semibold text-gc-text">{username || "—"}</p>
+              <p className="text-xs text-gc-muted capitalize">{profile?.role ?? auth.user?.role ?? "player"}</p>
+            </div>
+          </div>
+
+          <dl className="mt-5 grid gap-3 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-gc-muted">Username</dt>
+              <dd className="font-medium text-gc-text">{profile?.username ?? auth.user?.username ?? "—"}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-gc-muted">User ID</dt>
+              <dd className="font-mono text-xs text-gc-muted truncate max-w-[220px]">
+                {profile?.id ?? auth.user?.id ?? "—"}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-gc-muted">Role</dt>
+              <dd className="font-medium text-gc-text capitalize">{profile?.role ?? auth.user?.role ?? "—"}</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
+    </div>
   );
 }

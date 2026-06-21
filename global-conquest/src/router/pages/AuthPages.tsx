@@ -5,6 +5,26 @@ import { login, signup } from "../../api/auth";
 import { useAuth } from "../../auth";
 import { buttonPrimaryClass, inputClass } from "./styles";
 
+function AuthCard({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="flex min-h-screen w-full items-center justify-center px-4 py-10">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <span
+            className="text-2xl font-semibold tracking-widest text-gc-accent"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Global Conquest
+          </span>
+        </div>
+        <section className="rounded-2xl border border-gc-border bg-gc-surface p-6 shadow-xl shadow-black/40">
+          {children}
+        </section>
+      </div>
+    </main>
+  );
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
   const auth = useAuth();
@@ -39,55 +59,57 @@ export function LoginPage() {
   };
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-4 py-10">
-      <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Welcome Back</h1>
-        <p className="mt-1 text-sm text-slate-600">Sign in to continue to your lobby.</p>
+    <AuthCard>
+      <h1 className="text-xl font-semibold text-gc-text">Welcome back</h1>
+      <p className="mt-1 text-sm text-gc-muted">Sign in to continue.</p>
 
-        <form className="mt-6 grid gap-4" onSubmit={onSubmit}>
-          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
-            Username
-            <input
-              className={inputClass}
-              type="text"
-              autoComplete="username"
-              minLength={3}
-              maxLength={24}
-              value={form.username}
-              onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
-              required
-            />
-          </label>
+      <form className="mt-6 grid gap-4" onSubmit={onSubmit}>
+        <label className="grid gap-1.5 text-sm font-medium text-gc-muted">
+          Username
+          <input
+            className={inputClass}
+            type="text"
+            autoComplete="username"
+            minLength={3}
+            maxLength={24}
+            value={form.username}
+            onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+            required
+          />
+        </label>
 
-          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
-            Password
-            <input
-              className={inputClass}
-              type="password"
-              autoComplete="current-password"
-              minLength={8}
-              maxLength={128}
-              value={form.password}
-              onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-              required
-            />
-          </label>
+        <label className="grid gap-1.5 text-sm font-medium text-gc-muted">
+          Password
+          <input
+            className={inputClass}
+            type="password"
+            autoComplete="current-password"
+            minLength={8}
+            maxLength={128}
+            value={form.password}
+            onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+            required
+          />
+        </label>
 
-          {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        {error ? (
+          <p className="rounded-lg border border-gc-danger/30 bg-gc-danger/10 px-3 py-2 text-sm text-gc-danger">
+            {error}
+          </p>
+        ) : null}
 
-          <button className={buttonPrimaryClass} type="submit" disabled={submitting}>
-            {submitting ? "Signing in..." : "Login"}
-          </button>
-        </form>
+        <button className={buttonPrimaryClass} type="submit" disabled={submitting}>
+          {submitting ? "Signing in…" : "Sign in"}
+        </button>
+      </form>
 
-        <p className="mt-4 text-sm text-slate-600">
-          Need an account?{" "}
-          <Link className="font-medium text-slate-900 underline-offset-2 hover:underline" to="/signup">
-            Sign up
-          </Link>
-        </p>
-      </section>
-    </main>
+      <p className="mt-5 text-center text-sm text-gc-muted">
+        Need an account?{" "}
+        <Link className="font-medium text-gc-accent hover:text-gc-accent-dim transition-colors" to="/signup">
+          Sign up
+        </Link>
+      </p>
+    </AuthCard>
   );
 }
 
@@ -138,68 +160,70 @@ export function SignupPage() {
   };
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-4 py-10">
-      <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Create Account</h1>
-        <p className="mt-1 text-sm text-slate-600">Set up your account to start playing.</p>
+    <AuthCard>
+      <h1 className="text-xl font-semibold text-gc-text">Create account</h1>
+      <p className="mt-1 text-sm text-gc-muted">Set up your account to start playing.</p>
 
-        <form className="mt-6 grid gap-4" onSubmit={onSubmit}>
-          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
-            Username
-            <input
-              className={inputClass}
-              type="text"
-              autoComplete="username"
-              minLength={3}
-              maxLength={24}
-              value={form.username}
-              onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
-              required
-            />
-          </label>
+      <form className="mt-6 grid gap-4" onSubmit={onSubmit}>
+        <label className="grid gap-1.5 text-sm font-medium text-gc-muted">
+          Username
+          <input
+            className={inputClass}
+            type="text"
+            autoComplete="username"
+            minLength={3}
+            maxLength={24}
+            value={form.username}
+            onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+            required
+          />
+        </label>
 
-          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
-            Password
-            <input
-              className={inputClass}
-              type="password"
-              autoComplete="new-password"
-              minLength={8}
-              maxLength={128}
-              value={form.password}
-              onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-              required
-            />
-          </label>
+        <label className="grid gap-1.5 text-sm font-medium text-gc-muted">
+          Password
+          <input
+            className={inputClass}
+            type="password"
+            autoComplete="new-password"
+            minLength={8}
+            maxLength={128}
+            value={form.password}
+            onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+            required
+          />
+        </label>
 
-          <label className="grid gap-1.5 text-sm font-medium text-slate-700">
-            Confirm Password
-            <input
-              className={inputClass}
-              type="password"
-              autoComplete="new-password"
-              minLength={8}
-              maxLength={128}
-              value={form.confirmPassword}
-              onChange={(e) => setForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
-              required
-            />
-          </label>
+        <label className="grid gap-1.5 text-sm font-medium text-gc-muted">
+          Confirm Password
+          <input
+            className={inputClass}
+            type="password"
+            autoComplete="new-password"
+            minLength={8}
+            maxLength={128}
+            value={form.confirmPassword}
+            onChange={(e) => setForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
+            required
+          />
+        </label>
 
-          {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        {error ? (
+          <p className="rounded-lg border border-gc-danger/30 bg-gc-danger/10 px-3 py-2 text-sm text-gc-danger">
+            {error}
+          </p>
+        ) : null}
 
-          <button className={buttonPrimaryClass} type="submit" disabled={submitting}>
-            {submitting ? "Creating account..." : "Create account"}
-          </button>
-        </form>
+        <button className={buttonPrimaryClass} type="submit" disabled={submitting}>
+          {submitting ? "Creating account…" : "Create account"}
+        </button>
+      </form>
 
-        <p className="mt-4 text-sm text-slate-600">
-          Already have an account?{" "}
-          <Link className="font-medium text-slate-900 underline-offset-2 hover:underline" to="/login">
-            Login
-          </Link>
-        </p>
-      </section>
-    </main>
+      <p className="mt-5 text-center text-sm text-gc-muted">
+        Already have an account?{" "}
+        <Link className="font-medium text-gc-accent hover:text-gc-accent-dim transition-colors" to="/login">
+          Sign in
+        </Link>
+      </p>
+    </AuthCard>
   );
 }

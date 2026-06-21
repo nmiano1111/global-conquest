@@ -560,7 +560,6 @@ export function GamePage() {
         return;
       }
       if (isMine) {
-        // Clear stale reinforce highlight whenever a new attacker is picked.
         setSelectedTerritory("");
         setSelectedFrom(name);
         setSelectedTo("");
@@ -579,20 +578,16 @@ export function GamePage() {
     }
     if (phaseMode === "fortify") {
       if (!isMyTurn) return;
-      // Clear stale reinforce highlight on any fortify interaction.
       setSelectedTerritory("");
       if (!isMine) {
         setActionError("Select one of your territories.");
         return;
       }
-      // If no source yet, OR both source+dest already chosen → start fresh.
-      // This lets the player change their source at any point.
       if (!selectedFrom || selectedTo) {
         setSelectedFrom(name);
         setSelectedTo("");
         return;
       }
-      // Source set, destination not yet — any owned territory is valid (server checks contiguity).
       setSelectedTo(name);
     }
   };
@@ -706,11 +701,13 @@ export function GamePage() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
+      {/* ── Left: map + event log ── */}
       <section className="grid gap-4">
-        <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        {/* Game header */}
+        <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gc-border bg-gc-surface px-4 py-3">
           <div>
-            <h2 className="text-xl font-semibold tracking-tight text-slate-900">Game Room</h2>
-            <p className="font-mono text-xs text-slate-600">{gameID}</p>
+            <h2 className="text-base font-semibold text-gc-text">Game Room</h2>
+            <p className="font-mono text-xs text-gc-muted">{gameID}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className={buttonGhostClass} type="button" onClick={() => void loadGame()} disabled={loading}>
@@ -720,43 +717,58 @@ export function GamePage() {
               Mobile View
             </button>
             <Link className={buttonGhostClass} to="/app/lobby">
-              Back to Lobby
+              ← Lobby
             </Link>
           </div>
         </header>
 
-        {loading ? <p className="text-sm text-slate-600">Loading game...</p> : null}
-        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        {loading ? <p className="text-sm text-gc-muted">Loading game…</p> : null}
+        {error ? (
+          <p className="rounded-lg border border-gc-danger/30 bg-gc-danger/10 px-3 py-2 text-sm text-gc-danger">
+            {error}
+          </p>
+        ) : null}
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        {/* Map panel */}
+        <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Map</h3>
-            <span className="text-xs text-slate-500">Status: {game?.status || "-"}</span>
+            <h3 className="text-sm font-semibold text-gc-text">Map</h3>
+            <span className="text-xs text-gc-muted capitalize">{game?.status || "—"}</span>
           </div>
+
+          {/* Setup phase banner */}
           {phaseMode === "setup_reinforce" ? (
-            <div className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-800">
+            <div className="mb-3 rounded-lg border border-sky-700/60 bg-sky-900/30 p-3 text-xs text-sky-300">
               <p className="font-semibold">Initial Troop Placement</p>
-              <p className="mt-0.5">
+              <p className="mt-0.5 text-sky-400">
                 {mySetupArmies > 0
                   ? `Click one of your territories to place an army. You have ${mySetupArmies} left.`
                   : "You've placed all your armies. Waiting for other players to finish."}
               </p>
             </div>
           ) : null}
-          <div className="mb-3 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 md:grid-cols-[1fr_auto] md:items-center">
-            <div>
+
+          {/* Phase controls */}
+          <div className="mb-3 grid gap-2 rounded-lg border border-gc-border bg-gc-surface-2 p-3 text-xs text-gc-text md:grid-cols-[1fr_auto] md:items-center">
+            <div className="grid gap-1">
               <p>
-                Phase: <span className="font-semibold">{phase || "-"}</span> | Armies To Place:{" "}
+                Phase:{" "}
+                <span className="font-semibold capitalize text-gc-accent">{phase || "—"}</span>
+                {" · "}
+                Armies to place:{" "}
                 <span className="font-semibold">{pendingReinforcements}</span>
               </p>
-              <p>
-                Selected: territory <span className="font-semibold">{selectedTerritory || "-"}</span>, from{" "}
-                <span className="font-semibold">{activeFrom || "-"}</span>, to{" "}
-                <span className="font-semibold">{activeTo || "-"}</span>
+              <p className="text-gc-muted">
+                Territory{" "}
+                <span className="font-medium text-gc-text">{selectedTerritory || "—"}</span>
+                {" · "}From{" "}
+                <span className="font-medium text-gc-text">{activeFrom || "—"}</span>
+                {" · "}To{" "}
+                <span className="font-medium text-gc-text">{activeTo || "—"}</span>
               </p>
               {phaseMode === "occupy" && occupyRequirement ? (
-                <p className="text-amber-700">
-                  Move required: {occupyRequirement.from} {"->"} {occupyRequirement.to} ({occupyRequirement.minMove}-{occupyRequirement.maxMove})
+                <p className="text-gc-warning">
+                  Move required: {occupyRequirement.from} → {occupyRequirement.to} ({occupyRequirement.minMove}–{occupyRequirement.maxMove})
                 </p>
               ) : null}
             </div>
@@ -780,11 +792,19 @@ export function GamePage() {
                 </button>
               ) : null}
               {phaseMode === "attack" ? (
-                <>
-                  <button className={buttonGhostClass} type="button" onClick={() => { sendAction({ action: "end_attack" }); setSelectedFrom(""); setSelectedTo(""); setSelectedTerritory(""); }} disabled={!isMyTurn}>
-                    End Attack
-                  </button>
-                </>
+                <button
+                  className={buttonGhostClass}
+                  type="button"
+                  onClick={() => {
+                    sendAction({ action: "end_attack" });
+                    setSelectedFrom("");
+                    setSelectedTo("");
+                    setSelectedTerritory("");
+                  }}
+                  disabled={!isMyTurn}
+                >
+                  End Attack
+                </button>
               ) : null}
               {phaseMode === "occupy" ? (
                 <button className={buttonPrimaryClass} type="button" onClick={commitOccupy} disabled={!isMyTurn}>
@@ -796,13 +816,24 @@ export function GamePage() {
                   <button className={buttonGhostClass} type="button" onClick={commitFortify} disabled={!isMyTurn}>
                     Fortify
                   </button>
-                  <button className={buttonPrimaryClass} type="button" onClick={() => { sendAction({ action: "end_turn" }); setSelectedFrom(""); setSelectedTo(""); setSelectedTerritory(""); }} disabled={!isMyTurn}>
+                  <button
+                    className={buttonPrimaryClass}
+                    type="button"
+                    onClick={() => {
+                      sendAction({ action: "end_turn" });
+                      setSelectedFrom("");
+                      setSelectedTo("");
+                      setSelectedTerritory("");
+                    }}
+                    disabled={!isMyTurn}
+                  >
                     End Turn
                   </button>
                 </>
               ) : null}
             </div>
           </div>
+
           <GameMap
             game={game}
             selectedTerritory={selectedTerritory}
@@ -813,89 +844,122 @@ export function GamePage() {
           />
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        {/* Event log */}
+        <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Event Log</h3>
-            <span className="text-xs text-slate-500">Phase: {phase || "-"}</span>
+            <h3 className="text-sm font-semibold text-gc-text">Event Log</h3>
+            <span className="text-xs text-gc-muted capitalize">{phase || "—"}</span>
           </div>
-          <div ref={eventScrollRef} className="h-[180px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+          <div
+            ref={eventScrollRef}
+            className="h-[180px] overflow-y-auto rounded-lg border border-gc-border bg-gc-surface-2 p-3 text-sm text-gc-muted"
+          >
             {eventMessages.length === 0 ? <p>No events yet.</p> : null}
             <ul className="grid gap-2">
               {eventMessages.map((ev, idx) => {
-                const eventColor = eventColorByActorID[ev.actorUserID] ?? "#334155";
+                const eventColor = eventColorByActorID[ev.actorUserID] ?? "#687a91";
                 return (
-                <li key={`${ev.id}-${idx}`} className="rounded-lg bg-white px-2 py-1.5">
-                  <div className="mb-1 flex items-center justify-between gap-2 text-xs" style={{ color: eventColor }}>
-                    <span className="font-semibold">{ev.eventType.replaceAll("_", " ")}</span>
-                    <span>{new Date(ev.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-                  </div>
-                  <p className="text-sm font-medium" style={{ color: eventColor }}>
-                    {renderEventBody(ev.body)}
-                  </p>
-                </li>
+                  <li key={`${ev.id}-${idx}`} className="rounded-lg bg-gc-surface px-2 py-1.5">
+                    <div className="mb-1 flex items-center justify-between gap-2 text-xs" style={{ color: eventColor }}>
+                      <span className="font-semibold capitalize">{ev.eventType.replaceAll("_", " ")}</span>
+                      <span className="text-gc-muted">
+                        {new Date(ev.createdAt).toLocaleString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                    <p className="text-sm font-medium" style={{ color: eventColor }}>
+                      {renderEventBody(ev.body)}
+                    </p>
+                  </li>
                 );
               })}
             </ul>
           </div>
         </section>
 
-        {actionError ? <p className="text-sm text-rose-700">{actionError}</p> : null}
+        {actionError ? (
+          <p className="rounded-lg border border-gc-danger/30 bg-gc-danger/10 px-3 py-2 text-sm text-gc-danger">
+            {actionError}
+          </p>
+        ) : null}
       </section>
 
+      {/* ── Right: players, cards, dice, chat ── */}
       <aside className="grid gap-4">
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        {/* Players */}
+        <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Players</h3>
-            <span className="text-xs text-slate-500">
-              {players.length}/{players.length}
-            </span>
+            <h3 className="text-sm font-semibold text-gc-text">Players</h3>
+            <span className="text-xs text-gc-muted">{players.length}</span>
           </div>
-          {players.length === 0 ? <p className="text-sm text-slate-500">No player data available yet.</p> : null}
+          {players.length === 0 ? (
+            <p className="text-sm text-gc-muted">No player data yet.</p>
+          ) : null}
           <ul className="grid gap-2">
             {players.map((p) => (
-              <li key={p.userId} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <li
+                key={p.userId}
+                className="rounded-lg border border-gc-border bg-gc-surface-2 px-3 py-2"
+              >
                 <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-xs text-slate-700">
-                      <span
-                        className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full align-middle"
-                        style={{ backgroundColor: p.color || "#94a3b8" }}
-                      />
-                      <span className="font-bold" style={{ color: p.color || "#334155" }}>
-                        {p.userName || p.userId}
-                      </span>
-                    </span>
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <span
+                      className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: p.color || "#94a3b8" }}
+                    />
+                    <span style={{ color: p.color || "#dde4f0" }}>{p.userName || p.userId}</span>
+                  </span>
                   {game && players[game.currentPlayer]?.userId === p.userId ? (
-                    <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                      Current Turn
+                    <span className="rounded-full border border-gc-success/40 bg-gc-success/10 px-2 py-0.5 text-[11px] font-medium text-gc-success">
+                      Playing
                     </span>
                   ) : null}
                 </div>
                 {phaseMode === "setup_reinforce" ? (
-                  <p className="mt-1 text-xs text-slate-600">Armies to place: <span className="font-semibold">{p.setupArmies}</span></p>
+                  <p className="mt-1 text-xs text-gc-muted">
+                    Armies to place: <span className="font-semibold text-gc-text">{p.setupArmies}</span>
+                  </p>
                 ) : (
-                  <p className="mt-1 text-xs text-slate-600">Cards: {p.cardCount}</p>
+                  <p className="mt-1 text-xs text-gc-muted">
+                    Cards: <span className="text-gc-text">{p.cardCount}</span>
+                    {p.eliminated ? (
+                      <span className="ml-2 text-gc-danger">· Eliminated</span>
+                    ) : null}
+                  </p>
                 )}
-                <p className="text-xs text-slate-600">Status: {p.eliminated ? "Eliminated" : "Active"}</p>
               </li>
             ))}
           </ul>
         </section>
 
+        {/* Cards */}
         {meIndex >= 0 && game?.status === "in_progress" ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">My Cards</h3>
-              <span className="text-xs text-slate-500">
-                {myCards.length} card{myCards.length !== 1 ? "s" : ""} · next trade: <span className="font-semibold text-indigo-700">+{nextTradeBonus}</span>
+              <h3 className="text-sm font-semibold text-gc-text">My Cards</h3>
+              <span className="text-xs text-gc-muted">
+                {myCards.length} card{myCards.length !== 1 ? "s" : ""} · next:{" "}
+                <span className="font-semibold text-gc-accent">+{nextTradeBonus}</span>
               </span>
             </div>
             {myCards.length === 0 ? (
-              <p className="text-xs text-slate-500">No cards yet. Earn one by conquering a territory.</p>
+              <p className="text-xs text-gc-muted">No cards yet. Conquer a territory to earn one.</p>
             ) : (
               <ul className="grid gap-1.5">
                 {myCards.map((card, idx) => {
                   const isSelected = selectedCardIndices.includes(idx);
-                  const symbolIcon = card.symbol === "infantry" ? "🪖" : card.symbol === "cavalry" ? "🐴" : card.symbol === "artillery" ? "💣" : "⭐";
+                  const symbolIcon =
+                    card.symbol === "infantry"
+                      ? "🪖"
+                      : card.symbol === "cavalry"
+                        ? "🐴"
+                        : card.symbol === "artillery"
+                          ? "💣"
+                          : "⭐";
                   return (
                     <li key={idx}>
                       <button
@@ -903,14 +967,14 @@ export function GamePage() {
                         onClick={() => toggleCardSelection(idx)}
                         className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
                           isSelected
-                            ? "border-indigo-400 bg-indigo-50 text-indigo-800"
-                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+                            ? "border-gc-accent/60 bg-gc-accent/10 text-gc-accent"
+                            : "border-gc-border bg-gc-surface-2 text-gc-text hover:border-gc-border/80 hover:bg-gc-surface"
                         }`}
                       >
                         <span className="mr-1.5">{symbolIcon}</span>
                         <span className="font-semibold capitalize">{card.symbol}</span>
                         {card.territory ? (
-                          <span className="ml-1.5 text-slate-500">— {card.territory}</span>
+                          <span className="ml-1.5 text-gc-muted">— {card.territory}</span>
                         ) : null}
                       </button>
                     </li>
@@ -919,17 +983,15 @@ export function GamePage() {
               </ul>
             )}
             {myCards.length >= 5 && isMyTurn && phaseMode === "reinforce" ? (
-              <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">
+              <p className="mt-2 rounded-lg border border-gc-warning/40 bg-gc-warning/10 px-2 py-1.5 text-xs font-medium text-gc-warning">
                 {(game?.pendingReinforcements ?? 0) === 0
-                  ? "You captured an opponent's cards and now hold 5 or more. Trade in a valid set before continuing your attack."
-                  : "You must trade cards before placing reinforcements (5+ cards held)."}
+                  ? "You hold 5+ cards. Trade a valid set before continuing."
+                  : "Trade cards before placing reinforcements (5+ cards held)."}
               </p>
             ) : null}
             {isMyTurn && phaseMode === "reinforce" && myCards.length >= 3 ? (
               <div className="mt-3 grid gap-2">
-                <p className="text-xs text-slate-500">
-                  {selectedCardIndices.length}/3 selected
-                </p>
+                <p className="text-xs text-gc-muted">{selectedCardIndices.length}/3 selected</p>
                 <button
                   type="button"
                   className={buttonPrimaryClass}
@@ -943,17 +1005,17 @@ export function GamePage() {
           </section>
         ) : null}
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Dice Roller</h3>
-          </div>
+        {/* Dice roller */}
+        <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
+          <h3 className="mb-3 text-sm font-semibold text-gc-text">Dice Roller</h3>
           <div className="grid gap-2">
-            <p className="text-xs text-slate-600">
-              Attack: <span className="font-semibold">{selectedFrom || "-"}</span> {"->"}{" "}
-              <span className="font-semibold">{selectedTo || "-"}</span>
+            <p className="text-xs text-gc-muted">
+              <span className="font-medium text-gc-text">{selectedFrom || "—"}</span>
+              {" → "}
+              <span className="font-medium text-gc-text">{selectedTo || "—"}</span>
             </p>
             <div className="grid grid-cols-2 gap-2">
-              <label className="grid gap-1 text-xs font-medium text-slate-600">
+              <label className="grid gap-1 text-xs font-medium text-gc-muted">
                 Attacker Dice
                 <select
                   className={inputClass}
@@ -965,9 +1027,9 @@ export function GamePage() {
                   {maxAttackDiceAllowed >= 3 ? <option value={3}>3</option> : null}
                 </select>
               </label>
-              <div className="grid gap-1 text-xs font-medium text-slate-600">
+              <div className="grid gap-1 text-xs font-medium text-gc-muted">
                 Defender Dice
-                <div className={`${inputClass} bg-slate-100`}>{maxDefendDiceAllowed}</div>
+                <div className={`${inputClass} bg-gc-surface-2`}>{maxDefendDiceAllowed}</div>
               </div>
             </div>
             <button
@@ -979,48 +1041,71 @@ export function GamePage() {
               Roll Dice
             </button>
             {!canAttackSelection && phaseMode === "attack" ? (
-              <p className="text-xs text-slate-500">Select adjacent attacker/defender territories to roll.</p>
+              <p className="text-xs text-gc-muted">Select adjacent attacker and defender territories to roll.</p>
             ) : null}
           </div>
 
           {diceResult ? (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-              <p>
-                Attacker: <span className="font-semibold">{diceResult.attacker.join(", ")}</span>
-              </p>
-              <p>
-                Defender: <span className="font-semibold">{diceResult.defender.join(", ")}</span>
-              </p>
-              <p className="mt-1 text-xs text-slate-600">
-                Losses: Attacker {diceResult.attackerLoss}, Defender {diceResult.defenderLoss}
-              </p>
+            <div className="mt-3 rounded-lg border border-gc-border bg-gc-surface-2 p-3 text-sm">
+              <div className="grid grid-cols-2 gap-2 text-center">
+                <div>
+                  <p className="text-xs text-gc-muted">Attacker</p>
+                  <p className="text-lg font-bold text-gc-text">{diceResult.attacker.join(" · ")}</p>
+                  <p className="text-xs text-gc-danger">−{diceResult.attackerLoss}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gc-muted">Defender</p>
+                  <p className="text-lg font-bold text-gc-text">{diceResult.defender.join(" · ")}</p>
+                  <p className="text-xs text-gc-success">−{diceResult.defenderLoss}</p>
+                </div>
+              </div>
             </div>
           ) : null}
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        {/* Game chat */}
+        <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Game Chat</h3>
-            <span className="text-xs text-slate-500">Socket: {wsStatus}</span>
+            <h3 className="text-sm font-semibold text-gc-text">Game Chat</h3>
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${wsStatus === "connected" ? "bg-gc-success" : "bg-gc-danger"}`}
+                title={wsStatus}
+              />
+              <span className="text-xs text-gc-muted">{wsStatus}</span>
+            </div>
           </div>
-          <div ref={chatScrollRef} className="h-[260px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+          <div
+            ref={chatScrollRef}
+            className="h-[260px] overflow-y-auto rounded-lg border border-gc-border bg-gc-surface-2 p-3 text-sm text-gc-muted"
+          >
             {chatMessages.length === 0 ? <p>No messages yet.</p> : null}
             <ul className="grid gap-2">
               {chatMessages.map((m, idx) => {
                 const nameKey = m.userName.trim().toLowerCase();
-                const chatColor = chatColorByUserName[nameKey] ?? "#334155";
+                const chatColor = chatColorByUserName[nameKey] ?? "#687a91";
                 return (
-                <li key={`${m.userName}-${m.createdAt}-${idx}`} className="rounded-lg bg-white p-2">
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="font-medium" style={{ color: chatColor }}>
-                      {m.userName}
-                    </span>
-                    <span className="text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-                  </div>
-                  <p className="whitespace-pre-wrap" style={{ color: chatColor }}>
-                    {m.body}
-                  </p>
-                </li>
+                  <li
+                    key={`${m.userName}-${m.createdAt}-${idx}`}
+                    className="rounded-lg bg-gc-surface px-2 py-2"
+                  >
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold" style={{ color: chatColor }}>
+                        {m.userName}
+                      </span>
+                      <span className="text-[11px] text-gc-muted">
+                        {new Date(m.createdAt).toLocaleString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                    <p className="whitespace-pre-wrap text-xs" style={{ color: chatColor }}>
+                      {m.body}
+                    </p>
+                  </li>
                 );
               })}
             </ul>
@@ -1031,10 +1116,14 @@ export function GamePage() {
               rows={3}
               value={chatDraft}
               onChange={(e) => setChatDraft(e.target.value)}
-              placeholder="Type a game message..."
+              placeholder="Type a message…"
             />
-            {chatError ? <p className="text-sm text-rose-700">{chatError}</p> : null}
-            <button className={buttonPrimaryClass} type="submit" disabled={chatDraft.trim() === "" || wsStatus !== "connected"}>
+            {chatError ? <p className="text-sm text-gc-danger">{chatError}</p> : null}
+            <button
+              className={buttonPrimaryClass}
+              type="submit"
+              disabled={chatDraft.trim() === "" || wsStatus !== "connected"}
+            >
               Send
             </button>
           </form>

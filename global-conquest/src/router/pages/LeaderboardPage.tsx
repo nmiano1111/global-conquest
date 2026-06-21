@@ -4,6 +4,8 @@ import type { ApiError } from "../../api/client";
 import { getLeaderboard, type LeaderboardEntry } from "../../api/leaderboard";
 import { useAuth } from "../../auth";
 
+const RANK_MEDALS = ["🥇", "🥈", "🥉"];
+
 export function LeaderboardPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -38,42 +40,66 @@ export function LeaderboardPage() {
   }, [load]);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Leaderboard</h2>
+    <div className="mx-auto max-w-2xl">
+      <h2 className="mb-4 text-xl font-semibold text-gc-text">Leaderboard</h2>
 
-      {loading ? <p className="mt-3 text-sm text-slate-600">Loading...</p> : null}
-      {error ? <p className="mt-3 text-sm text-rose-700">{error}</p> : null}
+      {loading ? (
+        <div className="rounded-xl border border-gc-border bg-gc-surface p-6">
+          <p className="text-sm text-gc-muted">Loading…</p>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="rounded-xl border border-gc-danger/30 bg-gc-danger/10 p-4">
+          <p className="text-sm text-gc-danger">{error}</p>
+        </div>
+      ) : null}
 
       {!loading && !error && entries.length === 0 ? (
-        <p className="mt-3 text-sm text-slate-500">No completed games yet.</p>
+        <div className="rounded-xl border border-gc-border bg-gc-surface p-8 text-center">
+          <p className="text-gc-muted">No completed games yet.</p>
+          <p className="mt-1 text-xs text-gc-muted/60">Finish a game to appear on the leaderboard.</p>
+        </div>
       ) : null}
 
       {!loading && !error && entries.length > 0 ? (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-sm text-left text-slate-700">
+        <section className="rounded-xl border border-gc-border bg-gc-surface overflow-hidden">
+          <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
-                <th className="pb-2 pr-6">Rank</th>
-                <th className="pb-2 pr-6">Player</th>
-                <th className="pb-2 pr-6 text-right">Wins</th>
-                <th className="pb-2 pr-6 text-right">Losses</th>
-                <th className="pb-2 text-right">Games</th>
+              <tr className="border-b border-gc-border bg-gc-surface-2">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Rank</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Player</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gc-muted">Wins</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gc-muted">Losses</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gc-muted">Games</th>
               </tr>
             </thead>
             <tbody>
-              {entries.map((e, i) => (
-                <tr key={e.user_id} className="border-b border-slate-100 last:border-0">
-                  <td className="py-2.5 pr-6 font-mono text-slate-400">{i + 1}</td>
-                  <td className="py-2.5 pr-6 font-medium text-slate-900">{e.username}</td>
-                  <td className="py-2.5 pr-6 text-right text-emerald-600 font-medium">{e.wins}</td>
-                  <td className="py-2.5 pr-6 text-right text-rose-500">{e.losses}</td>
-                  <td className="py-2.5 text-right text-slate-500">{e.games_played}</td>
-                </tr>
-              ))}
+              {entries.map((e, i) => {
+                const isTop3 = i < 3;
+                return (
+                  <tr
+                    key={e.user_id}
+                    className="border-b border-gc-border/60 last:border-0 transition-colors hover:bg-gc-surface-2"
+                  >
+                    <td className="px-4 py-3">
+                      {isTop3 ? (
+                        <span className="text-base leading-none">{RANK_MEDALS[i]}</span>
+                      ) : (
+                        <span className="font-mono text-gc-muted">{i + 1}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gc-text">{e.username}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-gc-success">{e.wins}</td>
+                    <td className="px-4 py-3 text-right text-gc-muted">{e.losses}</td>
+                    <td className="px-4 py-3 text-right text-gc-muted">{e.games_played}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        </div>
+        </section>
       ) : null}
-    </section>
+    </div>
   );
 }
