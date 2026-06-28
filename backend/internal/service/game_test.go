@@ -353,6 +353,227 @@ func TestListGamesValidationAndPassThrough(t *testing.T) {
 	}
 }
 
+// fakeDomainEventStore records InsertDomainEvent calls for assertions.
+type fakeDomainEventStore struct {
+	insertFn func(context.Context, db.Querier, string, risk.DomainEvent, []byte) (store.GameDomainEvent, error)
+	calls    int
+}
+
+func (f *fakeDomainEventStore) InsertDomainEvent(ctx context.Context, q db.Querier, gameID string, ev risk.DomainEvent, payload []byte) (store.GameDomainEvent, error) {
+	f.calls++
+	if f.insertFn != nil {
+		return f.insertFn(ctx, q, gameID, ev, payload)
+	}
+	return store.GameDomainEvent{ID: "ev1", GameID: gameID, GameSequence: int64(f.calls), EventType: ev.Type}, nil
+}
+
+// attackPhaseGameState returns JSON for a risk.Game in PhaseAttack with Alaska owned by
+// the first shuffled player (currentPlayer) and Kamchatka owned by the second.
+func attackPhaseGameState(t *testing.T) (json.RawMessage, string, string) {
+	t.Helper()
+	g, err := risk.NewClassicAutoStartGame([]string{"uid-p1", "uid-p2", "uid-p3"}, nil)
+	if err != nil {
+		t.Fatalf("new game: %v", err)
+	}
+	g.Phase = risk.PhaseAttack
+	g.PendingReinforcements = 0
+	attackerIdx := g.CurrentPlayer
+	defenderIdx := (attackerIdx + 1) % len(g.Players)
+	attackerID := g.Players[attackerIdx].ID
+	defenderID := g.Players[defenderIdx].ID
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: attackerIdx, Armies: 5}
+	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: defenderIdx, Armies: 2}
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal game: %v", err)
+	}
+	return raw, attackerID, defenderID
+}
+
+func TestApplyAttackProducesDomainEvent(t *testing.T) {
+	gameState, attackerID, _ := attackPhaseGameState(t)
+
+	domainStore := &fakeDomainEventStore{}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetGameDomainEventStore(domainStore)
+
+	_, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: attackerID,
+		Action:       "attack",
+		From:         "Alaska",
+		To:           "Kamchatka",
+		AttackerDice: 3,
+		DefenderDice: 2,
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction attack: %v", err)
+	}
+	if domainStore.calls != 1 {
+		t.Fatalf("expected 1 InsertDomainEvent call, got %d", domainStore.calls)
+	}
+}
+
+func TestApplyAttackDomainEventPayloadType(t *testing.T) {
+	gameState, attackerID, _ := attackPhaseGameState(t)
+
+	var capturedEv risk.DomainEvent
+	domainStore := &fakeDomainEventStore{
+		insertFn: func(_ context.Context, _ db.Querier, _ string, ev risk.DomainEvent, payload []byte) (store.GameDomainEvent, error) {
+			capturedEv = ev
+			return store.GameDomainEvent{ID: "ev1", EventType: ev.Type, GameSequence: 1}, nil
+		},
+	}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetGameDomainEventStore(domainStore)
+
+	_, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: attackerID,
+		Action:       "attack",
+		From:         "Alaska",
+		To:           "Kamchatka",
+		AttackerDice: 3,
+		DefenderDice: 2,
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction: %v", err)
+	}
+	if capturedEv.Type != risk.EventTypeCombatRollResolved {
+		t.Fatalf("expected event type %q, got %q", risk.EventTypeCombatRollResolved, capturedEv.Type)
+	}
+	if capturedEv.ActorPlayerID != attackerID {
+		t.Fatalf("expected actor %q, got %q", attackerID, capturedEv.ActorPlayerID)
+	}
+	pl, ok := capturedEv.Payload.(risk.CombatRollResolvedPayload)
+	if !ok {
+		t.Fatalf("expected CombatRollResolvedPayload, got %T", capturedEv.Payload)
+	}
+	if pl.SourceTerritoryID != "Alaska" || pl.TargetTerritoryID != "Kamchatka" {
+		t.Fatalf("unexpected territories: src=%q tgt=%q", pl.SourceTerritoryID, pl.TargetTerritoryID)
+	}
+	if pl.AttackerPlayerID != attackerID {
+		t.Fatalf("unexpected attacker player id: %q", pl.AttackerPlayerID)
+	}
+}
+
+func TestNonAttackActionProducesNoDomainEvent(t *testing.T) {
+	g, err := risk.NewClassicAutoStartGame([]string{"uid-p1", "uid-p2", "uid-p3"}, nil)
+	if err != nil {
+		t.Fatalf("new game: %v", err)
+	}
+	actorIdx := g.CurrentPlayer
+	actorID := g.Players[actorIdx].ID
+	// Find a territory owned by the current player to place a reinforcement on.
+	var ownedTerr string
+	for terr, ts := range g.Territories {
+		if ts.Owner == actorIdx {
+			ownedTerr = string(terr)
+			break
+		}
+	}
+	if ownedTerr == "" {
+		t.Fatal("no owned territory found for current player")
+	}
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	domainStore := &fakeDomainEventStore{}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+	})
+	svc.SetGameDomainEventStore(domainStore)
+
+	// place_reinforcement never produces a domain event
+	_, err = svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "place_reinforcement",
+		Territory:    ownedTerr,
+		Armies:       1,
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction place_reinforcement: %v", err)
+	}
+	if domainStore.calls != 0 {
+		t.Fatalf("expected 0 domain event calls for non-attack action, got %d", domainStore.calls)
+	}
+}
+
+func TestApplyAttackDomainEventStoreErrorRollsBack(t *testing.T) {
+	gameState, attackerID, _ := attackPhaseGameState(t)
+
+	storeErr := errors.New("event store failure")
+	domainStore := &fakeDomainEventStore{
+		insertFn: func(context.Context, db.Querier, string, risk.DomainEvent, []byte) (store.GameDomainEvent, error) {
+			return store.GameDomainEvent{}, storeErr
+		},
+	}
+	updateCalled := false
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			updateCalled = true
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetGameDomainEventStore(domainStore)
+
+	_, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: attackerID,
+		Action:       "attack",
+		From:         "Alaska",
+		To:           "Kamchatka",
+		AttackerDice: 3,
+		DefenderDice: 2,
+	})
+	if err == nil {
+		t.Fatal("expected error when domain event store fails")
+	}
+	if !errors.Is(err, storeErr) {
+		t.Fatalf("expected storeErr, got: %v", err)
+	}
+	if !updateCalled {
+		t.Fatal("expected state update to have been attempted before event store failed")
+	}
+}
+
 func TestIsLegacyUninitializedSetup(t *testing.T) {
 	game := risk.Game{
 		Phase: risk.PhaseSetupClaim,

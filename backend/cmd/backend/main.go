@@ -59,6 +59,8 @@ func main() {
 	gamesSvc.SetGameEventStore(gameEventStore)
 	gamePlayersStore := store.NewPostgresGamePlayersStore()
 	gamesSvc.SetGamePlayersStore(gamePlayersStore)
+	gameDomainEventStore := store.NewPostgresGameDomainEventStore()
+	gamesSvc.SetGameDomainEventStore(gameDomainEventStore)
 	gameActionSvc := service.NewGameActionService(gamesSvc)
 	chatStore := store.NewPostgresChatStore()
 	chatSvc := service.NewChatService(d, chatStore)

@@ -25,11 +25,16 @@ type gamePlayersStore interface {
 	GetLeaderboard(ctx context.Context, q db.Querier, limit int) ([]store.LeaderboardEntry, error)
 }
 
+type gameDomainEventStore interface {
+	InsertDomainEvent(ctx context.Context, q db.Querier, gameID string, ev risk.DomainEvent, payload []byte) (store.GameDomainEvent, error)
+}
+
 type GamesService struct {
-	db          gameDB
-	games       store.GamesStore
-	gameEvent   gameEventStore
-	gamePlayers gamePlayersStore
+	db               gameDB
+	games            store.GamesStore
+	gameEvent        gameEventStore
+	gamePlayers      gamePlayersStore
+	gameDomainEvents gameDomainEventStore
 }
 
 var (
@@ -58,6 +63,10 @@ func (s *GamesService) SetGameEventStore(gameEvent gameEventStore) {
 
 func (s *GamesService) SetGamePlayersStore(gp gamePlayersStore) {
 	s.gamePlayers = gp
+}
+
+func (s *GamesService) SetGameDomainEventStore(ds gameDomainEventStore) {
+	s.gameDomainEvents = ds
 }
 
 type lobbyState struct {
@@ -390,6 +399,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 
 		var result any
 		var eventType, eventBody string
+		var domainEv *risk.DomainEvent
 		switch in.Action {
 		case "place_reinforcement":
 			if in.Territory == "" || in.Armies <= 0 {
@@ -425,7 +435,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			if defenderDice < 1 {
 				return ErrInvalidGameAction
 			}
-			ar, err := engine.Attack(
+			ar, ev, err := engine.Attack(
 				in.PlayerUserID,
 				risk.Territory(in.From),
 				risk.Territory(in.To),
@@ -435,6 +445,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			if err != nil {
 				return err
 			}
+			domainEv = ev
 			result = ar
 			eventType = "attack_resolved"
 			eventBody = fmt.Sprintf(
@@ -533,6 +544,15 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 		}
 		if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.gamePlayers != nil {
 			if err := s.gamePlayers.SetGameWinner(ctx, q, g.ID, engine.Winner); err != nil {
+				return err
+			}
+		}
+		if domainEv != nil && s.gameDomainEvents != nil {
+			evPayload, err := json.Marshal(domainEv.Payload)
+			if err != nil {
+				return err
+			}
+			if _, err := s.gameDomainEvents.InsertDomainEvent(ctx, q, g.ID, *domainEv, evPayload); err != nil {
 				return err
 			}
 		}

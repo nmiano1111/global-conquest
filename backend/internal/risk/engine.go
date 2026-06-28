@@ -70,6 +70,7 @@ type Game struct {
 	CurrentPlayer int    `json:"current_player"`
 	Phase         Phase  `json:"phase"`
 	Winner        string `json:"winner"`
+	TurnNumber    int    `json:"turn_number"`
 
 	SetupReserves map[int]int `json:"setup_reserves"`
 
@@ -337,43 +338,47 @@ func (g *Game) PlaceReinforcement(playerID string, t Territory, armies int) erro
 	return nil
 }
 
-func (g *Game) Attack(playerID string, from, to Territory, attackerDice, defenderDice int) (AttackResult, error) {
+func (g *Game) Attack(playerID string, from, to Territory, attackerDice, defenderDice int) (AttackResult, *DomainEvent, error) {
 	g.ensureRNG()
 	pi, err := g.requireCurrentPlayer(playerID)
 	if err != nil {
-		return AttackResult{}, err
+		return AttackResult{}, nil, err
 	}
 	if g.Phase != PhaseAttack {
-		return AttackResult{}, ErrInvalidPhase
+		return AttackResult{}, nil, ErrInvalidPhase
 	}
 	if !g.Board.IsAdjacent(from, to) {
-		return AttackResult{}, fmt.Errorf("%w: territories not adjacent", ErrInvalidMove)
+		return AttackResult{}, nil, fmt.Errorf("%w: territories not adjacent", ErrInvalidMove)
 	}
 	src, ok := g.Territories[from]
 	if !ok {
-		return AttackResult{}, fmt.Errorf("%w: unknown source territory", ErrInvalidMove)
+		return AttackResult{}, nil, fmt.Errorf("%w: unknown source territory", ErrInvalidMove)
 	}
 	dst, ok := g.Territories[to]
 	if !ok {
-		return AttackResult{}, fmt.Errorf("%w: unknown target territory", ErrInvalidMove)
+		return AttackResult{}, nil, fmt.Errorf("%w: unknown target territory", ErrInvalidMove)
 	}
 	if src.Owner != pi {
-		return AttackResult{}, fmt.Errorf("%w: source territory not owned by player", ErrInvalidMove)
+		return AttackResult{}, nil, fmt.Errorf("%w: source territory not owned by player", ErrInvalidMove)
 	}
 	if dst.Owner == pi || dst.Owner < 0 {
-		return AttackResult{}, fmt.Errorf("%w: invalid target owner", ErrInvalidMove)
+		return AttackResult{}, nil, fmt.Errorf("%w: invalid target owner", ErrInvalidMove)
 	}
 	if src.Armies <= 1 {
-		return AttackResult{}, fmt.Errorf("%w: not enough armies to attack", ErrInvalidMove)
+		return AttackResult{}, nil, fmt.Errorf("%w: not enough armies to attack", ErrInvalidMove)
 	}
 	maxAttDice := min(3, src.Armies-1)
 	if attackerDice < 1 || attackerDice > maxAttDice {
-		return AttackResult{}, fmt.Errorf("%w: invalid attacker dice", ErrInvalidMove)
+		return AttackResult{}, nil, fmt.Errorf("%w: invalid attacker dice", ErrInvalidMove)
 	}
 	maxDefDice := min(2, dst.Armies)
 	if defenderDice < 1 || defenderDice > maxDefDice {
-		return AttackResult{}, fmt.Errorf("%w: invalid defender dice", ErrInvalidMove)
+		return AttackResult{}, nil, fmt.Errorf("%w: invalid defender dice", ErrInvalidMove)
 	}
+
+	defenderPlayerID := g.Players[dst.Owner].ID
+	srcArmiesBefore := src.Armies
+	dstArmiesBefore := dst.Armies
 
 	ar := AttackResult{
 		AttackerRolls: rollDice(g.rng, attackerDice),
@@ -382,12 +387,20 @@ func (g *Game) Attack(playerID string, from, to Territory, attackerDice, defende
 	sort.Sort(sort.Reverse(sort.IntSlice(ar.AttackerRolls)))
 	sort.Sort(sort.Reverse(sort.IntSlice(ar.DefenderRolls)))
 
+	comparisons := make([]DieComparison, 0, min(len(ar.AttackerRolls), len(ar.DefenderRolls)))
 	for i := 0; i < min(len(ar.AttackerRolls), len(ar.DefenderRolls)); i++ {
+		loser := "defender"
 		if ar.AttackerRolls[i] > ar.DefenderRolls[i] {
 			ar.DefenderLoss++
 		} else {
 			ar.AttackerLoss++
+			loser = "attacker"
 		}
+		comparisons = append(comparisons, DieComparison{
+			AttackerDie: ar.AttackerRolls[i],
+			DefenderDie: ar.DefenderRolls[i],
+			Loser:       loser,
+		})
 	}
 	src.Armies -= ar.AttackerLoss
 	dst.Armies -= ar.DefenderLoss
@@ -415,7 +428,32 @@ func (g *Game) Attack(playerID string, from, to Territory, attackerDice, defende
 			ar.Eliminated = eliminated
 		}
 	}
-	return ar, nil
+
+	event := &DomainEvent{
+		Type:          EventTypeCombatRollResolved,
+		Version:       EventVersionCombatRollResolved,
+		ActorPlayerID: playerID,
+		Payload: CombatRollResolvedPayload{
+			SchemaVersion:      SchemaVersionCombatRollResolved,
+			TurnNumber:         g.TurnNumber,
+			Phase:              string(PhaseAttack),
+			AttackerPlayerID:   playerID,
+			DefenderPlayerID:   defenderPlayerID,
+			SourceTerritoryID:  string(from),
+			TargetTerritoryID:  string(to),
+			SourceArmiesBefore: srcArmiesBefore,
+			TargetArmiesBefore: dstArmiesBefore,
+			AttackerDice:       ar.AttackerRolls,
+			DefenderDice:       ar.DefenderRolls,
+			Comparisons:        comparisons,
+			AttackerLosses:     ar.AttackerLoss,
+			DefenderLosses:     ar.DefenderLoss,
+			SourceArmiesAfter:  g.Territories[from].Armies,
+			TargetArmiesAfter:  g.Territories[to].Armies,
+			TerritoryCaptured:  ar.Conquered,
+		},
+	}
+	return ar, event, nil
 }
 
 func (g *Game) OccupyTerritory(playerID string, armies int) error {
@@ -510,6 +548,7 @@ func (g *Game) EndTurn(playerID string) error {
 }
 
 func (g *Game) startTurn() {
+	g.TurnNumber++
 	g.Phase = PhaseReinforce
 	g.ConqueredThisTurn = false
 	g.TerritoryBonusUsed = false

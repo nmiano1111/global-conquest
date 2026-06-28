@@ -168,7 +168,7 @@ func TestAttackAndOccupy(t *testing.T) {
 
 	// attacker roll: 6 (5%6+1), defender roll: 1 (0%6+1)
 	g.rng = &seqRNG{v: []int{5, 0}}
-	res, err := g.Attack(p0, "Alaska", "Kamchatka", 1, 1)
+	res, _, err := g.Attack(p0, "Alaska", "Kamchatka", 1, 1)
 	if err != nil {
 		t.Fatalf("attack: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestAttackAfterJSONRoundTripUsesDefaultRNG(t *testing.T) {
 		t.Fatalf("unmarshal game: %v", err)
 	}
 
-	if _, err := restored.Attack(p0, "Alaska", "Kamchatka", 1, 1); err != nil {
+	if _, _, err := restored.Attack(p0, "Alaska", "Kamchatka", 1, 1); err != nil {
 		t.Fatalf("attack after round trip: %v", err)
 	}
 }
@@ -244,6 +244,170 @@ func TestCardTradeAndTerritoryBonus(t *testing.T) {
 	}
 	if g.PendingReinforcements != 6 {
 		t.Fatalf("expected pending reinforcements 6, got %d", g.PendingReinforcements)
+	}
+}
+
+func TestAttackEventPayload(t *testing.T) {
+	g := mustGame(t)
+	g.Phase = PhaseAttack
+	g.CurrentPlayer = 0
+	g.TurnNumber = 3
+	p0 := g.Players[0].ID
+	p1 := g.Players[1].ID
+	g.Territories["Alaska"] = TerritoryState{Owner: 0, Armies: 4}
+	g.Territories["Kamchatka"] = TerritoryState{Owner: 1, Armies: 2}
+
+	// attacker rolls: 6,4 (seqRNG values 5,3); defender rolls: 5,2 (values 4,1)
+	g.rng = &seqRNG{v: []int{5, 3, 4, 1}}
+	_, ev, err := g.Attack(p0, "Alaska", "Kamchatka", 2, 2)
+	if err != nil {
+		t.Fatalf("attack: %v", err)
+	}
+	if ev == nil {
+		t.Fatal("expected non-nil domain event")
+	}
+	if ev.Type != EventTypeCombatRollResolved {
+		t.Fatalf("unexpected event type: %q", ev.Type)
+	}
+	if ev.Version != EventVersionCombatRollResolved {
+		t.Fatalf("unexpected event version: %d", ev.Version)
+	}
+	if ev.ActorPlayerID != p0 {
+		t.Fatalf("expected actor %q, got %q", p0, ev.ActorPlayerID)
+	}
+
+	pl, ok := ev.Payload.(CombatRollResolvedPayload)
+	if !ok {
+		t.Fatalf("unexpected payload type: %T", ev.Payload)
+	}
+	if pl.SchemaVersion != SchemaVersionCombatRollResolved {
+		t.Fatalf("unexpected schema version: %d", pl.SchemaVersion)
+	}
+	if pl.TurnNumber != 3 {
+		t.Fatalf("expected turn_number 3, got %d", pl.TurnNumber)
+	}
+	if pl.Phase != string(PhaseAttack) {
+		t.Fatalf("expected phase attack, got %q", pl.Phase)
+	}
+	if pl.AttackerPlayerID != p0 {
+		t.Fatalf("unexpected attacker player id: %q", pl.AttackerPlayerID)
+	}
+	if pl.DefenderPlayerID != p1 {
+		t.Fatalf("unexpected defender player id: %q", pl.DefenderPlayerID)
+	}
+	if pl.SourceTerritoryID != "Alaska" {
+		t.Fatalf("unexpected source territory: %q", pl.SourceTerritoryID)
+	}
+	if pl.TargetTerritoryID != "Kamchatka" {
+		t.Fatalf("unexpected target territory: %q", pl.TargetTerritoryID)
+	}
+	if pl.SourceArmiesBefore != 4 {
+		t.Fatalf("expected source before=4, got %d", pl.SourceArmiesBefore)
+	}
+	if pl.TargetArmiesBefore != 2 {
+		t.Fatalf("expected target before=2, got %d", pl.TargetArmiesBefore)
+	}
+	if len(pl.AttackerDice) != 2 || len(pl.DefenderDice) != 2 {
+		t.Fatalf("unexpected dice lengths: att=%d def=%d", len(pl.AttackerDice), len(pl.DefenderDice))
+	}
+	// Dice must be in descending order
+	if pl.AttackerDice[0] < pl.AttackerDice[1] {
+		t.Fatalf("attacker dice not sorted descending: %v", pl.AttackerDice)
+	}
+	if pl.DefenderDice[0] < pl.DefenderDice[1] {
+		t.Fatalf("defender dice not sorted descending: %v", pl.DefenderDice)
+	}
+	if len(pl.Comparisons) != 2 {
+		t.Fatalf("expected 2 comparisons, got %d", len(pl.Comparisons))
+	}
+	// Army counts after must match game state
+	if pl.SourceArmiesAfter != g.Territories["Alaska"].Armies {
+		t.Fatalf("source after mismatch: payload=%d game=%d", pl.SourceArmiesAfter, g.Territories["Alaska"].Armies)
+	}
+	if pl.TargetArmiesAfter != g.Territories["Kamchatka"].Armies {
+		t.Fatalf("target after mismatch: payload=%d game=%d", pl.TargetArmiesAfter, g.Territories["Kamchatka"].Armies)
+	}
+}
+
+func TestAttackEventTieLoserIsAttacker(t *testing.T) {
+	g := mustGame(t)
+	g.Phase = PhaseAttack
+	g.CurrentPlayer = 0
+	g.Territories["Alaska"] = TerritoryState{Owner: 0, Armies: 3}
+	g.Territories["Kamchatka"] = TerritoryState{Owner: 1, Armies: 2}
+
+	// Both roll 4 (seqRNG value 3 → 3%6+1=4)
+	g.rng = &seqRNG{v: []int{3}}
+	_, ev, err := g.Attack(g.Players[0].ID, "Alaska", "Kamchatka", 1, 1)
+	if err != nil {
+		t.Fatalf("attack: %v", err)
+	}
+	pl := ev.Payload.(CombatRollResolvedPayload)
+	if len(pl.Comparisons) != 1 {
+		t.Fatalf("expected 1 comparison, got %d", len(pl.Comparisons))
+	}
+	if pl.Comparisons[0].Loser != "attacker" {
+		t.Fatalf("tie must record attacker as loser, got %q", pl.Comparisons[0].Loser)
+	}
+	if pl.AttackerLosses != 1 || pl.DefenderLosses != 0 {
+		t.Fatalf("expected attacker_losses=1 defender_losses=0, got att=%d def=%d",
+			pl.AttackerLosses, pl.DefenderLosses)
+	}
+}
+
+func TestAttackEventTerritoryCaptured(t *testing.T) {
+	g := mustGame(t)
+	g.Phase = PhaseAttack
+	g.CurrentPlayer = 0
+	g.Territories["Alaska"] = TerritoryState{Owner: 0, Armies: 4}
+	g.Territories["Kamchatka"] = TerritoryState{Owner: 1, Armies: 1}
+
+	// attacker rolls 6, defender rolls 1
+	g.rng = &seqRNG{v: []int{5, 0}}
+	_, ev, err := g.Attack(g.Players[0].ID, "Alaska", "Kamchatka", 1, 1)
+	if err != nil {
+		t.Fatalf("attack: %v", err)
+	}
+	pl := ev.Payload.(CombatRollResolvedPayload)
+	if !pl.TerritoryCaptured {
+		t.Fatal("expected territory_captured=true")
+	}
+	if pl.TargetArmiesAfter != 0 {
+		t.Fatalf("expected target_armies_after=0, got %d", pl.TargetArmiesAfter)
+	}
+}
+
+func TestInvalidAttackProducesNoEvent(t *testing.T) {
+	g := mustGame(t)
+	g.Phase = PhaseAttack
+	g.CurrentPlayer = 0
+	// Not enough armies to attack
+	g.Territories["Alaska"] = TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Kamchatka"] = TerritoryState{Owner: 1, Armies: 2}
+
+	_, ev, err := g.Attack(g.Players[0].ID, "Alaska", "Kamchatka", 1, 1)
+	if err == nil {
+		t.Fatal("expected error for invalid attack")
+	}
+	if ev != nil {
+		t.Fatal("expected nil event for invalid attack")
+	}
+}
+
+func TestAttackEventOutOfTurnProducesNoEvent(t *testing.T) {
+	g := mustGame(t)
+	g.Phase = PhaseAttack
+	g.CurrentPlayer = 0
+	g.Territories["Alaska"] = TerritoryState{Owner: 1, Armies: 4}
+	g.Territories["Kamchatka"] = TerritoryState{Owner: 0, Armies: 2}
+
+	// player 1 tries to attack but it's player 0's turn
+	_, ev, err := g.Attack(g.Players[1].ID, "Alaska", "Kamchatka", 1, 1)
+	if err == nil {
+		t.Fatal("expected out-of-turn error")
+	}
+	if ev != nil {
+		t.Fatal("expected nil event for out-of-turn attack")
 	}
 }
 
