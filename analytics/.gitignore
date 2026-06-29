@@ -1,0 +1,27 @@
+# Environment
+.env
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Test and lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Generated data and reports (preserve .gitkeep)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+reports/generated/*
+!reports/generated/.gitkeep
+
+# macOS
+.DS_Store
+

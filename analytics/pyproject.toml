@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "global-conquest-analytics"
+version = "0.1.0"
+description = "Local analytics for Global Conquest game events"
+authors = ["nmiano1111"]
+readme = "README.md"
+packages = [{ include = "global_conquest_analytics", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pandas = "^2.2"
+pyarrow = "^16.0"
+psycopg = {version = "^3.1", extras = ["binary"]}
+matplotlib = "^3.9"
+scipy = "^1.13"
+python-dotenv = "^1.0"
+
+[tool.poetry.group.dev.dependencies]
+jupyterlab = "^4.2"
+pytest = "^8.2"
+ruff = "^0.4"
+mypy = "^1.10"
+pandas-stubs = "^2.2"
+
+[tool.poetry.scripts]
+export-events = "global_conquest_analytics.cli:export_events"
+combat-report = "global_conquest_analytics.cli:generate_combat_report_command"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_reexport = false
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
