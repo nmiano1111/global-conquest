@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"backend/internal/db"
+	"backend/internal/gamename"
 	"backend/internal/risk"
 	"backend/internal/store"
 	"github.com/jackc/pgx/v5"
@@ -30,10 +31,10 @@ type gameDomainEventStore interface {
 }
 
 type discordOutboxStore interface {
-	EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error
-	EnqueueCardsTrade(ctx context.Context, q db.Querier, gameID, playerID, playerDisplayName string, playerDiscordName *string, armies int) error
-	EnqueuePlayerEliminated(ctx context.Context, q db.Querier, gameID, attackerID, attackerDisplayName string, attackerDiscordName *string, eliminatedPlayerID, eliminatedPlayerDisplayName string, eliminatedPlayerDiscordName *string) error
-	EnqueueGameOver(ctx context.Context, q db.Querier, gameID, winnerID, winnerDisplayName string, winnerDiscordName *string) error
+	EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, gameName, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error
+	EnqueueCardsTrade(ctx context.Context, q db.Querier, gameID, gameName, playerID, playerDisplayName string, playerDiscordName *string, armies int) error
+	EnqueuePlayerEliminated(ctx context.Context, q db.Querier, gameID, gameName, attackerID, attackerDisplayName string, attackerDiscordName *string, eliminatedPlayerID, eliminatedPlayerDisplayName string, eliminatedPlayerDiscordName *string) error
+	EnqueueGameOver(ctx context.Context, q db.Querier, gameID, gameName, winnerID, winnerDisplayName string, winnerDiscordName *string) error
 }
 
 type GamesService struct {
@@ -100,6 +101,7 @@ type GameBootstrapPlayer struct {
 type GameBootstrap struct {
 	ID                    string                 `json:"id"`
 	OwnerUserID           string                 `json:"owner_user_id"`
+	Name                  string                 `json:"name"`
 	Status                string                 `json:"status"`
 	Phase                 string                 `json:"phase"`
 	CurrentPlayer         int                    `json:"current_player"`
@@ -196,6 +198,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 
 	return s.games.Create(ctx, s.db.Queryer(), store.NewGame{
 		OwnerUserID: ownerUserID,
+		Name:        gamename.Generate(),
 		Status:      "lobby",
 		State:       state,
 	})
@@ -482,14 +485,14 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 					if err != nil {
 						return err
 					}
-					if err := s.discordOutbox.EnqueuePlayerEliminated(ctx, q, g.ID,
+					if err := s.discordOutbox.EnqueuePlayerEliminated(ctx, q, g.ID, g.Name,
 						in.PlayerUserID, displayName(names, in.PlayerUserID), discordNames[in.PlayerUserID],
 						ar.Eliminated, displayName(names, ar.Eliminated), discordNames[ar.Eliminated],
 					); err != nil {
 						return err
 					}
 					if engine.Phase == risk.PhaseGameOver {
-						if err := s.discordOutbox.EnqueueGameOver(ctx, q, g.ID,
+						if err := s.discordOutbox.EnqueueGameOver(ctx, q, g.ID, g.Name,
 							in.PlayerUserID, displayName(names, in.PlayerUserID), discordNames[in.PlayerUserID],
 						); err != nil {
 							return err
@@ -544,7 +547,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				}
 				prevDiscord := discordNames[in.PlayerUserID]
 				nextDiscord := discordNames[nextPlayer]
-				if err := s.discordOutbox.EnqueueTurnStarted(ctx, q, g.ID, displayName(names, in.PlayerUserID), nextPlayer, displayName(names, nextPlayer), prevDiscord, nextDiscord, engine.TurnNumber); err != nil {
+				if err := s.discordOutbox.EnqueueTurnStarted(ctx, q, g.ID, g.Name, displayName(names, in.PlayerUserID), nextPlayer, displayName(names, nextPlayer), prevDiscord, nextDiscord, engine.TurnNumber); err != nil {
 					return err
 				}
 			}
@@ -561,7 +564,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				if err != nil {
 					return err
 				}
-				if err := s.discordOutbox.EnqueueCardsTrade(ctx, q, g.ID, in.PlayerUserID, displayName(names, in.PlayerUserID), discordNames[in.PlayerUserID], armies); err != nil {
+				if err := s.discordOutbox.EnqueueCardsTrade(ctx, q, g.ID, g.Name, in.PlayerUserID, displayName(names, in.PlayerUserID), discordNames[in.PlayerUserID], armies); err != nil {
 					return err
 				}
 			}
@@ -676,6 +679,7 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 	out := GameBootstrap{
 		ID:          g.ID,
 		OwnerUserID: g.OwnerUserID,
+		Name:        g.Name,
 		Status:      g.Status,
 		CreatedAt:   g.CreatedAt,
 		UpdatedAt:   g.UpdatedAt,

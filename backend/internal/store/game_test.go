@@ -12,12 +12,13 @@ func TestPostgresGamesStoreCreate(t *testing.T) {
 	now := time.Now().UTC()
 	state := json.RawMessage(`{"phase":"setup_claim"}`)
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"g1", "u1", "lobby", state, now, now}},
+		row: &stubRow{values: []any{"g1", "u1", "Fierce Badger", "lobby", state, now, now}},
 	}
 	s := NewPostgresGamesStore()
 
 	out, err := s.Create(context.Background(), q, NewGame{
 		OwnerUserID: "u1",
+		Name:        "Fierce Badger",
 		Status:      "lobby",
 		State:       state,
 	})
@@ -27,7 +28,7 @@ func TestPostgresGamesStoreCreate(t *testing.T) {
 	if !strings.Contains(q.lastSQL, "INSERT INTO games") {
 		t.Fatalf("expected games insert SQL, got %q", q.lastSQL)
 	}
-	if out.ID != "g1" || out.OwnerUserID != "u1" || out.Status != "lobby" {
+	if out.ID != "g1" || out.OwnerUserID != "u1" || out.Name != "Fierce Badger" || out.Status != "lobby" {
 		t.Fatalf("unexpected output: %#v", out)
 	}
 }
@@ -36,7 +37,7 @@ func TestPostgresGamesStoreGetByID(t *testing.T) {
 	now := time.Now().UTC()
 	state := json.RawMessage(`{"phase":"attack"}`)
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"g1", "u1", "in_progress", state, now, now}},
+		row: &stubRow{values: []any{"g1", "u1", "Iron Legion", "in_progress", state, now, now}},
 	}
 	s := NewPostgresGamesStore()
 
@@ -47,7 +48,7 @@ func TestPostgresGamesStoreGetByID(t *testing.T) {
 	if !strings.Contains(q.lastSQL, "FROM games") {
 		t.Fatalf("expected games select SQL, got %q", q.lastSQL)
 	}
-	if out.Status != "in_progress" {
+	if out.Status != "in_progress" || out.Name != "Iron Legion" {
 		t.Fatalf("unexpected output: %#v", out)
 	}
 }
@@ -56,7 +57,7 @@ func TestPostgresGamesStoreGetByIDForUpdate(t *testing.T) {
 	now := time.Now().UTC()
 	state := json.RawMessage(`{"phase":"attack"}`)
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"g1", "u1", "in_progress", state, now, now}},
+		row: &stubRow{values: []any{"g1", "u1", "Iron Legion", "in_progress", state, now, now}},
 	}
 	s := NewPostgresGamesStore()
 
@@ -76,7 +77,7 @@ func TestPostgresGamesStoreUpdateState(t *testing.T) {
 	now := time.Now().UTC()
 	state := json.RawMessage(`{"phase":"fortify"}`)
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"g1", "u1", "in_progress", state, now, now}},
+		row: &stubRow{values: []any{"g1", "u1", "Iron Legion", "in_progress", state, now, now}},
 	}
 	s := NewPostgresGamesStore()
 

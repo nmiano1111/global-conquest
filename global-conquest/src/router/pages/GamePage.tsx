@@ -706,7 +706,7 @@ export function GamePage() {
         {/* Game header */}
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gc-border bg-gc-surface px-4 py-3">
           <div>
-            <h2 className="text-base font-semibold text-gc-text">Game Room</h2>
+            <h2 className="text-base font-semibold text-gc-text">{game?.name || "Game Room"}</h2>
             <p className="font-mono text-xs text-gc-muted">{gameID}</p>
           </div>
           <div className="flex flex-wrap gap-2">

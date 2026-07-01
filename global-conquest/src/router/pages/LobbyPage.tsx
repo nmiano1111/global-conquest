@@ -338,7 +338,7 @@ export function LobbyPage() {
                 >
                   <div className="grid gap-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs text-gc-muted truncate">{g.id}</span>
+                      <span className="font-medium text-gc-text truncate">{g.name || g.id}</span>
                       <span
                         className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass(statusLabel)}`}
                       >

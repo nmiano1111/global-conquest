@@ -17,7 +17,7 @@ func TestEnqueueTurnStartedSQL(t *testing.T) {
 	}
 	s := NewPostgresDiscordOutboxStore()
 
-	err := s.EnqueueTurnStarted(context.Background(), q, "game-id-1", "Bob", "player-id-1", "Alice", nil, nil, 3)
+	err := s.EnqueueTurnStarted(context.Background(), q, "game-id-1", "Jiggly Goose", "Bob", "player-id-1", "Alice", nil, nil, 3)
 	if err != nil {
 		t.Fatalf("EnqueueTurnStarted: %v", err)
 	}
@@ -46,16 +46,16 @@ func TestEnqueueTurnStartedPayload(t *testing.T) {
 	}
 	s := NewPostgresDiscordOutboxStore()
 
-	err := s.EnqueueTurnStarted(context.Background(), q, "game-id-1", "Alice", "player-abc", "Bob", nil, nil, 7)
+	err := s.EnqueueTurnStarted(context.Background(), q, "game-id-1", "Jiggly Goose", "Alice", "player-abc", "Bob", nil, nil, 7)
 	if err != nil {
 		t.Fatalf("EnqueueTurnStarted: %v", err)
 	}
-	if len(q.lastArgs) < 2 {
-		t.Fatalf("expected at least 2 args, got %d", len(q.lastArgs))
+	if len(q.lastArgs) < 3 {
+		t.Fatalf("expected at least 3 args, got %d", len(q.lastArgs))
 	}
-	payloadJSON, ok := q.lastArgs[1].(string)
+	payloadJSON, ok := q.lastArgs[2].(string)
 	if !ok {
-		t.Fatalf("expected string payload arg, got %T", q.lastArgs[1])
+		t.Fatalf("expected string payload arg, got %T", q.lastArgs[2])
 	}
 	var p TurnStartedPayload
 	if err := json.Unmarshal([]byte(payloadJSON), &p); err != nil {
@@ -112,8 +112,8 @@ func TestClaimPendingQReturnsRows(t *testing.T) {
 	payload := json.RawMessage(`{"schema_version":1,"player_id":"p1","player_display_name":"Alice"}`)
 	q := &stubQuerier{
 		rows: &stubRows{values: [][]any{
-			{"outbox-1", "game-1", int64(5), NotificationTypeTurnStarted, payload, 1, now},
-			{"outbox-2", "game-2", int64(6), NotificationTypeTurnStarted, payload, 1, now},
+			{"outbox-1", "game-1", "Jiggly Goose", int64(5), NotificationTypeTurnStarted, payload, 1, now},
+			{"outbox-2", "game-2", "Sweaty Walrus", int64(6), NotificationTypeTurnStarted, payload, 1, now},
 		}},
 	}
 	s := NewPostgresDiscordOutboxStore()

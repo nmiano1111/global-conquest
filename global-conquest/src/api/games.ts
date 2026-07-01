@@ -5,6 +5,7 @@ type UnknownRecord = Record<string, unknown>;
 export type GameRecord = {
   id: string;
   ownerUserId: string;
+  name: string;
   status: string;
   state: unknown;
   playerCount: number | null;
@@ -52,6 +53,7 @@ export type GameEventEntry = {
 export type GameBootstrap = {
   id: string;
   ownerUserId: string;
+  name: string;
   status: string;
   phase: string;
   currentPlayer: number;
@@ -80,6 +82,7 @@ function normalizeGame(value: unknown): GameRecord {
     return {
       id: "",
       ownerUserId: "",
+      name: "",
       status: "",
       state: null,
       playerCount: null,
@@ -114,6 +117,7 @@ function normalizeGame(value: unknown): GameRecord {
   return {
     id: readString(record.id ?? record.ID),
     ownerUserId: readString(record.owner_user_id ?? record.OwnerUserID),
+    name: readString(record.name ?? record.Name),
     status: readString(record.status ?? record.Status),
     state: rawState,
     playerCount,
@@ -133,6 +137,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     return {
       id: "",
       ownerUserId: "",
+      name: "",
       status: "",
       phase: "",
       currentPlayer: -1,
@@ -199,6 +204,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
   return {
     id: readString(record.id ?? record.ID),
     ownerUserId: readString(record.owner_user_id ?? record.OwnerUserID),
+    name: readString(record.name ?? record.Name),
     status: readString(record.status ?? record.Status),
     phase: readString(record.phase ?? record.Phase),
     currentPlayer: readNumber(record.current_player ?? record.currentPlayer, -1),

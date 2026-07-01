@@ -64,6 +64,7 @@ type GameOverPayload struct {
 type DiscordOutboxEntry struct {
 	ID               string
 	GameID           string
+	GameName         string
 	GameSequence     int64
 	NotificationType string
 	Payload          json.RawMessage
@@ -90,7 +91,7 @@ func NewPostgresDiscordOutboxStore() *PostgresDiscordOutboxStore {
 func (s *PostgresDiscordOutboxStore) EnqueueTurnStarted(
 	ctx context.Context,
 	q db.Querier,
-	gameID, previousPlayerDisplayName, playerID, playerDisplayName string,
+	gameID, gameName, previousPlayerDisplayName, playerID, playerDisplayName string,
 	previousPlayerDiscordName, playerDiscordName *string,
 	turnNumber int,
 ) error {
@@ -115,26 +116,27 @@ func (s *PostgresDiscordOutboxStore) EnqueueTurnStarted(
 			RETURNING event_sequence
 		)
 		INSERT INTO discord_outbox
-			(game_id, game_sequence, notification_type, deduplication_key, payload)
+			(game_id, game_name, game_sequence, notification_type, deduplication_key, payload)
 		SELECT
 			$1::uuid,
+			$2,
 			seq.event_sequence,
 			'turn_started',
 			format('game:%s:sequence:%s:turn-started', $1::text, seq.event_sequence::text),
-			$2::jsonb
+			$3::jsonb
 		FROM seq
 		RETURNING id::text, game_id::text, game_sequence
 	`
 	var id, gid string
 	var seq int64
-	return q.QueryRow(ctx, stmt, gameID, string(payload)).Scan(&id, &gid, &seq)
+	return q.QueryRow(ctx, stmt, gameID, gameName, string(payload)).Scan(&id, &gid, &seq)
 }
 
 // EnqueueCardsTrade inserts a cards_trade notification row inside the caller's transaction.
 func (s *PostgresDiscordOutboxStore) EnqueueCardsTrade(
 	ctx context.Context,
 	q db.Querier,
-	gameID, playerID, playerDisplayName string,
+	gameID, gameName, playerID, playerDisplayName string,
 	playerDiscordName *string,
 	armies int,
 ) error {
@@ -157,26 +159,27 @@ func (s *PostgresDiscordOutboxStore) EnqueueCardsTrade(
 			RETURNING event_sequence
 		)
 		INSERT INTO discord_outbox
-			(game_id, game_sequence, notification_type, deduplication_key, payload)
+			(game_id, game_name, game_sequence, notification_type, deduplication_key, payload)
 		SELECT
 			$1::uuid,
+			$2,
 			seq.event_sequence,
 			'cards_trade',
 			format('game:%s:sequence:%s:cards-trade', $1::text, seq.event_sequence::text),
-			$2::jsonb
+			$3::jsonb
 		FROM seq
 		RETURNING id::text, game_id::text, game_sequence
 	`
 	var id, gid string
 	var seq int64
-	return q.QueryRow(ctx, stmt, gameID, string(payload)).Scan(&id, &gid, &seq)
+	return q.QueryRow(ctx, stmt, gameID, gameName, string(payload)).Scan(&id, &gid, &seq)
 }
 
 // EnqueuePlayerEliminated inserts a player_eliminated notification row inside the caller's transaction.
 func (s *PostgresDiscordOutboxStore) EnqueuePlayerEliminated(
 	ctx context.Context,
 	q db.Querier,
-	gameID, attackerID, attackerDisplayName string,
+	gameID, gameName, attackerID, attackerDisplayName string,
 	attackerDiscordName *string,
 	eliminatedPlayerID, eliminatedPlayerDisplayName string,
 	eliminatedPlayerDiscordName *string,
@@ -202,26 +205,27 @@ func (s *PostgresDiscordOutboxStore) EnqueuePlayerEliminated(
 			RETURNING event_sequence
 		)
 		INSERT INTO discord_outbox
-			(game_id, game_sequence, notification_type, deduplication_key, payload)
+			(game_id, game_name, game_sequence, notification_type, deduplication_key, payload)
 		SELECT
 			$1::uuid,
+			$2,
 			seq.event_sequence,
 			'player_eliminated',
 			format('game:%s:sequence:%s:player-eliminated', $1::text, seq.event_sequence::text),
-			$2::jsonb
+			$3::jsonb
 		FROM seq
 		RETURNING id::text, game_id::text, game_sequence
 	`
 	var id, gid string
 	var seq int64
-	return q.QueryRow(ctx, stmt, gameID, string(payload)).Scan(&id, &gid, &seq)
+	return q.QueryRow(ctx, stmt, gameID, gameName, string(payload)).Scan(&id, &gid, &seq)
 }
 
 // EnqueueGameOver inserts a game_over notification row inside the caller's transaction.
 func (s *PostgresDiscordOutboxStore) EnqueueGameOver(
 	ctx context.Context,
 	q db.Querier,
-	gameID, winnerID, winnerDisplayName string,
+	gameID, gameName, winnerID, winnerDisplayName string,
 	winnerDiscordName *string,
 ) error {
 	payload, err := json.Marshal(GameOverPayload{
@@ -242,19 +246,20 @@ func (s *PostgresDiscordOutboxStore) EnqueueGameOver(
 			RETURNING event_sequence
 		)
 		INSERT INTO discord_outbox
-			(game_id, game_sequence, notification_type, deduplication_key, payload)
+			(game_id, game_name, game_sequence, notification_type, deduplication_key, payload)
 		SELECT
 			$1::uuid,
+			$2,
 			seq.event_sequence,
 			'game_over',
 			format('game:%s:sequence:%s:game-over', $1::text, seq.event_sequence::text),
-			$2::jsonb
+			$3::jsonb
 		FROM seq
 		RETURNING id::text, game_id::text, game_sequence
 	`
 	var id, gid string
 	var seq int64
-	return q.QueryRow(ctx, stmt, gameID, string(payload)).Scan(&id, &gid, &seq)
+	return q.QueryRow(ctx, stmt, gameID, gameName, string(payload)).Scan(&id, &gid, &seq)
 }
 
 // ClaimPending atomically claims up to limit pending rows using FOR UPDATE SKIP LOCKED.
@@ -293,7 +298,7 @@ func (s *PostgresDiscordOutboxStore) claimPendingQ(
 		    attempt_count = attempt_count + 1
 		FROM candidates
 		WHERE o.id = candidates.id
-		RETURNING o.id::text, o.game_id::text, o.game_sequence, o.notification_type,
+		RETURNING o.id::text, o.game_id::text, o.game_name, o.game_sequence, o.notification_type,
 		          o.payload, o.attempt_count, o.created_at
 	`
 	rows, err := q.Query(ctx, stmt, limit)
@@ -306,7 +311,7 @@ func (s *PostgresDiscordOutboxStore) claimPendingQ(
 	for rows.Next() {
 		var e DiscordOutboxEntry
 		if err := rows.Scan(
-			&e.ID, &e.GameID, &e.GameSequence, &e.NotificationType,
+			&e.ID, &e.GameID, &e.GameName, &e.GameSequence, &e.NotificationType,
 			&e.Payload, &e.AttemptCount, &e.CreatedAt,
 		); err != nil {
 			return nil, err

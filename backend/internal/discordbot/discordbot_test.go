@@ -151,6 +151,7 @@ func makeEntry(notifType string, payloadJSON string) store.DiscordOutboxEntry {
 	return store.DiscordOutboxEntry{
 		ID:               "outbox-1",
 		GameID:           "game-1",
+		GameName:         "game-1",
 		NotificationType: notifType,
 		Payload:          json.RawMessage(payloadJSON),
 		AttemptCount:     1,
@@ -269,6 +270,91 @@ func TestRenderCardsTradesMissingName(t *testing.T) {
 	}
 }
 
+func TestRenderPlayerEliminated(t *testing.T) {
+	entry := makeEntry(store.NotificationTypePlayerEliminated, `{
+		"schema_version": 1,
+		"attacker_id": "a1",
+		"attacker_display_name": "Alice",
+		"eliminated_player_id": "b1",
+		"eliminated_player_display_name": "Bob"
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "@everyone ⚔️ **Alice** eliminated **Bob**! (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderPlayerEliminatedWithDiscordNames(t *testing.T) {
+	entry := makeEntry(store.NotificationTypePlayerEliminated, `{
+		"schema_version": 1,
+		"attacker_id": "a1",
+		"attacker_display_name": "Alice",
+		"attacker_discord_name": "alicewonder",
+		"eliminated_player_id": "b1",
+		"eliminated_player_display_name": "Bob",
+		"eliminated_player_discord_name": "bobsmith"
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "⚔️ **@alicewonder** eliminated **@bobsmith**! (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderPlayerEliminatedOneDiscordNameMissing(t *testing.T) {
+	entry := makeEntry(store.NotificationTypePlayerEliminated, `{
+		"schema_version": 1,
+		"attacker_id": "a1",
+		"attacker_display_name": "Alice",
+		"attacker_discord_name": "alicewonder",
+		"eliminated_player_id": "b1",
+		"eliminated_player_display_name": "Bob"
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "@everyone ⚔️ **Alice** eliminated **Bob**! (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderGameOver(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeGameOver, `{
+		"schema_version": 1,
+		"winner_id": "a1",
+		"winner_display_name": "Alice"
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "@everyone 🏆 **Alice** has won the game! (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderGameOverWithDiscordName(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeGameOver, `{
+		"schema_version": 1,
+		"winner_id": "a1",
+		"winner_display_name": "Alice",
+		"winner_discord_name": "alicewonder"
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "🏆 **@alicewonder** has won the game! (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
 func TestRenderMalformedPayload(t *testing.T) {
 	entry := makeEntry(store.NotificationTypeTurnStarted, `not-valid-json`)
 	_, err := renderMessage(entry)
@@ -278,7 +364,7 @@ func TestRenderMalformedPayload(t *testing.T) {
 }
 
 func TestRenderUnknownNotificationType(t *testing.T) {
-	entry := makeEntry("player_eliminated", `{"schema_version":1}`)
+	entry := makeEntry("player_surrendered", `{"schema_version":1}`)
 	_, err := renderMessage(entry)
 	if err == nil {
 		t.Fatal("expected error for unknown notification type")
