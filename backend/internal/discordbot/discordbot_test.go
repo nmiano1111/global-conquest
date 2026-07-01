@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"backend/internal/reporting"
 	"backend/internal/store"
 
 	"github.com/bwmarrin/discordgo"
@@ -14,18 +15,22 @@ import (
 
 // --- ConfigFromEnv tests ---
 
+const testGameID = "12345678-1234-1234-1234-123456789abc"
+
 func TestConfigFromEnv_AllPresent(t *testing.T) {
 	t.Setenv("DISCORD_BOT_TOKEN", "tok")
 	t.Setenv("DISCORD_APPLICATION_ID", "appid")
 	t.Setenv("DISCORD_GUILD_ID", "guildid")
 	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", "chanid")
+	t.Setenv("DISCORD_DEFAULT_GAME_ID", testGameID)
 
 	cfg, err := ConfigFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.BotToken != "tok" || cfg.ApplicationID != "appid" ||
-		cfg.GuildID != "guildid" || cfg.EventsChannelID != "chanid" {
+		cfg.GuildID != "guildid" || cfg.EventsChannelID != "chanid" ||
+		cfg.DefaultGameID != testGameID {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }
@@ -35,6 +40,7 @@ func TestConfigFromEnv_OneMissing(t *testing.T) {
 	t.Setenv("DISCORD_APPLICATION_ID", "appid")
 	t.Setenv("DISCORD_GUILD_ID", "guildid")
 	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", "")
+	t.Setenv("DISCORD_DEFAULT_GAME_ID", testGameID)
 
 	_, err := ConfigFromEnv()
 	if err == nil {
@@ -68,6 +74,7 @@ func TestConfigFromEnv_WhitespaceTrimmed(t *testing.T) {
 	t.Setenv("DISCORD_APPLICATION_ID", "\tappid\t")
 	t.Setenv("DISCORD_GUILD_ID", " guildid ")
 	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", " chanid ")
+	t.Setenv("DISCORD_DEFAULT_GAME_ID", " "+testGameID+" ")
 
 	cfg, err := ConfigFromEnv()
 	if err != nil {
@@ -84,6 +91,9 @@ func TestConfigFromEnv_WhitespaceTrimmed(t *testing.T) {
 	}
 	if cfg.EventsChannelID != "chanid" {
 		t.Errorf("EventsChannelID not trimmed: %q", cfg.EventsChannelID)
+	}
+	if cfg.DefaultGameID != testGameID {
+		t.Errorf("DefaultGameID not trimmed: %q", cfg.DefaultGameID)
 	}
 }
 
@@ -541,3 +551,229 @@ func TestWorkerDeliverUnknownType(t *testing.T) {
 		t.Fatal("expected MarkFailed called for unknown notification type")
 	}
 }
+
+// --- allCommandDefs tests ---
+
+func TestAllCommandDefs_Count(t *testing.T) {
+	defs := allCommandDefs()
+	if len(defs) != 4 {
+		t.Errorf("expected 4 command defs, got %d", len(defs))
+	}
+}
+
+func TestAllCommandDefs_Names(t *testing.T) {
+	defs := allCommandDefs()
+	names := make(map[string]bool, len(defs))
+	for _, d := range defs {
+		names[d.Name] = true
+	}
+	for _, want := range []string{pingCommandName, lastRollsCommandName, diceReportCommandName, playerStatsCommandName} {
+		if !names[want] {
+			t.Errorf("missing command def: %q", want)
+		}
+	}
+}
+
+func TestAllCommandDefs_PlayerStatsHasRequiredPlayerOption(t *testing.T) {
+	var playerStats *discordgo.ApplicationCommand
+	for _, d := range allCommandDefs() {
+		if d.Name == playerStatsCommandName {
+			playerStats = d
+			break
+		}
+	}
+	if playerStats == nil {
+		t.Fatal("/player-stats not found in allCommandDefs")
+	}
+	if len(playerStats.Options) != 1 {
+		t.Fatalf("expected 1 option, got %d", len(playerStats.Options))
+	}
+	opt := playerStats.Options[0]
+	if opt.Name != "player" {
+		t.Errorf("option name: want %q, got %q", "player", opt.Name)
+	}
+	if opt.Type != discordgo.ApplicationCommandOptionString {
+		t.Errorf("option type: want String, got %v", opt.Type)
+	}
+	if !opt.Required {
+		t.Error("player option must be required")
+	}
+}
+
+func TestAllCommandDefs_LastRollsHasOptionalCountOption(t *testing.T) {
+	var lastRolls *discordgo.ApplicationCommand
+	for _, d := range allCommandDefs() {
+		if d.Name == lastRollsCommandName {
+			lastRolls = d
+			break
+		}
+	}
+	if lastRolls == nil {
+		t.Fatal("/last-rolls not found in allCommandDefs")
+	}
+	if len(lastRolls.Options) != 1 {
+		t.Fatalf("expected 1 option, got %d", len(lastRolls.Options))
+	}
+	opt := lastRolls.Options[0]
+	if opt.Name != "count" {
+		t.Errorf("option name: want %q, got %q", "count", opt.Name)
+	}
+	if opt.Type != discordgo.ApplicationCommandOptionInteger {
+		t.Errorf("option type: want Integer, got %v", opt.Type)
+	}
+	if opt.Required {
+		t.Error("count option must not be required")
+	}
+	if opt.MaxValue != float64(maxLastRollsCount) {
+		t.Errorf("MaxValue: want %v, got %v", float64(maxLastRollsCount), opt.MaxValue)
+	}
+}
+
+// --- decideCommandAction tests ---
+
+func TestDecideCommandAction_Create(t *testing.T) {
+	def := &discordgo.ApplicationCommand{Name: "ping", Description: "desc"}
+	result := decideCommandAction(nil, def)
+	if result.action != commandCreate {
+		t.Errorf("expected commandCreate, got %v", result.action)
+	}
+}
+
+func TestDecideCommandAction_Reuse(t *testing.T) {
+	existing := []*discordgo.ApplicationCommand{
+		{ID: "cmd-1", Name: "ping", Description: "desc"},
+	}
+	def := &discordgo.ApplicationCommand{Name: "ping", Description: "desc"}
+	result := decideCommandAction(existing, def)
+	if result.action != commandReuse {
+		t.Errorf("expected commandReuse, got %v", result.action)
+	}
+	if result.existingID != "cmd-1" {
+		t.Errorf("existingID: want %q, got %q", "cmd-1", result.existingID)
+	}
+}
+
+func TestDecideCommandAction_Update(t *testing.T) {
+	existing := []*discordgo.ApplicationCommand{
+		{ID: "cmd-2", Name: "ping", Description: "old description"},
+	}
+	def := &discordgo.ApplicationCommand{Name: "ping", Description: "new description"}
+	result := decideCommandAction(existing, def)
+	if result.action != commandUpdate {
+		t.Errorf("expected commandUpdate, got %v", result.action)
+	}
+	if result.existingID != "cmd-2" {
+		t.Errorf("existingID: want %q, got %q", "cmd-2", result.existingID)
+	}
+}
+
+// --- report formatting tests ---
+
+func TestFormatLastRolls_Empty(t *testing.T) {
+	out := formatLastRolls(nil)
+	if !strings.Contains(out, "No combat events") {
+		t.Errorf("expected empty message, got: %q", out)
+	}
+}
+
+func TestFormatLastRolls_SingleRoll(t *testing.T) {
+	rolls := []RecentCombatRoll{
+		{
+			GameSequence:        7,
+			AttackerDisplayName: "Alice",
+			DefenderDisplayName: "Bob",
+			SourceTerritoryID:   "alaska",
+			TargetTerritoryID:   "kamchatka",
+			AttackerDice:        []int{6, 5},
+			DefenderDice:        []int{3},
+			AttackerLosses:      0,
+			DefenderLosses:      1,
+			Captured:            false,
+		},
+	}
+	out := formatLastRolls(rolls)
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected attacker name, got: %q", out)
+	}
+	if !strings.Contains(out, "Bob") {
+		t.Errorf("expected defender name, got: %q", out)
+	}
+	if !strings.Contains(out, "#7") {
+		t.Errorf("expected sequence number, got: %q", out)
+	}
+}
+
+func TestFormatLastRolls_Captured(t *testing.T) {
+	rolls := []RecentCombatRoll{
+		{
+			GameSequence:        1,
+			AttackerDisplayName: "Carol",
+			DefenderDisplayName: "Dave",
+			AttackerDice:        []int{6},
+			DefenderDice:        []int{1},
+			Captured:            true,
+		},
+	}
+	out := formatLastRolls(rolls)
+	if !strings.Contains(out, "captured") {
+		t.Errorf("expected capture indicator, got: %q", out)
+	}
+}
+
+func TestFormatDiceReport_Empty(t *testing.T) {
+	r := DiceReport{GameID: "g1", CombatRolls: 0}
+	out := formatDiceReport(r)
+	if !strings.Contains(out, "Dice Report") {
+		t.Errorf("expected header, got: %q", out)
+	}
+	if !strings.Contains(out, "Combat rolls: 0") {
+		t.Errorf("expected zero rolls, got: %q", out)
+	}
+	if !strings.Contains(out, "descriptive results") {
+		t.Errorf("expected disclaimer, got: %q", out)
+	}
+}
+
+func TestFormatPlayerReport_NoRolls(t *testing.T) {
+	r := PlayerCombatReport{PlayerID: "p1", PlayerDisplayName: "Alice", AttackRolls: 0}
+	out := formatPlayerReport(r)
+	if !strings.Contains(out, "No attack rolls") {
+		t.Errorf("expected no-rolls message, got: %q", out)
+	}
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected player name in message, got: %q", out)
+	}
+}
+
+func TestFormatPlayerReport_WithRolls(t *testing.T) {
+	r := PlayerCombatReport{
+		PlayerID:               "p1",
+		PlayerDisplayName:      "Alice",
+		AttackRolls:            3,
+		TerritoriesCaptured:    1,
+		CaptureRate:            33.3,
+		AttackerDiceRolled:     9,
+		AverageAttackerDice:    3.0,
+		AttackerLosses:         1,
+		DefenderLossesInflicted: 3,
+		AverageSourceArmiesBefore: 7.0,
+		AverageTargetArmiesBefore: 2.0,
+		AverageArmyAdvantage:    5.0,
+	}
+	out := formatPlayerReport(r)
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected player name, got: %q", out)
+	}
+	if !strings.Contains(out, "Attack rolls: 3") {
+		t.Errorf("expected attack roll count, got: %q", out)
+	}
+	if !strings.Contains(out, "33.3") {
+		t.Errorf("expected capture rate, got: %q", out)
+	}
+}
+
+// Expose reporting types for formatting tests (they live in the same package).
+type RecentCombatRoll = reporting.RecentCombatRoll
+type DiceReport = reporting.DiceReport
+type PlayerCombatReport = reporting.PlayerCombatReport
+type FaceDistribution = reporting.FaceDistribution

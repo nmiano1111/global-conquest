@@ -9,6 +9,7 @@ import (
 
 	"backend/internal/db"
 	"backend/internal/discordbot"
+	"backend/internal/reporting"
 	"backend/internal/store"
 
 	"github.com/joho/godotenv"
@@ -38,8 +39,11 @@ func main() {
 	defer pool.Close()
 	d := db.New(pool)
 
+	// Reporting
+	reportSvc := reporting.NewService(reporting.NewRepository(d.Queryer()))
+
 	// Discord bot
-	bot, err := discordbot.New(cfg)
+	bot, err := discordbot.New(cfg, reportSvc)
 	if err != nil {
 		log.Fatal(err)
 	}

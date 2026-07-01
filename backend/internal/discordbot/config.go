@@ -11,6 +11,10 @@ type Config struct {
 	ApplicationID   string
 	GuildID         string
 	EventsChannelID string
+
+	// DefaultGameID is the Global Conquest game UUID used by all report commands
+	// (/last-rolls, /dice-report, /player-stats). Set via DISCORD_DEFAULT_GAME_ID.
+	DefaultGameID string
 }
 
 func ConfigFromEnv() (Config, error) {
@@ -19,6 +23,7 @@ func ConfigFromEnv() (Config, error) {
 		ApplicationID:   strings.TrimSpace(os.Getenv("DISCORD_APPLICATION_ID")),
 		GuildID:         strings.TrimSpace(os.Getenv("DISCORD_GUILD_ID")),
 		EventsChannelID: strings.TrimSpace(os.Getenv("DISCORD_EVENTS_CHANNEL_ID")),
+		DefaultGameID:   strings.TrimSpace(os.Getenv("DISCORD_DEFAULT_GAME_ID")),
 	}
 
 	var missing []string
@@ -33,6 +38,9 @@ func ConfigFromEnv() (Config, error) {
 	}
 	if cfg.EventsChannelID == "" {
 		missing = append(missing, "DISCORD_EVENTS_CHANNEL_ID")
+	}
+	if cfg.DefaultGameID == "" {
+		missing = append(missing, "DISCORD_DEFAULT_GAME_ID")
 	}
 
 	if len(missing) > 0 {
