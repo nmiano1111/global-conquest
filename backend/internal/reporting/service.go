@@ -14,6 +14,8 @@ type reportingRepository interface {
 	LoadGameByName(ctx context.Context, name string) (gameID, gameName string, err error)
 	LoadPlayerByUsername(ctx context.Context, username string) (playerID string, err error)
 	LoadCurrentPlayer(ctx context.Context, gameID string) (username string, discordName *string, err error)
+	LoadActiveGameChoices(ctx context.Context, prefix string) ([]string, error)
+	LoadPlayerChoices(ctx context.Context, gameName, prefix string) ([]PlayerChoice, error)
 	LoadRawCombatEvents(ctx context.Context, gameID string) ([]rawCombatRow, error)
 	LoadRawRecentCombatEvents(ctx context.Context, gameID string, limit int) ([]rawCombatRow, error)
 	LoadPlayerNames(ctx context.Context, playerIDs []string) (map[string]string, error)
@@ -49,6 +51,18 @@ func (svc *Service) ResolvePlayer(ctx context.Context, identifier string) (strin
 		return strings.ToLower(identifier), nil
 	}
 	return svc.repo.LoadPlayerByUsername(ctx, identifier)
+}
+
+// ActiveGameChoices returns up to 25 game names for Discord autocomplete,
+// filtered by the given prefix (empty = all active games).
+func (svc *Service) ActiveGameChoices(ctx context.Context, prefix string) ([]string, error) {
+	return svc.repo.LoadActiveGameChoices(ctx, prefix)
+}
+
+// PlayerChoices returns up to 25 player choices for Discord autocomplete.
+// If gameName is non-empty only players in that game are returned.
+func (svc *Service) PlayerChoices(ctx context.Context, gameName, prefix string) ([]PlayerChoice, error) {
+	return svc.repo.LoadPlayerChoices(ctx, gameName, prefix)
 }
 
 // CurrentPlayer returns the username and optional Discord name of the player

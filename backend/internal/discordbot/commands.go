@@ -112,7 +112,7 @@ func commandsMatch(a, b *discordgo.ApplicationCommand) bool {
 	}
 	for i, opt := range b.Options {
 		ea := a.Options[i]
-		if ea.Name != opt.Name || ea.Type != opt.Type || ea.Required != opt.Required {
+		if ea.Name != opt.Name || ea.Type != opt.Type || ea.Required != opt.Required || ea.Autocomplete != opt.Autocomplete {
 			return false
 		}
 	}
@@ -120,10 +120,11 @@ func commandsMatch(a, b *discordgo.ApplicationCommand) bool {
 }
 
 var gameOption = &discordgo.ApplicationCommandOption{
-	Type:        discordgo.ApplicationCommandOptionString,
-	Name:        "game",
-	Description: "Game name (defaults to the most recent active game)",
-	Required:    false,
+	Type:         discordgo.ApplicationCommandOptionString,
+	Name:         "game",
+	Description:  "Game name (defaults to the most recent active game)",
+	Required:     false,
+	Autocomplete: true,
 }
 
 // allCommandDefs returns the definitions for every guild-scoped slash command.
@@ -161,10 +162,11 @@ func allCommandDefs() []*discordgo.ApplicationCommand {
 			Description: playerStatsCommandDescription,
 			Options: []*discordgo.ApplicationCommandOption{
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "player",
-					Description: "Player username or UUID",
-					Required:    true,
+					Type:         discordgo.ApplicationCommandOptionString,
+					Name:         "player",
+					Description:  "Player username",
+					Required:     true,
+					Autocomplete: true,
 				},
 				gameOption,
 			},

@@ -18,6 +18,8 @@ type reportingService interface {
 	ResolveGame(ctx context.Context, name string) (gameID, gameName string, err error)
 	ResolvePlayer(ctx context.Context, identifier string) (playerID string, err error)
 	CurrentPlayer(ctx context.Context, gameID string) (username string, discordName *string, err error)
+	ActiveGameChoices(ctx context.Context, prefix string) ([]string, error)
+	PlayerChoices(ctx context.Context, gameName, prefix string) ([]reporting.PlayerChoice, error)
 	DiceReport(ctx context.Context, gameID string) (reporting.DiceReport, error)
 	PlayerReport(ctx context.Context, gameID, playerID string) (reporting.PlayerCombatReport, error)
 	RecentRolls(ctx context.Context, gameID string, count int) ([]reporting.RecentCombatRoll, error)
@@ -82,21 +84,88 @@ func (s *discordMessageSender) SendMessage(_ context.Context, channelID, content
 }
 
 func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Type != discordgo.InteractionApplicationCommand {
+	switch i.Type {
+	case discordgo.InteractionApplicationCommand:
+		switch i.ApplicationCommandData().Name {
+		case pingCommandName:
+			b.handlePing(s, i)
+		case lastRollsCommandName:
+			b.handleLastRolls(s, i)
+		case diceReportCommandName:
+			b.handleDiceReport(s, i)
+		case playerStatsCommandName:
+			b.handlePlayerStats(s, i)
+		case playerUpCommandName:
+			b.handlePlayerUp(s, i)
+		}
+	case discordgo.InteractionApplicationCommandAutocomplete:
+		b.handleAutocomplete(s, i)
+	}
+}
+
+func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	data := i.ApplicationCommandData()
+	for _, opt := range data.Options {
+		if !opt.Focused {
+			continue
+		}
+		switch opt.Name {
+		case "game":
+			b.respondGameAutocomplete(ctx, s, i, opt.StringValue())
+		case "player":
+			gameName := ""
+			for _, o := range data.Options {
+				if o.Name == "game" {
+					gameName = o.StringValue()
+				}
+			}
+			b.respondPlayerAutocomplete(ctx, s, i, gameName, opt.StringValue())
+		}
 		return
 	}
-	switch i.ApplicationCommandData().Name {
-	case pingCommandName:
-		b.handlePing(s, i)
-	case lastRollsCommandName:
-		b.handleLastRolls(s, i)
-	case diceReportCommandName:
-		b.handleDiceReport(s, i)
-	case playerStatsCommandName:
-		b.handlePlayerStats(s, i)
-	case playerUpCommandName:
-		b.handlePlayerUp(s, i)
+}
+
+func (b *Bot) respondGameAutocomplete(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, prefix string) {
+	names, err := b.reporting.ActiveGameChoices(ctx, prefix)
+	if err != nil {
+		log.Printf("discord: game autocomplete error: %v", err)
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+			Data: &discordgo.InteractionResponseData{},
+		})
+		return
 	}
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(names))
+	for idx, name := range names {
+		choices[idx] = &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name}
+	}
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+		Data: &discordgo.InteractionResponseData{Choices: choices},
+	})
+}
+
+func (b *Bot) respondPlayerAutocomplete(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, gameName, prefix string) {
+	players, err := b.reporting.PlayerChoices(ctx, gameName, prefix)
+	if err != nil {
+		log.Printf("discord: player autocomplete error: %v", err)
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+			Data: &discordgo.InteractionResponseData{},
+		})
+		return
+	}
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(players))
+	for idx, p := range players {
+		choices[idx] = &discordgo.ApplicationCommandOptionChoice{Name: p.Name, Value: p.Value}
+	}
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+		Data: &discordgo.InteractionResponseData{Choices: choices},
+	})
 }
 
 func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -258,9 +327,9 @@ func (b *Bot) handlePlayerUp(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 
-	playerRef := fmt.Sprintf("**%s**", username)
+	playerRef := fmt.Sprintf("<@%s>", username)
 	if discordName != nil {
-		playerRef = fmt.Sprintf("@%s", *discordName)
+		playerRef = fmt.Sprintf("<@%s>", *discordName)
 	}
 	editResponse(s, i, fmt.Sprintf("%s, play your turn in **%s**! ⚔️", playerRef, resolvedName))
 }

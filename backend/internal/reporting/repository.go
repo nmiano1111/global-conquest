@@ -85,6 +85,26 @@ FROM users
 WHERE lower(username) = lower($1)
 LIMIT 1`
 
+const queryActiveGameChoices = `
+SELECT name
+FROM games
+WHERE status = 'in_progress'
+  AND lower(name) LIKE lower($1) || '%'
+ORDER BY updated_at DESC
+LIMIT 25`
+
+// $1 = username prefix, $2 = game name filter ('' = all in-progress games)
+const queryPlayerChoices = `
+SELECT DISTINCT u.username, u.discord_name
+FROM game_players gp
+JOIN games g ON g.id = gp.game_id
+JOIN users u ON u.id = gp.user_id
+WHERE g.status = 'in_progress'
+  AND ($2 = '' OR lower(g.name) = lower($2))
+  AND lower(u.username) LIKE lower($1) || '%'
+ORDER BY u.username
+LIMIT 25`
+
 const queryCurrentPlayer = `
 SELECT u.username, u.discord_name
 FROM games g
@@ -175,6 +195,49 @@ func (r *Repository) LoadPlayerByUsername(ctx context.Context, username string) 
 		return "", fmt.Errorf("query player by username: %w", err)
 	}
 	return id, nil
+}
+
+// LoadActiveGameChoices returns up to 25 game names matching the given prefix
+// (case-insensitive) across non-lobby games, ordered by most recently updated.
+func (r *Repository) LoadActiveGameChoices(ctx context.Context, prefix string) ([]string, error) {
+	rows, err := r.db.Query(ctx, queryActiveGameChoices, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("query active game choices: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan game name: %w", err)
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+// LoadPlayerChoices returns up to 25 player choices matching the username prefix.
+// If gameName is non-empty, only players in that game are returned.
+func (r *Repository) LoadPlayerChoices(ctx context.Context, gameName, prefix string) ([]PlayerChoice, error) {
+	rows, err := r.db.Query(ctx, queryPlayerChoices, prefix, gameName)
+	if err != nil {
+		return nil, fmt.Errorf("query player choices: %w", err)
+	}
+	defer rows.Close()
+	var choices []PlayerChoice
+	for rows.Next() {
+		var username string
+		var discordName *string
+		if err := rows.Scan(&username, &discordName); err != nil {
+			return nil, fmt.Errorf("scan player choice: %w", err)
+		}
+		name := username
+		if discordName != nil {
+			name = fmt.Sprintf("%s (%s)", username, *discordName)
+		}
+		choices = append(choices, PlayerChoice{Name: name, Value: username})
+	}
+	return choices, rows.Err()
 }
 
 // LoadCurrentPlayer returns the username and optional Discord name of the player

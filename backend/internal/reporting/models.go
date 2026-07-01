@@ -63,6 +63,13 @@ type PlayerCombatReport struct {
 	CaptureRate               float64 // percentage, e.g. 19.7
 }
 
+// PlayerChoice is a display-name / value pair used for Discord autocomplete.
+// Value is the username, which ResolvePlayer can look up.
+type PlayerChoice struct {
+	Name  string // shown in the autocomplete dropdown
+	Value string // username sent as the option value
+}
+
 // RecentCombatRoll is a single combat-roll event prepared for display.
 type RecentCombatRoll struct {
 	GameSequence int64

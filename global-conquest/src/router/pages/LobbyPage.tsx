@@ -12,6 +12,7 @@ function statusBadgeClass(label: string): string {
   if (label === "Joined") return "border border-gc-accent/40 bg-gc-accent/10 text-gc-accent";
   if (label === "Full") return "border border-gc-danger/40 bg-gc-danger/10 text-gc-danger";
   if (label === "In Progress") return "border border-sky-700/40 bg-sky-900/20 text-sky-400";
+  if (label === "Completed") return "border border-gc-border/60 bg-gc-surface-2 text-gc-muted";
   return "border border-gc-border bg-gc-surface-2 text-gc-muted";
 }
 
@@ -227,11 +228,11 @@ export function LobbyPage() {
   })();
 
   const currentUserID = auth.user?.id ?? "";
+  const statusOrder = (s: string) => (s === "lobby" ? 0 : s === "in_progress" ? 1 : 2);
   const gamesSorted = [...games].sort((a, b) => {
-    if (a.status === b.status) return b.createdAt.localeCompare(a.createdAt);
-    if (a.status === "lobby") return -1;
-    if (b.status === "lobby") return 1;
-    return 0;
+    const od = statusOrder(a.status) - statusOrder(b.status);
+    if (od !== 0) return od;
+    return b.createdAt.localeCompare(a.createdAt);
   });
 
   return (
@@ -323,13 +324,15 @@ export function LobbyPage() {
               const isFull = isLobby && maxPlayers > 0 && currentPlayers >= maxPlayers;
               const statusLabel = canJoin
                 ? "Open"
-                : !isLobby
-                  ? "In Progress"
-                  : hasJoined
-                    ? "Joined"
-                    : isFull
-                      ? "Full"
-                      : "Unavailable";
+                : g.status === "completed"
+                  ? "Completed"
+                  : !isLobby
+                    ? "In Progress"
+                    : hasJoined
+                      ? "Joined"
+                      : isFull
+                        ? "Full"
+                        : "Unavailable";
 
               return (
                 <li

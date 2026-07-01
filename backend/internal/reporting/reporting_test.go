@@ -406,6 +406,8 @@ type fakeRepo struct {
 	gamesByName       map[string]fakeGame    // keyed by canonical name (any case)
 	playersByUsername map[string]string      // username → playerID (any case)
 	currentPlayer     *fakeCurrentPlayer
+	activeGameNames   []string
+	playerChoices     []PlayerChoice
 }
 
 func (f *fakeRepo) LoadLatestGame(_ context.Context) (string, string, error) {
@@ -423,6 +425,14 @@ func (f *fakeRepo) LoadGameByName(_ context.Context, name string) (string, strin
 		}
 	}
 	return "", "", ErrGameNotFound
+}
+
+func (f *fakeRepo) LoadActiveGameChoices(_ context.Context, _ string) ([]string, error) {
+	return f.activeGameNames, nil
+}
+
+func (f *fakeRepo) LoadPlayerChoices(_ context.Context, _, _ string) ([]PlayerChoice, error) {
+	return f.playerChoices, nil
 }
 
 func (f *fakeRepo) LoadCurrentPlayer(_ context.Context, _ string) (string, *string, error) {
@@ -685,5 +695,40 @@ func TestService_CurrentPlayer_NotFound(t *testing.T) {
 	_, _, err := svc.CurrentPlayer(context.Background(), "g1")
 	if !errors.Is(err, ErrNoCurrentPlayer) {
 		t.Errorf("expected ErrNoCurrentPlayer, got %v", err)
+	}
+}
+
+// --- ActiveGameChoices / PlayerChoices ---
+
+func TestService_ActiveGameChoices(t *testing.T) {
+	repo := &fakeRepo{activeGameNames: []string{"Angry Badger", "Sleepy Raccoon"}}
+	svc := NewService(repo)
+
+	names, err := svc.ActiveGameChoices(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ActiveGameChoices: %v", err)
+	}
+	if len(names) != 2 {
+		t.Errorf("want 2 names, got %d", len(names))
+	}
+}
+
+func TestService_PlayerChoices(t *testing.T) {
+	choices := []PlayerChoice{
+		{Name: "alice", Value: "alice"},
+		{Name: "bob (Bob#1234)", Value: "bob"},
+	}
+	repo := &fakeRepo{playerChoices: choices}
+	svc := NewService(repo)
+
+	got, err := svc.PlayerChoices(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("PlayerChoices: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("want 2 choices, got %d", len(got))
+	}
+	if got[1].Value != "bob" {
+		t.Errorf("choice value: want %q, got %q", "bob", got[1].Value)
 	}
 }
