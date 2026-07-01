@@ -11,7 +11,8 @@ RUN go mod download
 # Copy source
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /app/server ./cmd/backend/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /app/server ./cmd/backend/main.go && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -o /app/discord-bot ./cmd/discord-bot
 
 # ---- Runtime ----
 FROM alpine:3.21
@@ -21,6 +22,7 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /app/server ./server
+COPY --from=builder /app/discord-bot ./discord-bot
 COPY --from=builder /app/migrations ./migrations
 
 EXPOSE 8080

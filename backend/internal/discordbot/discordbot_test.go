@@ -169,7 +169,7 @@ func TestRenderTurnStarted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone Bob ended their turn. Alice is up." {
+	if msg != "@everyone 🎯 **Bob** ended their turn. **Alice** is up." {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -273,7 +273,7 @@ func TestWorkerDeliverSuccess(t *testing.T) {
 	w := NewWorker(claimer, sender, "channel-id")
 	w.deliver(context.Background(), entry)
 
-	if sentContent != "@everyone Alice ended their turn. Bob is up." {
+	if sentContent != "@everyone 🎯 **Alice** ended their turn. **Bob** is up." {
 		t.Fatalf("unexpected message content: %q", sentContent)
 	}
 	if markedDelivered != "outbox-1" {

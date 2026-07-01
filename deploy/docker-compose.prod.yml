@@ -32,6 +32,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  discord-bot:
+    image: ${ECR_IMAGE}
+    command: ["/app/discord-bot"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: globalconq
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: globalconq
+      DB_SSL_MODE: disable
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
+      DISCORD_EVENTS_CHANNEL_ID: ${DISCORD_EVENTS_CHANNEL_ID}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   caddy:
     image: caddy:2-alpine
     ports:
