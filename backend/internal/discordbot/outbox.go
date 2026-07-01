@@ -171,7 +171,7 @@ func renderMessage(entry store.DiscordOutboxEntry) (string, error) {
 		if p.PlayerDisplayName == "" {
 			return "", fmt.Errorf("turn_started payload missing player_display_name (id=%s)", entry.ID)
 		}
-		return fmt.Sprintf("@everyone 🎯 **%s** ended their turn. **%s** is up.", p.PreviousPlayerDisplayName, p.PlayerDisplayName), nil
+		return fmt.Sprintf("@everyone 🎯 **%s** ended their turn. **%s** is up. (game `%s`)", p.PreviousPlayerDisplayName, p.PlayerDisplayName, entry.GameID), nil
 	default:
 		return "", fmt.Errorf("unknown notification type %q (id=%s)", entry.NotificationType, entry.ID)
 	}
