@@ -719,8 +719,14 @@ func TestFormatLastRolls_SingleRoll(t *testing.T) {
 	if !strings.Contains(out, "Bob") {
 		t.Errorf("expected defender name, got: %q", out)
 	}
-	if !strings.Contains(out, "#7") {
-		t.Errorf("expected sequence number, got: %q", out)
+	if !strings.Contains(out, "Alaska") {
+		t.Errorf("expected title-cased territory, got: %q", out)
+	}
+	if !strings.Contains(out, "Kamchatka") {
+		t.Errorf("expected title-cased territory, got: %q", out)
+	}
+	if !strings.Contains(out, "6  5") {
+		t.Errorf("expected attacker dice, got: %q", out)
 	}
 }
 
@@ -736,7 +742,7 @@ func TestFormatLastRolls_Captured(t *testing.T) {
 		},
 	}
 	out := formatLastRolls(rolls, "Test Game")
-	if !strings.Contains(out, "CAPTURED") {
+	if !strings.Contains(out, "✅") {
 		t.Errorf("expected capture indicator, got: %q", out)
 	}
 }

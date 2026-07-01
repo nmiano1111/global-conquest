@@ -2,6 +2,7 @@ package discordbot
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"backend/internal/reporting"
@@ -11,42 +12,57 @@ import (
 // leaving room for the header, fence characters, and any footer.
 const maxCodeBlockBody = 1800
 
-// formatLastRolls renders recent combat rolls with a markdown header and a
-// code-block body so the data stands out in the channel.
+// formatLastRolls renders recent combat rolls using Discord native markdown so
+// names, dice, and outcomes are visually distinct without a code block.
 func formatLastRolls(rolls []reporting.RecentCombatRoll, gameName string) string {
 	if len(rolls) == 0 {
 		return "No combat events found for this game yet."
 	}
 
-	var body strings.Builder
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "🎲 **Last %d Combat Roll(s)** · %s\n", len(rolls), gameName)
+
 	for _, r := range rolls {
-		atk := joinInts(r.AttackerDice)
-		def := joinInts(r.DefenderDice)
-		captured := ""
+		result := fmt.Sprintf("atk -%d  def -%d", r.AttackerLosses, r.DefenderLosses)
 		if r.Captured {
-			captured = " [CAPTURED]"
+			result += "  ✅"
 		}
-		line := fmt.Sprintf(
-			"#%d %s → %s: %s → %s\n  Attack [%s] vs Defense [%s] — Losses: %d / %d%s\n\n",
-			r.GameSequence,
+		entry := fmt.Sprintf(
+			"\n⚔️ **%s** → **%s**  ·  %s → %s\n`%s` vs `%s`  ·  %s\n",
 			r.AttackerDisplayName, r.DefenderDisplayName,
-			r.SourceTerritoryID, r.TargetTerritoryID,
-			atk, def,
-			r.AttackerLosses, r.DefenderLosses,
-			captured,
+			territoryName(r.SourceTerritoryID), territoryName(r.TargetTerritoryID),
+			diceStr(r.AttackerDice), diceStr(r.DefenderDice),
+			result,
 		)
-		if body.Len()+len(line) > maxCodeBlockBody {
-			body.WriteString("(output truncated)\n")
+		if sb.Len()+len(entry) > maxCodeBlockBody {
+			sb.WriteString("\n*(output truncated)*")
 			break
 		}
-		body.WriteString(line)
+		sb.WriteString(entry)
 	}
 
-	return fmt.Sprintf(
-		"🎲 **Last %d Combat Roll(s)** · %s\n```\n%s```",
-		len(rolls), gameName,
-		body.String(),
-	)
+	return sb.String()
+}
+
+// territoryName converts a snake_case territory ID to Title Case for display.
+func territoryName(id string) string {
+	words := strings.Split(id, "_")
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// diceStr formats a slice of die values as space-separated digits for an inline
+// code span, e.g. []int{5, 4, 3} → "5  4  3".
+func diceStr(dice []int) string {
+	parts := make([]string, len(dice))
+	for i, d := range dice {
+		parts[i] = strconv.Itoa(d)
+	}
+	return strings.Join(parts, "  ")
 }
 
 // formatDiceReport renders an aggregate dice-statistics report.
@@ -121,10 +137,3 @@ func writeFaceDistribution(sb *strings.Builder, dist reporting.FaceDistribution)
 	}
 }
 
-func joinInts(vals []int) string {
-	parts := make([]string, len(vals))
-	for i, v := range vals {
-		parts[i] = fmt.Sprintf("%d", v)
-	}
-	return strings.Join(parts, ", ")
-}
