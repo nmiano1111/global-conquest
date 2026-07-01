@@ -390,6 +390,14 @@ type fakeRepo struct {
 	rawAll    []rawCombatRow
 	rawRecent []rawCombatRow
 	names     map[string]string
+	latestID  string
+}
+
+func (f *fakeRepo) LoadLatestGameID(_ context.Context) (string, error) {
+	if f.latestID == "" {
+		return "", ErrNoActiveGame
+	}
+	return f.latestID, nil
 }
 
 func (f *fakeRepo) LoadRawCombatEvents(_ context.Context, _ string) ([]rawCombatRow, error) {

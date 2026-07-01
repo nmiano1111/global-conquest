@@ -15,22 +15,18 @@ import (
 
 // --- ConfigFromEnv tests ---
 
-const testGameID = "12345678-1234-1234-1234-123456789abc"
-
 func TestConfigFromEnv_AllPresent(t *testing.T) {
 	t.Setenv("DISCORD_BOT_TOKEN", "tok")
 	t.Setenv("DISCORD_APPLICATION_ID", "appid")
 	t.Setenv("DISCORD_GUILD_ID", "guildid")
 	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", "chanid")
-	t.Setenv("DISCORD_DEFAULT_GAME_ID", testGameID)
 
 	cfg, err := ConfigFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.BotToken != "tok" || cfg.ApplicationID != "appid" ||
-		cfg.GuildID != "guildid" || cfg.EventsChannelID != "chanid" ||
-		cfg.DefaultGameID != testGameID {
+		cfg.GuildID != "guildid" || cfg.EventsChannelID != "chanid" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }
@@ -40,7 +36,6 @@ func TestConfigFromEnv_OneMissing(t *testing.T) {
 	t.Setenv("DISCORD_APPLICATION_ID", "appid")
 	t.Setenv("DISCORD_GUILD_ID", "guildid")
 	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", "")
-	t.Setenv("DISCORD_DEFAULT_GAME_ID", testGameID)
 
 	_, err := ConfigFromEnv()
 	if err == nil {
@@ -74,7 +69,6 @@ func TestConfigFromEnv_WhitespaceTrimmed(t *testing.T) {
 	t.Setenv("DISCORD_APPLICATION_ID", "\tappid\t")
 	t.Setenv("DISCORD_GUILD_ID", " guildid ")
 	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", " chanid ")
-	t.Setenv("DISCORD_DEFAULT_GAME_ID", " "+testGameID+" ")
 
 	cfg, err := ConfigFromEnv()
 	if err != nil {
@@ -91,9 +85,6 @@ func TestConfigFromEnv_WhitespaceTrimmed(t *testing.T) {
 	}
 	if cfg.EventsChannelID != "chanid" {
 		t.Errorf("EventsChannelID not trimmed: %q", cfg.EventsChannelID)
-	}
-	if cfg.DefaultGameID != testGameID {
-		t.Errorf("DefaultGameID not trimmed: %q", cfg.DefaultGameID)
 	}
 }
 

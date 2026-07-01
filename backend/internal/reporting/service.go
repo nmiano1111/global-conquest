@@ -8,6 +8,7 @@ import (
 // reportingRepository is the data-access interface the Service requires.
 // *Repository satisfies it; test fakes can satisfy it without a real DB.
 type reportingRepository interface {
+	LoadLatestGameID(ctx context.Context) (string, error)
 	LoadRawCombatEvents(ctx context.Context, gameID string) ([]rawCombatRow, error)
 	LoadRawRecentCombatEvents(ctx context.Context, gameID string, limit int) ([]rawCombatRow, error)
 	LoadPlayerNames(ctx context.Context, playerIDs []string) (map[string]string, error)
@@ -22,6 +23,12 @@ type Service struct {
 // NewService creates a Service. Pass reporting.NewRepository(db.Queryer()) from main.
 func NewService(repo reportingRepository) *Service {
 	return &Service{repo: repo}
+}
+
+// LatestGameID returns the ID of the most recently updated non-lobby game.
+// Returns ErrNoActiveGame when no eligible game exists.
+func (svc *Service) LatestGameID(ctx context.Context) (string, error) {
+	return svc.repo.LoadLatestGameID(ctx)
 }
 
 // DiceReport builds an aggregate dice-statistics report for the given game.

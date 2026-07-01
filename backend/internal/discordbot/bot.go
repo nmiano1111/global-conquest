@@ -16,6 +16,7 @@ import (
 // reportingService is the interface the Bot uses to generate reports.
 // *reporting.Service satisfies it; test fakes can satisfy it without a real DB.
 type reportingService interface {
+	LatestGameID(ctx context.Context) (string, error)
 	DiceReport(ctx context.Context, gameID string) (reporting.DiceReport, error)
 	PlayerReport(ctx context.Context, gameID, playerID string) (reporting.PlayerCombatReport, error)
 	RecentRolls(ctx context.Context, gameID string, count int) ([]reporting.RecentCombatRoll, error)
@@ -130,7 +131,12 @@ func (b *Bot) handleLastRolls(s *discordgo.Session, i *discordgo.InteractionCrea
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	rolls, err := b.reporting.RecentRolls(ctx, b.cfg.DefaultGameID, count)
+	gameID, ok := b.resolveGameID(ctx, s, i)
+	if !ok {
+		return
+	}
+
+	rolls, err := b.reporting.RecentRolls(ctx, gameID, count)
 	if err != nil {
 		log.Printf("discord: /last-rolls report error: %v", err)
 		msg := "I couldn't generate that report."
@@ -152,7 +158,12 @@ func (b *Bot) handleDiceReport(s *discordgo.Session, i *discordgo.InteractionCre
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	report, err := b.reporting.DiceReport(ctx, b.cfg.DefaultGameID)
+	gameID, ok := b.resolveGameID(ctx, s, i)
+	if !ok {
+		return
+	}
+
+	report, err := b.reporting.DiceReport(ctx, gameID)
 	if err != nil {
 		log.Printf("discord: /dice-report report error: %v", err)
 		msg := "I couldn't generate that report."
@@ -193,13 +204,34 @@ func (b *Bot) handlePlayerStats(s *discordgo.Session, i *discordgo.InteractionCr
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	report, err := b.reporting.PlayerReport(ctx, b.cfg.DefaultGameID, playerID)
+	gameID, ok := b.resolveGameID(ctx, s, i)
+	if !ok {
+		return
+	}
+
+	report, err := b.reporting.PlayerReport(ctx, gameID, playerID)
 	if err != nil {
 		log.Printf("discord: /player-stats report error: %v", err)
 		editResponse(s, i, "I couldn't generate that report.")
 		return
 	}
 	editResponse(s, i, formatPlayerReport(report))
+}
+
+// resolveGameID fetches the latest active game ID, editing the interaction
+// response with a user-facing error if none is found. Returns ("", false) on failure.
+func (b *Bot) resolveGameID(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) (string, bool) {
+	gameID, err := b.reporting.LatestGameID(ctx)
+	if err != nil {
+		log.Printf("discord: resolveGameID error: %v", err)
+		msg := "No active game found. Start a game first!"
+		if !errors.Is(err, reporting.ErrNoActiveGame) {
+			msg = "I couldn't look up the current game."
+		}
+		editResponse(s, i, msg)
+		return "", false
+	}
+	return gameID, true
 }
 
 // deferResponse sends a deferred (non-ephemeral) channel-message response.

@@ -5,6 +5,9 @@ import "fmt"
 // ErrNoEvents is returned when a game has no combat_roll_resolved events.
 var ErrNoEvents = fmt.Errorf("no combat events found")
 
+// ErrNoActiveGame is returned when no in-progress or completed game exists.
+var ErrNoActiveGame = fmt.Errorf("no active game found")
+
 // ErrUnsupportedEventVersion is returned when an event's event_version is not
 // supported. Reports fail hard rather than skip: an unknown version cannot be
 // safely decoded and silently ignoring it would produce misleading statistics.

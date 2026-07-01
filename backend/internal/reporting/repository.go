@@ -64,6 +64,13 @@ SELECT id::text, username
 FROM users
 WHERE id::text = ANY($1::text[])`
 
+const queryLatestGameID = `
+SELECT id::text
+FROM games
+WHERE status != 'lobby'
+ORDER BY updated_at DESC
+LIMIT 1`
+
 // LoadRawCombatEvents returns raw rows for all combat_roll_resolved events for a
 // game in ascending game_sequence order.
 func (r *Repository) LoadRawCombatEvents(ctx context.Context, gameID string) ([]rawCombatRow, error) {
@@ -103,6 +110,20 @@ func (r *Repository) LoadPlayerNames(ctx context.Context, playerIDs []string) (m
 		out[id] = name
 	}
 	return out, rows.Err()
+}
+
+// LoadLatestGameID returns the ID of the most recently updated game that is not
+// in lobby status. Returns ErrNoActiveGame if no such game exists.
+func (r *Repository) LoadLatestGameID(ctx context.Context) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx, queryLatestGameID).Scan(&id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", ErrNoActiveGame
+		}
+		return "", fmt.Errorf("query latest game: %w", err)
+	}
+	return id, nil
 }
 
 func scanCombatRows(rows pgx.Rows) ([]rawCombatRow, error) {
