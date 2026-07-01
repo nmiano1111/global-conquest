@@ -20,6 +20,9 @@ const (
 	playerStatsCommandName        = "player-stats"
 	playerStatsCommandDescription = "Show combat statistics for a player"
 
+	playerUpCommandName        = "player-up"
+	playerUpCommandDescription = "Remind the current player it's their turn"
+
 	defaultLastRollsCount = 5
 	maxLastRollsCount     = 20
 )
@@ -116,6 +119,13 @@ func commandsMatch(a, b *discordgo.ApplicationCommand) bool {
 	return true
 }
 
+var gameOption = &discordgo.ApplicationCommandOption{
+	Type:        discordgo.ApplicationCommandOptionString,
+	Name:        "game",
+	Description: "Game name (defaults to the most recent active game)",
+	Required:    false,
+}
+
 // allCommandDefs returns the definitions for every guild-scoped slash command.
 // Used by ensureGuildCommands and tests.
 func allCommandDefs() []*discordgo.ApplicationCommand {
@@ -138,11 +148,13 @@ func allCommandDefs() []*discordgo.ApplicationCommand {
 					MinValue:    &minCount,
 					MaxValue:    maxCount,
 				},
+				gameOption,
 			},
 		},
 		{
 			Name:        diceReportCommandName,
 			Description: diceReportCommandDescription,
+			Options:     []*discordgo.ApplicationCommandOption{gameOption},
 		},
 		{
 			Name:        playerStatsCommandName,
@@ -151,10 +163,16 @@ func allCommandDefs() []*discordgo.ApplicationCommand {
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "player",
-					Description: "Global Conquest player UUID",
+					Description: "Player username or UUID",
 					Required:    true,
 				},
+				gameOption,
 			},
+		},
+		{
+			Name:        playerUpCommandName,
+			Description: playerUpCommandDescription,
+			Options:     []*discordgo.ApplicationCommandOption{gameOption},
 		},
 	}
 }

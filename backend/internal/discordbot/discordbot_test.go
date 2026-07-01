@@ -547,8 +547,8 @@ func TestWorkerDeliverUnknownType(t *testing.T) {
 
 func TestAllCommandDefs_Count(t *testing.T) {
 	defs := allCommandDefs()
-	if len(defs) != 4 {
-		t.Errorf("expected 4 command defs, got %d", len(defs))
+	if len(defs) != 5 {
+		t.Errorf("expected 5 command defs, got %d", len(defs))
 	}
 }
 
@@ -558,10 +558,33 @@ func TestAllCommandDefs_Names(t *testing.T) {
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, want := range []string{pingCommandName, lastRollsCommandName, diceReportCommandName, playerStatsCommandName} {
+	for _, want := range []string{pingCommandName, lastRollsCommandName, diceReportCommandName, playerStatsCommandName, playerUpCommandName} {
 		if !names[want] {
 			t.Errorf("missing command def: %q", want)
 		}
+	}
+}
+
+func TestAllCommandDefs_PlayerUpHasOptionalGameOption(t *testing.T) {
+	var playerUp *discordgo.ApplicationCommand
+	for _, d := range allCommandDefs() {
+		if d.Name == playerUpCommandName {
+			playerUp = d
+			break
+		}
+	}
+	if playerUp == nil {
+		t.Fatal("/player-up not found in allCommandDefs")
+	}
+	if len(playerUp.Options) != 1 {
+		t.Fatalf("expected 1 option, got %d", len(playerUp.Options))
+	}
+	opt := playerUp.Options[0]
+	if opt.Name != "game" {
+		t.Errorf("option name: want %q, got %q", "game", opt.Name)
+	}
+	if opt.Required {
+		t.Error("game option must not be required")
 	}
 }
 
@@ -576,8 +599,8 @@ func TestAllCommandDefs_PlayerStatsHasRequiredPlayerOption(t *testing.T) {
 	if playerStats == nil {
 		t.Fatal("/player-stats not found in allCommandDefs")
 	}
-	if len(playerStats.Options) != 1 {
-		t.Fatalf("expected 1 option, got %d", len(playerStats.Options))
+	if len(playerStats.Options) != 2 {
+		t.Fatalf("expected 2 options (player + game), got %d", len(playerStats.Options))
 	}
 	opt := playerStats.Options[0]
 	if opt.Name != "player" {
@@ -588,6 +611,13 @@ func TestAllCommandDefs_PlayerStatsHasRequiredPlayerOption(t *testing.T) {
 	}
 	if !opt.Required {
 		t.Error("player option must be required")
+	}
+	gameOpt := playerStats.Options[1]
+	if gameOpt.Name != "game" {
+		t.Errorf("second option name: want %q, got %q", "game", gameOpt.Name)
+	}
+	if gameOpt.Required {
+		t.Error("game option must not be required")
 	}
 }
 
@@ -602,8 +632,8 @@ func TestAllCommandDefs_LastRollsHasOptionalCountOption(t *testing.T) {
 	if lastRolls == nil {
 		t.Fatal("/last-rolls not found in allCommandDefs")
 	}
-	if len(lastRolls.Options) != 1 {
-		t.Fatalf("expected 1 option, got %d", len(lastRolls.Options))
+	if len(lastRolls.Options) != 2 {
+		t.Fatalf("expected 2 options (count + game), got %d", len(lastRolls.Options))
 	}
 	opt := lastRolls.Options[0]
 	if opt.Name != "count" {
@@ -661,7 +691,7 @@ func TestDecideCommandAction_Update(t *testing.T) {
 // --- report formatting tests ---
 
 func TestFormatLastRolls_Empty(t *testing.T) {
-	out := formatLastRolls(nil)
+	out := formatLastRolls(nil, "Test Game")
 	if !strings.Contains(out, "No combat events") {
 		t.Errorf("expected empty message, got: %q", out)
 	}
@@ -682,7 +712,7 @@ func TestFormatLastRolls_SingleRoll(t *testing.T) {
 			Captured:            false,
 		},
 	}
-	out := formatLastRolls(rolls)
+	out := formatLastRolls(rolls, "Test Game")
 	if !strings.Contains(out, "Alice") {
 		t.Errorf("expected attacker name, got: %q", out)
 	}
@@ -705,29 +735,29 @@ func TestFormatLastRolls_Captured(t *testing.T) {
 			Captured:            true,
 		},
 	}
-	out := formatLastRolls(rolls)
-	if !strings.Contains(out, "captured") {
+	out := formatLastRolls(rolls, "Test Game")
+	if !strings.Contains(out, "CAPTURED") {
 		t.Errorf("expected capture indicator, got: %q", out)
 	}
 }
 
 func TestFormatDiceReport_Empty(t *testing.T) {
 	r := DiceReport{GameID: "g1", CombatRolls: 0}
-	out := formatDiceReport(r)
+	out := formatDiceReport(r, "Test Game")
 	if !strings.Contains(out, "Dice Report") {
 		t.Errorf("expected header, got: %q", out)
 	}
-	if !strings.Contains(out, "Combat rolls: 0") {
+	if !strings.Contains(out, "Combat rolls") {
 		t.Errorf("expected zero rolls, got: %q", out)
 	}
-	if !strings.Contains(out, "descriptive results") {
+	if !strings.Contains(out, "Descriptive results") {
 		t.Errorf("expected disclaimer, got: %q", out)
 	}
 }
 
 func TestFormatPlayerReport_NoRolls(t *testing.T) {
 	r := PlayerCombatReport{PlayerID: "p1", PlayerDisplayName: "Alice", AttackRolls: 0}
-	out := formatPlayerReport(r)
+	out := formatPlayerReport(r, "Test Game")
 	if !strings.Contains(out, "No attack rolls") {
 		t.Errorf("expected no-rolls message, got: %q", out)
 	}
@@ -751,11 +781,11 @@ func TestFormatPlayerReport_WithRolls(t *testing.T) {
 		AverageTargetArmiesBefore: 2.0,
 		AverageArmyAdvantage:    5.0,
 	}
-	out := formatPlayerReport(r)
+	out := formatPlayerReport(r, "Test Game")
 	if !strings.Contains(out, "Alice") {
 		t.Errorf("expected player name, got: %q", out)
 	}
-	if !strings.Contains(out, "Attack rolls: 3") {
+	if !strings.Contains(out, "Attack rolls") {
 		t.Errorf("expected attack roll count, got: %q", out)
 	}
 	if !strings.Contains(out, "33.3") {

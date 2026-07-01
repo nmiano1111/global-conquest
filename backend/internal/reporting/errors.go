@@ -8,6 +8,15 @@ var ErrNoEvents = fmt.Errorf("no combat events found")
 // ErrNoActiveGame is returned when no in-progress or completed game exists.
 var ErrNoActiveGame = fmt.Errorf("no active game found")
 
+// ErrGameNotFound is returned when a game name lookup yields no match.
+var ErrGameNotFound = fmt.Errorf("game not found")
+
+// ErrPlayerNotFound is returned when a username lookup yields no match.
+var ErrPlayerNotFound = fmt.Errorf("player not found")
+
+// ErrNoCurrentPlayer is returned when a game has no resolvable current player.
+var ErrNoCurrentPlayer = fmt.Errorf("no current player found")
+
 // ErrUnsupportedEventVersion is returned when an event's event_version is not
 // supported. Reports fail hard rather than skip: an unknown version cannot be
 // safely decoded and silently ignoring it would produce misleading statistics.

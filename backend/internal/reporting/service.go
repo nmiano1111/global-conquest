@@ -3,16 +3,23 @@ package reporting
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
 // reportingRepository is the data-access interface the Service requires.
 // *Repository satisfies it; test fakes can satisfy it without a real DB.
 type reportingRepository interface {
-	LoadLatestGameID(ctx context.Context) (string, error)
+	LoadLatestGame(ctx context.Context) (gameID, gameName string, err error)
+	LoadGameByName(ctx context.Context, name string) (gameID, gameName string, err error)
+	LoadPlayerByUsername(ctx context.Context, username string) (playerID string, err error)
+	LoadCurrentPlayer(ctx context.Context, gameID string) (username string, discordName *string, err error)
 	LoadRawCombatEvents(ctx context.Context, gameID string) ([]rawCombatRow, error)
 	LoadRawRecentCombatEvents(ctx context.Context, gameID string, limit int) ([]rawCombatRow, error)
 	LoadPlayerNames(ctx context.Context, playerIDs []string) (map[string]string, error)
 }
+
+var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // Service orchestrates repository calls and statistical calculations.
 // It is the entry point for all Discord report commands.
@@ -25,10 +32,29 @@ func NewService(repo reportingRepository) *Service {
 	return &Service{repo: repo}
 }
 
-// LatestGameID returns the ID of the most recently updated non-lobby game.
-// Returns ErrNoActiveGame when no eligible game exists.
-func (svc *Service) LatestGameID(ctx context.Context) (string, error) {
-	return svc.repo.LoadLatestGameID(ctx)
+// ResolveGame returns the game ID and canonical name for the given game.
+// If name is empty the most recently updated non-lobby game is used.
+// Returns ErrNoActiveGame or ErrGameNotFound when no match exists.
+func (svc *Service) ResolveGame(ctx context.Context, name string) (string, string, error) {
+	if name == "" {
+		return svc.repo.LoadLatestGame(ctx)
+	}
+	return svc.repo.LoadGameByName(ctx, name)
+}
+
+// ResolvePlayer maps a player identifier (UUID or username) to a player UUID.
+// Returns ErrPlayerNotFound when a username lookup finds no match.
+func (svc *Service) ResolvePlayer(ctx context.Context, identifier string) (string, error) {
+	if uuidPattern.MatchString(identifier) {
+		return strings.ToLower(identifier), nil
+	}
+	return svc.repo.LoadPlayerByUsername(ctx, identifier)
+}
+
+// CurrentPlayer returns the username and optional Discord name of the player
+// whose turn it currently is in the given game.
+func (svc *Service) CurrentPlayer(ctx context.Context, gameID string) (username string, discordName *string, err error) {
+	return svc.repo.LoadCurrentPlayer(ctx, gameID)
 }
 
 // DiceReport builds an aggregate dice-statistics report for the given game.

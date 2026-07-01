@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"regexp"
 	"time"
 
 	"backend/internal/reporting"
@@ -16,14 +15,13 @@ import (
 // reportingService is the interface the Bot uses to generate reports.
 // *reporting.Service satisfies it; test fakes can satisfy it without a real DB.
 type reportingService interface {
-	LatestGameID(ctx context.Context) (string, error)
+	ResolveGame(ctx context.Context, name string) (gameID, gameName string, err error)
+	ResolvePlayer(ctx context.Context, identifier string) (playerID string, err error)
+	CurrentPlayer(ctx context.Context, gameID string) (username string, discordName *string, err error)
 	DiceReport(ctx context.Context, gameID string) (reporting.DiceReport, error)
 	PlayerReport(ctx context.Context, gameID, playerID string) (reporting.PlayerCombatReport, error)
 	RecentRolls(ctx context.Context, gameID string, count int) ([]reporting.RecentCombatRoll, error)
 }
-
-// uuidRegexp matches a standard lower-case UUID.
-var uuidRegexp = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type Bot struct {
 	session   *discordgo.Session
@@ -96,6 +94,8 @@ func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		b.handleDiceReport(s, i)
 	case playerStatsCommandName:
 		b.handlePlayerStats(s, i)
+	case playerUpCommandName:
+		b.handlePlayerUp(s, i)
 	}
 }
 
@@ -110,8 +110,10 @@ func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 func (b *Bot) handleLastRolls(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	count := defaultLastRollsCount
+	gameName := ""
 	for _, o := range i.ApplicationCommandData().Options {
-		if o.Name == "count" {
+		switch o.Name {
+		case "count":
 			v := int(o.IntValue())
 			if v < 1 {
 				v = 1
@@ -120,6 +122,8 @@ func (b *Bot) handleLastRolls(s *discordgo.Session, i *discordgo.InteractionCrea
 				v = maxLastRollsCount
 			}
 			count = v
+		case "game":
+			gameName = o.StringValue()
 		}
 	}
 
@@ -131,7 +135,7 @@ func (b *Bot) handleLastRolls(s *discordgo.Session, i *discordgo.InteractionCrea
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	gameID, ok := b.resolveGameID(ctx, s, i)
+	gameID, resolvedName, ok := b.resolveGame(ctx, s, i, gameName)
 	if !ok {
 		return
 	}
@@ -146,10 +150,17 @@ func (b *Bot) handleLastRolls(s *discordgo.Session, i *discordgo.InteractionCrea
 		editResponse(s, i, msg)
 		return
 	}
-	editResponse(s, i, formatLastRolls(rolls))
+	editResponse(s, i, formatLastRolls(rolls, resolvedName))
 }
 
 func (b *Bot) handleDiceReport(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	gameName := ""
+	for _, o := range i.ApplicationCommandData().Options {
+		if o.Name == "game" {
+			gameName = o.StringValue()
+		}
+	}
+
 	if err := deferResponse(s, i); err != nil {
 		log.Printf("discord: /dice-report defer error: %v", err)
 		return
@@ -158,7 +169,7 @@ func (b *Bot) handleDiceReport(s *discordgo.Session, i *discordgo.InteractionCre
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	gameID, ok := b.resolveGameID(ctx, s, i)
+	gameID, resolvedName, ok := b.resolveGame(ctx, s, i, gameName)
 	if !ok {
 		return
 	}
@@ -173,27 +184,19 @@ func (b *Bot) handleDiceReport(s *discordgo.Session, i *discordgo.InteractionCre
 		editResponse(s, i, msg)
 		return
 	}
-	editResponse(s, i, formatDiceReport(report))
+	editResponse(s, i, formatDiceReport(report, resolvedName))
 }
 
 func (b *Bot) handlePlayerStats(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	playerID := ""
+	identifier := ""
+	gameName := ""
 	for _, o := range i.ApplicationCommandData().Options {
-		if o.Name == "player" {
-			playerID = o.StringValue()
+		switch o.Name {
+		case "player":
+			identifier = o.StringValue()
+		case "game":
+			gameName = o.StringValue()
 		}
-	}
-
-	// Validate UUID format before deferring so we can respond ephemerally.
-	if !uuidRegexp.MatchString(playerID) {
-		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: fmt.Sprintf("Invalid player UUID %q. Use `/player-stats player:<uuid>`.", playerID),
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
-		return
 	}
 
 	if err := deferResponse(s, i); err != nil {
@@ -204,7 +207,12 @@ func (b *Bot) handlePlayerStats(s *discordgo.Session, i *discordgo.InteractionCr
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	gameID, ok := b.resolveGameID(ctx, s, i)
+	gameID, resolvedName, ok := b.resolveGame(ctx, s, i, gameName)
+	if !ok {
+		return
+	}
+
+	playerID, ok := b.resolvePlayer(ctx, s, i, identifier)
 	if !ok {
 		return
 	}
@@ -215,23 +223,83 @@ func (b *Bot) handlePlayerStats(s *discordgo.Session, i *discordgo.InteractionCr
 		editResponse(s, i, "I couldn't generate that report.")
 		return
 	}
-	editResponse(s, i, formatPlayerReport(report))
+	editResponse(s, i, formatPlayerReport(report, resolvedName))
 }
 
-// resolveGameID fetches the latest active game ID, editing the interaction
-// response with a user-facing error if none is found. Returns ("", false) on failure.
-func (b *Bot) resolveGameID(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate) (string, bool) {
-	gameID, err := b.reporting.LatestGameID(ctx)
+func (b *Bot) handlePlayerUp(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	gameName := ""
+	for _, o := range i.ApplicationCommandData().Options {
+		if o.Name == "game" {
+			gameName = o.StringValue()
+		}
+	}
+
+	if err := deferResponse(s, i); err != nil {
+		log.Printf("discord: /player-up defer error: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	gameID, resolvedName, ok := b.resolveGame(ctx, s, i, gameName)
+	if !ok {
+		return
+	}
+
+	username, discordName, err := b.reporting.CurrentPlayer(ctx, gameID)
 	if err != nil {
-		log.Printf("discord: resolveGameID error: %v", err)
-		msg := "No active game found. Start a game first!"
-		if !errors.Is(err, reporting.ErrNoActiveGame) {
+		log.Printf("discord: /player-up current player error: %v", err)
+		msg := "I couldn't determine whose turn it is."
+		if errors.Is(err, reporting.ErrNoCurrentPlayer) {
+			msg = fmt.Sprintf("No current player found for **%s**.", resolvedName)
+		}
+		editResponse(s, i, msg)
+		return
+	}
+
+	playerRef := fmt.Sprintf("**%s**", username)
+	if discordName != nil {
+		playerRef = fmt.Sprintf("@%s", *discordName)
+	}
+	editResponse(s, i, fmt.Sprintf("%s, play your turn in **%s**! ⚔️", playerRef, resolvedName))
+}
+
+// resolveGame fetches the game ID and canonical name for the given name string
+// (empty = most recent active game). Edits the deferred response on failure.
+func (b *Bot) resolveGame(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, name string) (gameID, gameName string, ok bool) {
+	gid, gname, err := b.reporting.ResolveGame(ctx, name)
+	if err != nil {
+		log.Printf("discord: resolveGame error: %v", err)
+		var msg string
+		switch {
+		case errors.Is(err, reporting.ErrGameNotFound):
+			msg = fmt.Sprintf("No game named %q found. Check the name and try again.", name)
+		case errors.Is(err, reporting.ErrNoActiveGame):
+			msg = "No active game found. Start a game first!"
+		default:
 			msg = "I couldn't look up the current game."
+		}
+		editResponse(s, i, msg)
+		return "", "", false
+	}
+	return gid, gname, true
+}
+
+// resolvePlayer maps a username or UUID to a player UUID.
+// Edits the deferred response on failure.
+func (b *Bot) resolvePlayer(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, identifier string) (playerID string, ok bool) {
+	pid, err := b.reporting.ResolvePlayer(ctx, identifier)
+	if err != nil {
+		log.Printf("discord: resolvePlayer error: %v", err)
+		msg := fmt.Sprintf("No player %q found.", identifier)
+		if !errors.Is(err, reporting.ErrPlayerNotFound) {
+			msg = "I couldn't look up that player."
 		}
 		editResponse(s, i, msg)
 		return "", false
 	}
-	return gameID, true
+	return pid, true
 }
 
 // deferResponse sends a deferred (non-ephemeral) channel-message response.

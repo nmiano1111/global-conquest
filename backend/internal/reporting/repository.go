@@ -64,12 +64,35 @@ SELECT id::text, username
 FROM users
 WHERE id::text = ANY($1::text[])`
 
-const queryLatestGameID = `
-SELECT id::text
+const queryLatestGame = `
+SELECT id::text, name
 FROM games
 WHERE status != 'lobby'
 ORDER BY updated_at DESC
 LIMIT 1`
+
+const queryGameByName = `
+SELECT id::text, name
+FROM games
+WHERE lower(name) = lower($1)
+  AND status != 'lobby'
+ORDER BY updated_at DESC
+LIMIT 1`
+
+const queryPlayerByUsername = `
+SELECT id::text
+FROM users
+WHERE lower(username) = lower($1)
+LIMIT 1`
+
+const queryCurrentPlayer = `
+SELECT u.username, u.discord_name
+FROM games g
+JOIN game_players gp
+  ON gp.game_id = g.id
+ AND gp.player_index = (g.state->>'current_player')::int
+JOIN users u ON u.id = gp.user_id
+WHERE g.id = $1::uuid`
 
 // LoadRawCombatEvents returns raw rows for all combat_roll_resolved events for a
 // game in ascending game_sequence order.
@@ -112,18 +135,59 @@ func (r *Repository) LoadPlayerNames(ctx context.Context, playerIDs []string) (m
 	return out, rows.Err()
 }
 
-// LoadLatestGameID returns the ID of the most recently updated game that is not
-// in lobby status. Returns ErrNoActiveGame if no such game exists.
-func (r *Repository) LoadLatestGameID(ctx context.Context) (string, error) {
-	var id string
-	err := r.db.QueryRow(ctx, queryLatestGameID).Scan(&id)
+// LoadLatestGame returns the ID and name of the most recently updated non-lobby
+// game. Returns ErrNoActiveGame if no such game exists.
+func (r *Repository) LoadLatestGame(ctx context.Context) (string, string, error) {
+	var id, name string
+	err := r.db.QueryRow(ctx, queryLatestGame).Scan(&id, &name)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return "", ErrNoActiveGame
+			return "", "", ErrNoActiveGame
 		}
-		return "", fmt.Errorf("query latest game: %w", err)
+		return "", "", fmt.Errorf("query latest game: %w", err)
+	}
+	return id, name, nil
+}
+
+// LoadGameByName returns the ID and canonical name of a non-lobby game whose
+// name matches (case-insensitive). Returns ErrGameNotFound if no match.
+func (r *Repository) LoadGameByName(ctx context.Context, name string) (string, string, error) {
+	var id, canonicalName string
+	err := r.db.QueryRow(ctx, queryGameByName, name).Scan(&id, &canonicalName)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", "", ErrGameNotFound
+		}
+		return "", "", fmt.Errorf("query game by name: %w", err)
+	}
+	return id, canonicalName, nil
+}
+
+// LoadPlayerByUsername returns the UUID of the player with the given username
+// (case-insensitive). Returns ErrPlayerNotFound if no match.
+func (r *Repository) LoadPlayerByUsername(ctx context.Context, username string) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx, queryPlayerByUsername, username).Scan(&id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", ErrPlayerNotFound
+		}
+		return "", fmt.Errorf("query player by username: %w", err)
 	}
 	return id, nil
+}
+
+// LoadCurrentPlayer returns the username and optional Discord name of the player
+// whose turn it currently is. Returns ErrNoCurrentPlayer if the join finds no row.
+func (r *Repository) LoadCurrentPlayer(ctx context.Context, gameID string) (username string, discordName *string, err error) {
+	e := r.db.QueryRow(ctx, queryCurrentPlayer, gameID).Scan(&username, &discordName)
+	if e != nil {
+		if e == pgx.ErrNoRows {
+			return "", nil, ErrNoCurrentPlayer
+		}
+		return "", nil, fmt.Errorf("query current player: %w", e)
+	}
+	return username, discordName, nil
 }
 
 func scanCombatRows(rows pgx.Rows) ([]rawCombatRow, error) {

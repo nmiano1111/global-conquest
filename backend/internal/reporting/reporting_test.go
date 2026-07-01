@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -386,18 +387,59 @@ func TestBuildPlayerReport_PlayerWithNoEvents(t *testing.T) {
 
 // --- RecentRolls via Service (count limit + display order) ---
 
+type fakeGame struct {
+	id   string
+	name string
+}
+
+type fakeCurrentPlayer struct {
+	username    string
+	discordName *string
+}
+
 type fakeRepo struct {
 	rawAll    []rawCombatRow
 	rawRecent []rawCombatRow
 	names     map[string]string
-	latestID  string
+
+	latestGame        *fakeGame
+	gamesByName       map[string]fakeGame    // keyed by canonical name (any case)
+	playersByUsername map[string]string      // username → playerID (any case)
+	currentPlayer     *fakeCurrentPlayer
 }
 
-func (f *fakeRepo) LoadLatestGameID(_ context.Context) (string, error) {
-	if f.latestID == "" {
-		return "", ErrNoActiveGame
+func (f *fakeRepo) LoadLatestGame(_ context.Context) (string, string, error) {
+	if f.latestGame == nil {
+		return "", "", ErrNoActiveGame
 	}
-	return f.latestID, nil
+	return f.latestGame.id, f.latestGame.name, nil
+}
+
+func (f *fakeRepo) LoadGameByName(_ context.Context, name string) (string, string, error) {
+	lower := strings.ToLower(name)
+	for k, g := range f.gamesByName {
+		if strings.ToLower(k) == lower {
+			return g.id, g.name, nil
+		}
+	}
+	return "", "", ErrGameNotFound
+}
+
+func (f *fakeRepo) LoadCurrentPlayer(_ context.Context, _ string) (string, *string, error) {
+	if f.currentPlayer == nil {
+		return "", nil, ErrNoCurrentPlayer
+	}
+	return f.currentPlayer.username, f.currentPlayer.discordName, nil
+}
+
+func (f *fakeRepo) LoadPlayerByUsername(_ context.Context, username string) (string, error) {
+	lower := strings.ToLower(username)
+	for k, v := range f.playersByUsername {
+		if strings.ToLower(k) == lower {
+			return v, nil
+		}
+	}
+	return "", ErrPlayerNotFound
 }
 
 func (f *fakeRepo) LoadRawCombatEvents(_ context.Context, _ string) ([]rawCombatRow, error) {
@@ -492,5 +534,156 @@ func TestBuildRecentRolls_GameSequence(t *testing.T) {
 	rolls := BuildRecentRolls(events, nil)
 	if rolls[0].GameSequence != 99 {
 		t.Errorf("GameSequence: want 99, got %d", rolls[0].GameSequence)
+	}
+}
+
+// --- ResolveGame ---
+
+func TestService_ResolveGame_Latest(t *testing.T) {
+	repo := &fakeRepo{latestGame: &fakeGame{id: "g1", name: "Angry Badger"}}
+	svc := NewService(repo)
+
+	id, name, err := svc.ResolveGame(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ResolveGame: %v", err)
+	}
+	if id != "g1" || name != "Angry Badger" {
+		t.Errorf("want g1/Angry Badger, got %s/%s", id, name)
+	}
+}
+
+func TestService_ResolveGame_NoActiveGame(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+
+	_, _, err := svc.ResolveGame(context.Background(), "")
+	if !errors.Is(err, ErrNoActiveGame) {
+		t.Errorf("expected ErrNoActiveGame, got %v", err)
+	}
+}
+
+func TestService_ResolveGame_ByName(t *testing.T) {
+	repo := &fakeRepo{
+		gamesByName: map[string]fakeGame{
+			"Sleepy Raccoon": {id: "g2", name: "Sleepy Raccoon"},
+		},
+	}
+	svc := NewService(repo)
+
+	id, name, err := svc.ResolveGame(context.Background(), "sleepy raccoon")
+	if err != nil {
+		t.Fatalf("ResolveGame by name: %v", err)
+	}
+	if id != "g2" || name != "Sleepy Raccoon" {
+		t.Errorf("want g2/Sleepy Raccoon, got %s/%s", id, name)
+	}
+}
+
+func TestService_ResolveGame_NameNotFound(t *testing.T) {
+	repo := &fakeRepo{gamesByName: map[string]fakeGame{}}
+	svc := NewService(repo)
+
+	_, _, err := svc.ResolveGame(context.Background(), "Nonexistent Game")
+	if !errors.Is(err, ErrGameNotFound) {
+		t.Errorf("expected ErrGameNotFound, got %v", err)
+	}
+}
+
+// --- ResolvePlayer ---
+
+func TestService_ResolvePlayer_UUID(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+
+	playerID, err := svc.ResolvePlayer(context.Background(), "12345678-1234-1234-1234-123456789abc")
+	if err != nil {
+		t.Fatalf("ResolvePlayer UUID: %v", err)
+	}
+	if playerID != "12345678-1234-1234-1234-123456789abc" {
+		t.Errorf("UUID passthrough: got %q", playerID)
+	}
+}
+
+func TestService_ResolvePlayer_UUIDUppercase(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+
+	playerID, err := svc.ResolvePlayer(context.Background(), "12345678-ABCD-1234-1234-123456789ABC")
+	if err != nil {
+		t.Fatalf("ResolvePlayer uppercase UUID: %v", err)
+	}
+	if playerID != "12345678-abcd-1234-1234-123456789abc" {
+		t.Errorf("UUID should be lowercased: got %q", playerID)
+	}
+}
+
+func TestService_ResolvePlayer_Username(t *testing.T) {
+	repo := &fakeRepo{
+		playersByUsername: map[string]string{"Alice": "player-uuid-1"},
+	}
+	svc := NewService(repo)
+
+	playerID, err := svc.ResolvePlayer(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("ResolvePlayer username: %v", err)
+	}
+	if playerID != "player-uuid-1" {
+		t.Errorf("want player-uuid-1, got %q", playerID)
+	}
+}
+
+func TestService_ResolvePlayer_NotFound(t *testing.T) {
+	repo := &fakeRepo{playersByUsername: map[string]string{}}
+	svc := NewService(repo)
+
+	_, err := svc.ResolvePlayer(context.Background(), "unknown")
+	if !errors.Is(err, ErrPlayerNotFound) {
+		t.Errorf("expected ErrPlayerNotFound, got %v", err)
+	}
+}
+
+// --- CurrentPlayer ---
+
+func strPtr(s string) *string { return &s }
+
+func TestService_CurrentPlayer_WithDiscordName(t *testing.T) {
+	repo := &fakeRepo{currentPlayer: &fakeCurrentPlayer{username: "alice", discordName: strPtr("Alice#1234")}}
+	svc := NewService(repo)
+
+	username, discordName, err := svc.CurrentPlayer(context.Background(), "g1")
+	if err != nil {
+		t.Fatalf("CurrentPlayer: %v", err)
+	}
+	if username != "alice" {
+		t.Errorf("username: want %q, got %q", "alice", username)
+	}
+	if discordName == nil || *discordName != "Alice#1234" {
+		t.Errorf("discordName: want %q, got %v", "Alice#1234", discordName)
+	}
+}
+
+func TestService_CurrentPlayer_NoDiscordName(t *testing.T) {
+	repo := &fakeRepo{currentPlayer: &fakeCurrentPlayer{username: "bob", discordName: nil}}
+	svc := NewService(repo)
+
+	username, discordName, err := svc.CurrentPlayer(context.Background(), "g1")
+	if err != nil {
+		t.Fatalf("CurrentPlayer: %v", err)
+	}
+	if username != "bob" {
+		t.Errorf("username: want %q, got %q", "bob", username)
+	}
+	if discordName != nil {
+		t.Errorf("discordName should be nil, got %q", *discordName)
+	}
+}
+
+func TestService_CurrentPlayer_NotFound(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+
+	_, _, err := svc.CurrentPlayer(context.Background(), "g1")
+	if !errors.Is(err, ErrNoCurrentPlayer) {
+		t.Errorf("expected ErrNoCurrentPlayer, got %v", err)
 	}
 }
