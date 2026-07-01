@@ -14,11 +14,13 @@ const PayloadSchemaVersionTurnStarted = 1
 
 // TurnStartedPayload is the structured payload for a turn_started notification.
 type TurnStartedPayload struct {
-	SchemaVersion             int    `json:"schema_version"`
-	PreviousPlayerDisplayName string `json:"previous_player_display_name"`
-	PlayerID                  string `json:"player_id"`
-	PlayerDisplayName         string `json:"player_display_name"`
-	TurnNumber                int    `json:"turn_number"`
+	SchemaVersion             int     `json:"schema_version"`
+	PreviousPlayerDisplayName string  `json:"previous_player_display_name"`
+	PreviousPlayerDiscordName *string `json:"previous_player_discord_name,omitempty"`
+	PlayerID                  string  `json:"player_id"`
+	PlayerDisplayName         string  `json:"player_display_name"`
+	PlayerDiscordName         *string `json:"player_discord_name,omitempty"`
+	TurnNumber                int     `json:"turn_number"`
 }
 
 // DiscordOutboxEntry is a row returned from discord_outbox.
@@ -52,13 +54,16 @@ func (s *PostgresDiscordOutboxStore) EnqueueTurnStarted(
 	ctx context.Context,
 	q db.Querier,
 	gameID, previousPlayerDisplayName, playerID, playerDisplayName string,
+	previousPlayerDiscordName, playerDiscordName *string,
 	turnNumber int,
 ) error {
 	payload, err := json.Marshal(TurnStartedPayload{
 		SchemaVersion:             PayloadSchemaVersionTurnStarted,
 		PreviousPlayerDisplayName: previousPlayerDisplayName,
+		PreviousPlayerDiscordName: previousPlayerDiscordName,
 		PlayerID:                  playerID,
 		PlayerDisplayName:         playerDisplayName,
+		PlayerDiscordName:         playerDiscordName,
 		TurnNumber:                turnNumber,
 	})
 	if err != nil {

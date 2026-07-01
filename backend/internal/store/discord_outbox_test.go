@@ -17,7 +17,7 @@ func TestEnqueueTurnStartedSQL(t *testing.T) {
 	}
 	s := NewPostgresDiscordOutboxStore()
 
-	err := s.EnqueueTurnStarted(context.Background(), q, "game-id-1", "Bob", "player-id-1", "Alice", 3)
+	err := s.EnqueueTurnStarted(context.Background(), q, "game-id-1", "Bob", "player-id-1", "Alice", nil, nil, 3)
 	if err != nil {
 		t.Fatalf("EnqueueTurnStarted: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestEnqueueTurnStartedPayload(t *testing.T) {
 	}
 	s := NewPostgresDiscordOutboxStore()
 
-	err := s.EnqueueTurnStarted(context.Background(), q, "game-id-1", "Alice", "player-abc", "Bob", 7)
+	err := s.EnqueueTurnStarted(context.Background(), q, "game-id-1", "Alice", "player-abc", "Bob", nil, nil, 7)
 	if err != nil {
 		t.Fatalf("EnqueueTurnStarted: %v", err)
 	}

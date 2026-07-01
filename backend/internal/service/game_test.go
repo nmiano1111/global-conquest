@@ -605,16 +605,16 @@ func TestIsLegacyUninitializedSetup(t *testing.T) {
 // --- fakeDiscordOutboxStore and end_turn outbox tests ---
 
 type fakeDiscordOutboxStore struct {
-	enqueueFn func(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, turnNumber int) error
+	enqueueFn func(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error
 	calls     int
 	lastQ     db.Querier
 }
 
-func (f *fakeDiscordOutboxStore) EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, turnNumber int) error {
+func (f *fakeDiscordOutboxStore) EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error {
 	f.calls++
 	f.lastQ = q
 	if f.enqueueFn != nil {
-		return f.enqueueFn(ctx, q, gameID, previousPlayerDisplayName, playerID, playerDisplayName, turnNumber)
+		return f.enqueueFn(ctx, q, gameID, previousPlayerDisplayName, playerID, playerDisplayName, previousPlayerDiscordName, playerDiscordName, turnNumber)
 	}
 	return nil
 }
@@ -672,7 +672,7 @@ func TestEndTurnOutboxPayloadCorrect(t *testing.T) {
 	var capturedPlayerID, capturedDisplayName string
 	var capturedTurnNumber int
 	outboxStore := &fakeDiscordOutboxStore{
-		enqueueFn: func(_ context.Context, _ db.Querier, _, _, playerID, displayName string, turnNumber int) error {
+		enqueueFn: func(_ context.Context, _ db.Querier, _, _, playerID, displayName string, _, _ *string, turnNumber int) error {
 			capturedPlayerID = playerID
 			capturedDisplayName = displayName
 			capturedTurnNumber = turnNumber
@@ -723,7 +723,7 @@ func TestEndTurnOutboxUsesTransactionQuerier(t *testing.T) {
 	txQ := noopQuerier{}
 	var qUsedForUpdate, qUsedForOutbox db.Querier
 	outboxStore := &fakeDiscordOutboxStore{
-		enqueueFn: func(_ context.Context, q db.Querier, _, _, _, _ string, _ int) error {
+		enqueueFn: func(_ context.Context, q db.Querier, _, _, _, _ string, _, _ *string, _ int) error {
 			qUsedForOutbox = q
 			return nil
 		},
@@ -765,7 +765,7 @@ func TestEndTurnOutboxErrorRollsBack(t *testing.T) {
 	outboxErr := errors.New("outbox enqueue failure")
 
 	outboxStore := &fakeDiscordOutboxStore{
-		enqueueFn: func(_ context.Context, _ db.Querier, _, _, _, _ string, _ int) error {
+		enqueueFn: func(_ context.Context, _ db.Querier, _, _, _, _ string, _, _ *string, _ int) error {
 			return outboxErr
 		},
 	}

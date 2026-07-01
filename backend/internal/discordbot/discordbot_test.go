@@ -174,6 +174,43 @@ func TestRenderTurnStarted(t *testing.T) {
 	}
 }
 
+func TestRenderTurnStartedWithDiscordNames(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeTurnStarted, `{
+		"schema_version": 1,
+		"previous_player_display_name": "Bob",
+		"previous_player_discord_name": "bobsmith",
+		"player_id": "player-uuid",
+		"player_display_name": "Alice",
+		"player_discord_name": "alicewonder",
+		"turn_number": 5
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "🎯 **@bobsmith** ended their turn. **@alicewonder** is up. (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderTurnStartedOneDiscordNameMissing(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeTurnStarted, `{
+		"schema_version": 1,
+		"previous_player_display_name": "Bob",
+		"previous_player_discord_name": "bobsmith",
+		"player_id": "player-uuid",
+		"player_display_name": "Alice",
+		"turn_number": 5
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "@everyone 🎯 **Bob** ended their turn. **Alice** is up. (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
 func TestRenderTurnStartedMissingName(t *testing.T) {
 	entry := makeEntry(store.NotificationTypeTurnStarted, `{
 		"schema_version": 1,

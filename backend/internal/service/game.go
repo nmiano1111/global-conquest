@@ -30,7 +30,7 @@ type gameDomainEventStore interface {
 }
 
 type discordOutboxStore interface {
-	EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, turnNumber int) error
+	EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error
 }
 
 type GamesService struct {
@@ -516,7 +516,13 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			eventType = "turn_ended"
 			eventBody = fmt.Sprintf("%s ended their turn. %s is up next.", displayName(names, in.PlayerUserID), displayName(names, nextPlayer))
 			if s.discordOutbox != nil && nextPlayer != "" && engine.Phase != risk.PhaseGameOver {
-				if err := s.discordOutbox.EnqueueTurnStarted(ctx, q, g.ID, displayName(names, in.PlayerUserID), nextPlayer, displayName(names, nextPlayer), engine.TurnNumber); err != nil {
+				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID, nextPlayer})
+				if err != nil {
+					return err
+				}
+				prevDiscord := discordNames[in.PlayerUserID]
+				nextDiscord := discordNames[nextPlayer]
+				if err := s.discordOutbox.EnqueueTurnStarted(ctx, q, g.ID, displayName(names, in.PlayerUserID), nextPlayer, displayName(names, nextPlayer), prevDiscord, nextDiscord, engine.TurnNumber); err != nil {
 					return err
 				}
 			}
@@ -833,6 +839,36 @@ func (s *GamesService) userNamesByIDsQ(ctx context.Context, q db.Querier, ids []
 		return nil, err
 	}
 	return out, nil
+}
+
+// discordNamesByIDsQ returns a map of userID → *discord_name for the given IDs.
+// The value is nil when the user has no discord_name set.
+func (s *GamesService) discordNamesByIDsQ(ctx context.Context, q db.Querier, ids []string) (map[string]*string, error) {
+	out := make(map[string]*string, len(ids))
+	if len(ids) == 0 || q == nil {
+		return out, nil
+	}
+	rows, err := q.Query(
+		ctx,
+		`SELECT id::text, discord_name FROM users WHERE id::text = ANY($1::text[])`,
+		ids,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		return out, nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var name *string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
 }
 
 func containsID(ids []string, target string) bool {
