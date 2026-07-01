@@ -173,9 +173,9 @@ func renderMessage(entry store.DiscordOutboxEntry) (string, error) {
 		}
 		if p.PreviousPlayerDiscordName != nil && *p.PreviousPlayerDiscordName != "" &&
 			p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
-			return fmt.Sprintf("🎯 **@%s** ended their turn. **@%s** is up. (game `%s`)", *p.PreviousPlayerDiscordName, *p.PlayerDiscordName, entry.GameName), nil
+			return fmt.Sprintf("🎯 <@%s> ended their turn. <@%s> is up. (game `%s`)", *p.PreviousPlayerDiscordName, *p.PlayerDiscordName, entry.GameName), nil
 		}
-		return fmt.Sprintf("@everyone 🎯 **%s** ended their turn. **%s** is up. (game `%s`)", p.PreviousPlayerDisplayName, p.PlayerDisplayName, entry.GameName), nil
+		return fmt.Sprintf("@everyone 🎯 <@%s> ended their turn. <@%s> is up. (game `%s`)", p.PreviousPlayerDisplayName, p.PlayerDisplayName, entry.GameName), nil
 	case store.NotificationTypeCardsTrade:
 		var p store.CardsTradePayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
@@ -185,7 +185,7 @@ func renderMessage(entry store.DiscordOutboxEntry) (string, error) {
 			return "", fmt.Errorf("cards_trade payload missing player_display_name (id=%s)", entry.ID)
 		}
 		if p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
-			return fmt.Sprintf("🃏 **@%s** traded in cards for %d armies. (game `%s`)", *p.PlayerDiscordName, p.Armies, entry.GameName), nil
+			return fmt.Sprintf("🃏 <@%s> traded in cards for %d armies. (game `%s`)", *p.PlayerDiscordName, p.Armies, entry.GameName), nil
 		}
 		return fmt.Sprintf("@everyone 🃏 **%s** traded in cards for %d armies. (game `%s`)", p.PlayerDisplayName, p.Armies, entry.GameName), nil
 	case store.NotificationTypePlayerEliminated:
@@ -198,7 +198,7 @@ func renderMessage(entry store.DiscordOutboxEntry) (string, error) {
 		}
 		if p.AttackerDiscordName != nil && *p.AttackerDiscordName != "" &&
 			p.EliminatedPlayerDiscordName != nil && *p.EliminatedPlayerDiscordName != "" {
-			return fmt.Sprintf("⚔️ **@%s** eliminated **@%s**! (game `%s`)", *p.AttackerDiscordName, *p.EliminatedPlayerDiscordName, entry.GameName), nil
+			return fmt.Sprintf("⚔️ <@%s> eliminated <@%s>! (game `%s`)", *p.AttackerDiscordName, *p.EliminatedPlayerDiscordName, entry.GameName), nil
 		}
 		return fmt.Sprintf("@everyone ⚔️ **%s** eliminated **%s**! (game `%s`)", p.AttackerDisplayName, p.EliminatedPlayerDisplayName, entry.GameName), nil
 	case store.NotificationTypeGameOver:
@@ -210,7 +210,7 @@ func renderMessage(entry store.DiscordOutboxEntry) (string, error) {
 			return "", fmt.Errorf("game_over payload missing winner_display_name (id=%s)", entry.ID)
 		}
 		if p.WinnerDiscordName != nil && *p.WinnerDiscordName != "" {
-			return fmt.Sprintf("🏆 **@%s** has won the game! (game `%s`)", *p.WinnerDiscordName, entry.GameName), nil
+			return fmt.Sprintf("🏆 <@%s> has won the game! (game `%s`)", *p.WinnerDiscordName, entry.GameName), nil
 		}
 		return fmt.Sprintf("@everyone 🏆 **%s** has won the game! (game `%s`)", p.WinnerDisplayName, entry.GameName), nil
 	default:

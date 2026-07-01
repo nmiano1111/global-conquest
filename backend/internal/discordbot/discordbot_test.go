@@ -171,7 +171,7 @@ func TestRenderTurnStarted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone 🎯 **Bob** ended their turn. **Alice** is up. (game `game-1`)" {
+	if msg != "@everyone 🎯 <@Bob> ended their turn. <@Alice> is up. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -190,7 +190,7 @@ func TestRenderTurnStartedWithDiscordNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "🎯 **@bobsmith** ended their turn. **@alicewonder** is up. (game `game-1`)" {
+	if msg != "🎯 <@bobsmith> ended their turn. <@alicewonder> is up. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -208,7 +208,7 @@ func TestRenderTurnStartedOneDiscordNameMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone 🎯 **Bob** ended their turn. **Alice** is up. (game `game-1`)" {
+	if msg != "@everyone 🎯 <@Bob> ended their turn. <@Alice> is up. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -253,7 +253,7 @@ func TestRenderCardsTradeWithDiscordName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "🃏 **@alicewonder** traded in cards for 4 armies. (game `game-1`)" {
+	if msg != "🃏 <@alicewonder> traded in cards for 4 armies. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -302,7 +302,7 @@ func TestRenderPlayerEliminatedWithDiscordNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "⚔️ **@alicewonder** eliminated **@bobsmith**! (game `game-1`)" {
+	if msg != "⚔️ <@alicewonder> eliminated <@bobsmith>! (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -351,7 +351,7 @@ func TestRenderGameOverWithDiscordName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "🏆 **@alicewonder** has won the game! (game `game-1`)" {
+	if msg != "🏆 <@alicewonder> has won the game! (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -443,7 +443,7 @@ func TestWorkerDeliverSuccess(t *testing.T) {
 	w := NewWorker(claimer, sender, "channel-id")
 	w.deliver(context.Background(), entry)
 
-	if sentContent != "@everyone 🎯 **Alice** ended their turn. **Bob** is up. (game `game-1`)" {
+	if sentContent != "@everyone 🎯 <@Alice> ended their turn. <@Bob> is up. (game `game-1`)" {
 		t.Fatalf("unexpected message content: %q", sentContent)
 	}
 	if markedDelivered != "outbox-1" {
