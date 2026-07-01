@@ -188,6 +188,31 @@ func renderMessage(entry store.DiscordOutboxEntry) (string, error) {
 			return fmt.Sprintf("🃏 **@%s** traded in cards for %d armies. (game `%s`)", *p.PlayerDiscordName, p.Armies, entry.GameID), nil
 		}
 		return fmt.Sprintf("@everyone 🃏 **%s** traded in cards for %d armies. (game `%s`)", p.PlayerDisplayName, p.Armies, entry.GameID), nil
+	case store.NotificationTypePlayerEliminated:
+		var p store.PlayerEliminatedPayload
+		if err := json.Unmarshal(entry.Payload, &p); err != nil {
+			return "", fmt.Errorf("malformed player_eliminated payload (id=%s): %w", entry.ID, err)
+		}
+		if p.AttackerDisplayName == "" || p.EliminatedPlayerDisplayName == "" {
+			return "", fmt.Errorf("player_eliminated payload missing display name (id=%s)", entry.ID)
+		}
+		if p.AttackerDiscordName != nil && *p.AttackerDiscordName != "" &&
+			p.EliminatedPlayerDiscordName != nil && *p.EliminatedPlayerDiscordName != "" {
+			return fmt.Sprintf("⚔️ **@%s** eliminated **@%s**! (game `%s`)", *p.AttackerDiscordName, *p.EliminatedPlayerDiscordName, entry.GameID), nil
+		}
+		return fmt.Sprintf("@everyone ⚔️ **%s** eliminated **%s**! (game `%s`)", p.AttackerDisplayName, p.EliminatedPlayerDisplayName, entry.GameID), nil
+	case store.NotificationTypeGameOver:
+		var p store.GameOverPayload
+		if err := json.Unmarshal(entry.Payload, &p); err != nil {
+			return "", fmt.Errorf("malformed game_over payload (id=%s): %w", entry.ID, err)
+		}
+		if p.WinnerDisplayName == "" {
+			return "", fmt.Errorf("game_over payload missing winner_display_name (id=%s)", entry.ID)
+		}
+		if p.WinnerDiscordName != nil && *p.WinnerDiscordName != "" {
+			return fmt.Sprintf("🏆 **@%s** has won the game! (game `%s`)", *p.WinnerDiscordName, entry.GameID), nil
+		}
+		return fmt.Sprintf("@everyone 🏆 **%s** has won the game! (game `%s`)", p.WinnerDisplayName, entry.GameID), nil
 	default:
 		return "", fmt.Errorf("unknown notification type %q (id=%s)", entry.NotificationType, entry.ID)
 	}

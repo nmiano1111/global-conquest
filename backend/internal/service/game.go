@@ -32,6 +32,8 @@ type gameDomainEventStore interface {
 type discordOutboxStore interface {
 	EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error
 	EnqueueCardsTrade(ctx context.Context, q db.Querier, gameID, playerID, playerDisplayName string, playerDiscordName *string, armies int) error
+	EnqueuePlayerEliminated(ctx context.Context, q db.Querier, gameID, attackerID, attackerDisplayName string, attackerDiscordName *string, eliminatedPlayerID, eliminatedPlayerDisplayName string, eliminatedPlayerDiscordName *string) error
+	EnqueueGameOver(ctx context.Context, q db.Querier, gameID, winnerID, winnerDisplayName string, winnerDiscordName *string) error
 }
 
 type GamesService struct {
@@ -475,6 +477,25 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			if ar.Eliminated != "" {
 				eventBody += fmt.Sprintf(" %s was eliminated.", displayName(names, ar.Eliminated))
+				if s.discordOutbox != nil {
+					discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID, ar.Eliminated})
+					if err != nil {
+						return err
+					}
+					if err := s.discordOutbox.EnqueuePlayerEliminated(ctx, q, g.ID,
+						in.PlayerUserID, displayName(names, in.PlayerUserID), discordNames[in.PlayerUserID],
+						ar.Eliminated, displayName(names, ar.Eliminated), discordNames[ar.Eliminated],
+					); err != nil {
+						return err
+					}
+					if engine.Phase == risk.PhaseGameOver {
+						if err := s.discordOutbox.EnqueueGameOver(ctx, q, g.ID,
+							in.PlayerUserID, displayName(names, in.PlayerUserID), discordNames[in.PlayerUserID],
+						); err != nil {
+							return err
+						}
+					}
+				}
 			}
 		case "occupy":
 			if in.Armies <= 0 {
