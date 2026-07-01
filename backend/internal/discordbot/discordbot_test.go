@@ -223,6 +223,52 @@ func TestRenderTurnStartedMissingName(t *testing.T) {
 	}
 }
 
+func TestRenderCardsTrade(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeCardsTrade, `{
+		"schema_version": 1,
+		"player_id": "player-uuid",
+		"player_display_name": "Alice",
+		"armies": 8
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "@everyone 🃏 **Alice** traded in cards for 8 armies. (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderCardsTradeWithDiscordName(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeCardsTrade, `{
+		"schema_version": 1,
+		"player_id": "player-uuid",
+		"player_display_name": "Alice",
+		"player_discord_name": "alicewonder",
+		"armies": 4
+	}`)
+	msg, err := renderMessage(entry)
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "🃏 **@alicewonder** traded in cards for 4 armies. (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderCardsTradesMissingName(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeCardsTrade, `{
+		"schema_version": 1,
+		"player_id": "player-uuid",
+		"player_display_name": "",
+		"armies": 4
+	}`)
+	_, err := renderMessage(entry)
+	if err == nil {
+		t.Fatal("expected error for missing player_display_name")
+	}
+}
+
 func TestRenderMalformedPayload(t *testing.T) {
 	entry := makeEntry(store.NotificationTypeTurnStarted, `not-valid-json`)
 	_, err := renderMessage(entry)

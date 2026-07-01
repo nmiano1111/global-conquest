@@ -176,6 +176,18 @@ func renderMessage(entry store.DiscordOutboxEntry) (string, error) {
 			return fmt.Sprintf("🎯 **@%s** ended their turn. **@%s** is up. (game `%s`)", *p.PreviousPlayerDiscordName, *p.PlayerDiscordName, entry.GameID), nil
 		}
 		return fmt.Sprintf("@everyone 🎯 **%s** ended their turn. **%s** is up. (game `%s`)", p.PreviousPlayerDisplayName, p.PlayerDisplayName, entry.GameID), nil
+	case store.NotificationTypeCardsTrade:
+		var p store.CardsTradePayload
+		if err := json.Unmarshal(entry.Payload, &p); err != nil {
+			return "", fmt.Errorf("malformed cards_trade payload (id=%s): %w", entry.ID, err)
+		}
+		if p.PlayerDisplayName == "" {
+			return "", fmt.Errorf("cards_trade payload missing player_display_name (id=%s)", entry.ID)
+		}
+		if p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
+			return fmt.Sprintf("🃏 **@%s** traded in cards for %d armies. (game `%s`)", *p.PlayerDiscordName, p.Armies, entry.GameID), nil
+		}
+		return fmt.Sprintf("@everyone 🃏 **%s** traded in cards for %d armies. (game `%s`)", p.PlayerDisplayName, p.Armies, entry.GameID), nil
 	default:
 		return "", fmt.Errorf("unknown notification type %q (id=%s)", entry.NotificationType, entry.ID)
 	}

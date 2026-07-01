@@ -323,13 +323,13 @@ export function LobbyPage() {
               const isFull = isLobby && maxPlayers > 0 && currentPlayers >= maxPlayers;
               const statusLabel = canJoin
                 ? "Open"
-                : hasJoined
-                  ? "Joined"
-                  : isFull
-                    ? "Full"
-                    : isLobby
-                      ? "Unavailable"
-                      : "In Progress";
+                : !isLobby
+                  ? "In Progress"
+                  : hasJoined
+                    ? "Joined"
+                    : isFull
+                      ? "Full"
+                      : "Unavailable";
 
               return (
                 <li

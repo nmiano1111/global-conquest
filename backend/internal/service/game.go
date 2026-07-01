@@ -31,6 +31,7 @@ type gameDomainEventStore interface {
 
 type discordOutboxStore interface {
 	EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error
+	EnqueueCardsTrade(ctx context.Context, q db.Querier, gameID, playerID, playerDisplayName string, playerDiscordName *string, armies int) error
 }
 
 type GamesService struct {
@@ -534,6 +535,15 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			result = map[string]int{"armies": armies}
 			eventType = "cards_traded"
 			eventBody = fmt.Sprintf("%s traded cards for %d armies.", displayName(names, in.PlayerUserID), armies)
+			if s.discordOutbox != nil {
+				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID})
+				if err != nil {
+					return err
+				}
+				if err := s.discordOutbox.EnqueueCardsTrade(ctx, q, g.ID, in.PlayerUserID, displayName(names, in.PlayerUserID), discordNames[in.PlayerUserID], armies); err != nil {
+					return err
+				}
+			}
 		case "place_initial_army":
 			if in.Territory == "" {
 				return ErrInvalidGameAction

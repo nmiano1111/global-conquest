@@ -12,6 +12,9 @@ import (
 const NotificationTypeTurnStarted = "turn_started"
 const PayloadSchemaVersionTurnStarted = 1
 
+const NotificationTypeCardsTrade = "cards_trade"
+const PayloadSchemaVersionCardsTrade = 1
+
 // TurnStartedPayload is the structured payload for a turn_started notification.
 type TurnStartedPayload struct {
 	SchemaVersion             int     `json:"schema_version"`
@@ -21,6 +24,15 @@ type TurnStartedPayload struct {
 	PlayerDisplayName         string  `json:"player_display_name"`
 	PlayerDiscordName         *string `json:"player_discord_name,omitempty"`
 	TurnNumber                int     `json:"turn_number"`
+}
+
+// CardsTradePayload is the structured payload for a cards_trade notification.
+type CardsTradePayload struct {
+	SchemaVersion      int     `json:"schema_version"`
+	PlayerID           string  `json:"player_id"`
+	PlayerDisplayName  string  `json:"player_display_name"`
+	PlayerDiscordName  *string `json:"player_discord_name,omitempty"`
+	Armies             int     `json:"armies"`
 }
 
 // DiscordOutboxEntry is a row returned from discord_outbox.
@@ -84,6 +96,48 @@ func (s *PostgresDiscordOutboxStore) EnqueueTurnStarted(
 			seq.event_sequence,
 			'turn_started',
 			format('game:%s:sequence:%s:turn-started', $1::text, seq.event_sequence::text),
+			$2::jsonb
+		FROM seq
+		RETURNING id::text, game_id::text, game_sequence
+	`
+	var id, gid string
+	var seq int64
+	return q.QueryRow(ctx, stmt, gameID, string(payload)).Scan(&id, &gid, &seq)
+}
+
+// EnqueueCardsTrade inserts a cards_trade notification row inside the caller's transaction.
+func (s *PostgresDiscordOutboxStore) EnqueueCardsTrade(
+	ctx context.Context,
+	q db.Querier,
+	gameID, playerID, playerDisplayName string,
+	playerDiscordName *string,
+	armies int,
+) error {
+	payload, err := json.Marshal(CardsTradePayload{
+		SchemaVersion:     PayloadSchemaVersionCardsTrade,
+		PlayerID:          playerID,
+		PlayerDisplayName: playerDisplayName,
+		PlayerDiscordName: playerDiscordName,
+		Armies:            armies,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal cards_trade payload: %w", err)
+	}
+
+	const stmt = `
+		WITH seq AS (
+			UPDATE games
+			SET event_sequence = event_sequence + 1
+			WHERE id = $1::uuid
+			RETURNING event_sequence
+		)
+		INSERT INTO discord_outbox
+			(game_id, game_sequence, notification_type, deduplication_key, payload)
+		SELECT
+			$1::uuid,
+			seq.event_sequence,
+			'cards_trade',
+			format('game:%s:sequence:%s:cards-trade', $1::text, seq.event_sequence::text),
 			$2::jsonb
 		FROM seq
 		RETURNING id::text, game_id::text, game_sequence

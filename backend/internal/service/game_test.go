@@ -619,6 +619,10 @@ func (f *fakeDiscordOutboxStore) EnqueueTurnStarted(ctx context.Context, q db.Qu
 	return nil
 }
 
+func (f *fakeDiscordOutboxStore) EnqueueCardsTrade(_ context.Context, _ db.Querier, _, _, _ string, _ *string, _ int) error {
+	return nil
+}
+
 // endTurnGameState builds a 3-player game in attack phase suitable for end_turn.
 func endTurnGameState(t *testing.T) (json.RawMessage, string) {
 	t.Helper()
