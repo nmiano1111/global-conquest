@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"backend/internal/db"
+	"github.com/joho/godotenv"
 	"backend/internal/game"
 	"backend/internal/httpapi"
 	"backend/internal/service"
@@ -26,6 +27,10 @@ import (
 // @schemes         http
 
 func main() {
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		log.Println("warning: .env:", err)
+	}
+
 	ctx := context.Background()
 
 	// game server

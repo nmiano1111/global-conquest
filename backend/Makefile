@@ -50,7 +50,8 @@ FLYWAY_CMD = docker run --rm \
 # ---- Phony targets ----
 .PHONY: help tidy fmt vet lint build run dev test test-short test-integration e2e seed-go \
         swagger swagger-check clean tools \
-        db-volume db-up db-down db-logs db-connect db-wait db-migrate
+        db-volume db-up db-down db-logs db-connect db-wait db-migrate \
+        build-discord run-discord
 
 help: ## Show targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -65,8 +66,15 @@ build: ## Build binary to ./bin
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -o $(BIN) $(CMD_DIR)
 
+build-discord: ## Build Discord bot binary to ./bin
+	@mkdir -p $(BIN_DIR)
+	$(GO) build $(GOFLAGS) -o $(BIN_DIR)/global-conquest-discord ./cmd/discord-bot
+
 run: ## Run server (go run)
 	$(GO) run $(GOFLAGS) $(CMD_DIR)
+
+run-discord: ## Run Discord bot (go run)
+	$(GO) run $(GOFLAGS) ./cmd/discord-bot
 
 dev: swagger ## Update swagger then run server
 	$(GO) run $(GOFLAGS) $(CMD_DIR)
