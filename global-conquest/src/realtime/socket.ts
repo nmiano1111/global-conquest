@@ -1,6 +1,6 @@
 // src/realtime/socket.ts
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Listener, SocketStatus, WsEnvelope } from "./types";
 import { safeParseEnvelope } from "./types";
 
@@ -51,12 +51,12 @@ export function useGameSocket(wsUrl: string): GameSocket {
   const reconnectAttemptRef = useRef(0);
   const closedByUserRef = useRef(false);
 
-  const emit = (msg: WsEnvelope) => {
+  const emit = useCallback((msg: WsEnvelope) => {
     listenersRef.current.get(msg.type)?.forEach((fn) => fn(msg));
     listenersRef.current.get("*")?.forEach((fn) => fn(msg));
-  };
+  }, []);
 
-  const on = (type: string, fn: Listener): OnUnsubscribe => {
+  const on = useCallback((type: string, fn: Listener): OnUnsubscribe => {
     let set = listenersRef.current.get(type);
     if (!set) {
       set = new Set();
@@ -64,9 +64,9 @@ export function useGameSocket(wsUrl: string): GameSocket {
     }
     set.add(fn);
     return () => set!.delete(fn);
-  };
+  }, []);
 
-  const flushQueue = () => {
+  const flushQueue = useCallback(() => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -74,9 +74,9 @@ export function useGameSocket(wsUrl: string): GameSocket {
     sendQueueRef.current = [];
 
     for (const raw of q) ws.send(raw);
-  };
+  }, []);
 
-  const sendEnvelope = (env: WsEnvelope) => {
+  const sendEnvelope = useCallback((env: WsEnvelope) => {
     const raw = JSON.stringify(env);
     const ws = wsRef.current;
 
@@ -85,9 +85,9 @@ export function useGameSocket(wsUrl: string): GameSocket {
     } else {
       sendQueueRef.current.push(raw);
     }
-  };
+  }, []);
 
-  const send = (type: string, payload?: unknown, opts?: SendOptions): string => {
+  const send = useCallback((type: string, payload?: unknown, opts?: SendOptions): string => {
     const id = opts?.id ?? genId();
     const env: WsEnvelope = {
       type,
@@ -97,9 +97,10 @@ export function useGameSocket(wsUrl: string): GameSocket {
     };
     sendEnvelope(env);
     return id;
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const connect = () => {
+  const connect = useCallback(() => {
     closedByUserRef.current = false;
 
     const existing = wsRef.current;
@@ -145,9 +146,10 @@ export function useGameSocket(wsUrl: string): GameSocket {
         if (!closedByUserRef.current) connect();
       }, delay);
     };
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsUrl]);
 
-  const disconnect = () => {
+  const disconnect = useCallback(() => {
     closedByUserRef.current = true;
     const ws = wsRef.current;
     wsRef.current = null;
@@ -157,7 +159,7 @@ export function useGameSocket(wsUrl: string): GameSocket {
     }
 
     setStatus("disconnected");
-  };
+  }, []);
 
   useEffect(() => {
     connect();

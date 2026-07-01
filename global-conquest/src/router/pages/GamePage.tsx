@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
 import { getGameBootstrap, type GameBootstrap, type Card } from "../../api/games";
@@ -293,7 +293,7 @@ export function GamePage() {
     return off;
   }, [gameID, on]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (wsStatus !== "connected") return;
     send("game_chat_join", undefined, { game_id: gameID });
     return () => {
