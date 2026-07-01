@@ -66,6 +66,8 @@ func main() {
 	gamesSvc.SetGamePlayersStore(gamePlayersStore)
 	gameDomainEventStore := store.NewPostgresGameDomainEventStore()
 	gamesSvc.SetGameDomainEventStore(gameDomainEventStore)
+	discordOutboxStore := store.NewPostgresDiscordOutboxStore()
+	gamesSvc.SetDiscordOutboxStore(discordOutboxStore)
 	gameActionSvc := service.NewGameActionService(gamesSvc)
 	chatStore := store.NewPostgresChatStore()
 	chatSvc := service.NewChatService(d, chatStore)

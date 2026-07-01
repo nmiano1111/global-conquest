@@ -601,3 +601,279 @@ func TestIsLegacyUninitializedSetup(t *testing.T) {
 		t.Fatalf("expected non-setup phase not to be considered legacy setup")
 	}
 }
+
+// --- fakeDiscordOutboxStore and end_turn outbox tests ---
+
+type fakeDiscordOutboxStore struct {
+	enqueueFn func(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, turnNumber int) error
+	calls     int
+	lastQ     db.Querier
+}
+
+func (f *fakeDiscordOutboxStore) EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, turnNumber int) error {
+	f.calls++
+	f.lastQ = q
+	if f.enqueueFn != nil {
+		return f.enqueueFn(ctx, q, gameID, previousPlayerDisplayName, playerID, playerDisplayName, turnNumber)
+	}
+	return nil
+}
+
+// endTurnGameState builds a 3-player game in attack phase suitable for end_turn.
+func endTurnGameState(t *testing.T) (json.RawMessage, string) {
+	t.Helper()
+	g, err := risk.NewClassicAutoStartGame([]string{"uid-p1", "uid-p2", "uid-p3"}, nil)
+	if err != nil {
+		t.Fatalf("new game: %v", err)
+	}
+	// Force into attack phase so end_turn is valid.
+	g.Phase = risk.PhaseAttack
+	actorID := g.Players[g.CurrentPlayer].ID
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return raw, actorID
+}
+
+func TestEndTurnEnqueuesOutboxNotification(t *testing.T) {
+	gameState, actorID := endTurnGameState(t)
+
+	outboxStore := &fakeDiscordOutboxStore{}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	_, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "end_turn",
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction end_turn: %v", err)
+	}
+	if outboxStore.calls != 1 {
+		t.Fatalf("expected 1 EnqueueTurnStarted call, got %d", outboxStore.calls)
+	}
+}
+
+func TestEndTurnOutboxPayloadCorrect(t *testing.T) {
+	gameState, actorID := endTurnGameState(t)
+
+	var capturedPlayerID, capturedDisplayName string
+	var capturedTurnNumber int
+	outboxStore := &fakeDiscordOutboxStore{
+		enqueueFn: func(_ context.Context, _ db.Querier, _, _, playerID, displayName string, turnNumber int) error {
+			capturedPlayerID = playerID
+			capturedDisplayName = displayName
+			capturedTurnNumber = turnNumber
+			return nil
+		},
+	}
+
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	_, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "end_turn",
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction: %v", err)
+	}
+
+	// The next player (not the actor) should be the enqueued player.
+	if capturedPlayerID == actorID {
+		t.Fatalf("enqueued player should be the NEXT player, not the actor")
+	}
+	if capturedPlayerID == "" {
+		t.Fatalf("enqueued player ID must not be empty")
+	}
+	if capturedDisplayName == "" {
+		t.Fatalf("enqueued player display name must not be empty")
+	}
+	if capturedTurnNumber <= 0 {
+		t.Fatalf("turn number must be positive, got %d", capturedTurnNumber)
+	}
+}
+
+func TestEndTurnOutboxUsesTransactionQuerier(t *testing.T) {
+	gameState, actorID := endTurnGameState(t)
+
+	txQ := noopQuerier{}
+	var qUsedForUpdate, qUsedForOutbox db.Querier
+	outboxStore := &fakeDiscordOutboxStore{
+		enqueueFn: func(_ context.Context, q db.Querier, _, _, _, _ string, _ int) error {
+			qUsedForOutbox = q
+			return nil
+		},
+	}
+
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: txQ}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(_ context.Context, q db.Querier, _ store.UpdateGameState) (store.Game, error) {
+			qUsedForUpdate = q
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	_, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "end_turn",
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction: %v", err)
+	}
+	if qUsedForUpdate == nil || qUsedForOutbox == nil {
+		t.Fatalf("expected both update and outbox to receive a querier")
+	}
+	// Both must use the transaction querier, not the pool querier.
+	if qUsedForUpdate != qUsedForOutbox {
+		t.Fatalf("update and outbox must use the same transaction querier")
+	}
+}
+
+func TestEndTurnOutboxErrorRollsBack(t *testing.T) {
+	gameState, actorID := endTurnGameState(t)
+	outboxErr := errors.New("outbox enqueue failure")
+
+	outboxStore := &fakeDiscordOutboxStore{
+		enqueueFn: func(_ context.Context, _ db.Querier, _, _, _, _ string, _ int) error {
+			return outboxErr
+		},
+	}
+
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	_, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "end_turn",
+	})
+	if err == nil {
+		t.Fatal("expected error when outbox enqueue fails")
+	}
+	if !errors.Is(err, outboxErr) {
+		t.Fatalf("expected outboxErr, got: %v", err)
+	}
+}
+
+func TestInvalidActionProducesNoOutboxNotification(t *testing.T) {
+	gameState, actorID := endTurnGameState(t)
+
+	outboxStore := &fakeDiscordOutboxStore{}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	// fortify with empty territory is an invalid action
+	_, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "fortify",
+		From:         "",
+		To:           "",
+		Armies:       0,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid action")
+	}
+	if outboxStore.calls != 0 {
+		t.Fatalf("invalid action must not produce outbox notification, got %d calls", outboxStore.calls)
+	}
+}
+
+func TestNonEndTurnActionProducesNoOutboxNotification(t *testing.T) {
+	g, err := risk.NewClassicAutoStartGame([]string{"uid-p1", "uid-p2", "uid-p3"}, nil)
+	if err != nil {
+		t.Fatalf("new game: %v", err)
+	}
+	actorIdx := g.CurrentPlayer
+	actorID := g.Players[actorIdx].ID
+	var ownedTerr string
+	for terr, ts := range g.Territories {
+		if ts.Owner == actorIdx {
+			ownedTerr = string(terr)
+			break
+		}
+	}
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	outboxStore := &fakeDiscordOutboxStore{}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	_, err = svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "place_reinforcement",
+		Territory:    ownedTerr,
+		Armies:       1,
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction: %v", err)
+	}
+	if outboxStore.calls != 0 {
+		t.Fatalf("place_reinforcement must not produce outbox notification, got %d calls", outboxStore.calls)
+	}
+}

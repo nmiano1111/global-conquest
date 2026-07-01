@@ -1,6 +1,7 @@
 package discordbot
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -48,6 +49,20 @@ func (b *Bot) Close() error {
 		return fmt.Errorf("close discord session: %w", err)
 	}
 	return nil
+}
+
+// NewMessageSender returns a MessageSender backed by this bot's Discord session.
+func (b *Bot) NewMessageSender() MessageSender {
+	return &discordMessageSender{session: b.session}
+}
+
+type discordMessageSender struct {
+	session *discordgo.Session
+}
+
+func (s *discordMessageSender) SendMessage(_ context.Context, channelID, content string) error {
+	_, err := s.session.ChannelMessageSend(channelID, content)
+	return err
 }
 
 func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {

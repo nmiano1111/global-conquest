@@ -29,12 +29,17 @@ type gameDomainEventStore interface {
 	InsertDomainEvent(ctx context.Context, q db.Querier, gameID string, ev risk.DomainEvent, payload []byte) (store.GameDomainEvent, error)
 }
 
+type discordOutboxStore interface {
+	EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, previousPlayerDisplayName, playerID, playerDisplayName string, turnNumber int) error
+}
+
 type GamesService struct {
 	db               gameDB
 	games            store.GamesStore
 	gameEvent        gameEventStore
 	gamePlayers      gamePlayersStore
 	gameDomainEvents gameDomainEventStore
+	discordOutbox    discordOutboxStore
 }
 
 var (
@@ -67,6 +72,10 @@ func (s *GamesService) SetGamePlayersStore(gp gamePlayersStore) {
 
 func (s *GamesService) SetGameDomainEventStore(ds gameDomainEventStore) {
 	s.gameDomainEvents = ds
+}
+
+func (s *GamesService) SetDiscordOutboxStore(store discordOutboxStore) {
+	s.discordOutbox = store
 }
 
 type lobbyState struct {
@@ -506,6 +515,11 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			eventType = "turn_ended"
 			eventBody = fmt.Sprintf("%s ended their turn. %s is up next.", displayName(names, in.PlayerUserID), displayName(names, nextPlayer))
+			if s.discordOutbox != nil && nextPlayer != "" && engine.Phase != risk.PhaseGameOver {
+				if err := s.discordOutbox.EnqueueTurnStarted(ctx, q, g.ID, displayName(names, in.PlayerUserID), nextPlayer, displayName(names, nextPlayer), engine.TurnNumber); err != nil {
+					return err
+				}
+			}
 		case "trade_cards":
 			armies, err := engine.TradeCards(in.PlayerUserID, in.CardIndices)
 			if err != nil {
