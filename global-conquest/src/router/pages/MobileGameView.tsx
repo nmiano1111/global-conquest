@@ -688,6 +688,11 @@ export function MobileGameView(props: MobileGameViewProps) {
               >
                 {p.userName}
               </span>
+              {!p.eliminated && p.cardCount > 0 && (
+                <span className="rounded-full bg-indigo-900/70 px-1.5 py-0.5 text-xs font-semibold text-indigo-300">
+                  🃏{p.cardCount}
+                </span>
+              )}
               {isCurrent && <span className="text-[9px] text-slate-400">▶</span>}
             </div>
           );
