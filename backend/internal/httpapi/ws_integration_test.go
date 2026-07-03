@@ -76,7 +76,7 @@ func TestWebSocketHello(t *testing.T) {
 		createClassicGameFn: func(context.Context, string, int, string) (store.Game, error) { return store.Game{}, nil },
 		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
 		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
-		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
+		listGamesFn:         func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
 		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
 	chats := &fakeChatService{
@@ -124,7 +124,7 @@ func TestWebSocketPingPongAndCreateGame(t *testing.T) {
 		createClassicGameFn: func(context.Context, string, int, string) (store.Game, error) { return store.Game{}, nil },
 		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
 		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
-		listGamesFn:         func(context.Context, string, string, int, int) ([]store.Game, error) { return nil, nil },
+		listGamesFn:         func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
 		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
 	chats := &fakeChatService{

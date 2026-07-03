@@ -10,6 +10,8 @@ export type GameRecord = {
   state: unknown;
   playerCount: number | null;
   playerIds: string[];
+  phase: string;
+  currentPlayerName: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -87,6 +89,8 @@ function normalizeGame(value: unknown): GameRecord {
       state: null,
       playerCount: null,
       playerIds: [],
+      phase: "",
+      currentPlayerName: "",
       createdAt: "",
       updatedAt: "",
     };
@@ -122,6 +126,8 @@ function normalizeGame(value: unknown): GameRecord {
     state: rawState,
     playerCount,
     playerIds,
+    phase: readString(record.phase ?? record.Phase),
+    currentPlayerName: readString(record.current_player_name ?? record.currentPlayerName),
     createdAt: readString(record.created_at ?? record.CreatedAt),
     updatedAt: readString(record.updated_at ?? record.UpdatedAt),
   };

@@ -353,6 +353,40 @@ func TestListGamesValidationAndPassThrough(t *testing.T) {
 	}
 }
 
+func TestListGamesEnrichesInProgressTurnInfo(t *testing.T) {
+	inProgressState := json.RawMessage(`{"players":[{"id":"u1"},{"id":"u2"}],"current_player":1,"phase":"attack"}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
+		createFn:         func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn:        func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) {
+			return []store.Game{
+				{ID: "lobby1", Status: "lobby"},
+				{ID: "ip1", Status: "in_progress", State: inProgressState},
+			}, nil
+		},
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
+	})
+
+	out, err := svc.ListGames(context.Background(), "", "", 0, 0)
+	if err != nil {
+		t.Fatalf("list games: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected 2 games, got %d", len(out))
+	}
+	if out[0].Phase != "" || out[0].CurrentPlayerName != "" {
+		t.Fatalf("lobby game should not be enriched: %#v", out[0])
+	}
+	if out[1].Phase != "attack" {
+		t.Fatalf("expected phase attack, got %q", out[1].Phase)
+	}
+	// noopQuerier resolves no rows, so name resolution falls back to the raw user ID.
+	if out[1].CurrentPlayerName != "u2" {
+		t.Fatalf("expected current player name u2 (id fallback), got %q", out[1].CurrentPlayerName)
+	}
+}
+
 // fakeDomainEventStore records InsertDomainEvent calls for assertions.
 type fakeDomainEventStore struct {
 	insertFn func(context.Context, db.Querier, string, risk.DomainEvent, []byte) (store.GameDomainEvent, error)

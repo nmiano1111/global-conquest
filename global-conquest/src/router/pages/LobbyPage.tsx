@@ -7,6 +7,20 @@ import { useAuth } from "../../auth";
 import { useSocket } from "../../realtime";
 import { buttonGhostClass, buttonPrimaryClass, inputClass } from "./styles";
 
+const PHASE_LABELS: Record<string, string> = {
+  setup_claim: "Setup",
+  setup_reinforce: "Setup",
+  reinforce: "Reinforce",
+  attack: "Attack",
+  occupy: "Occupy",
+  fortify: "Fortify",
+  game_over: "Game Over",
+};
+
+function phaseLabel(phase: string): string {
+  return PHASE_LABELS[phase] ?? phase;
+}
+
 function statusBadgeClass(label: string): string {
   if (label === "Open") return "border border-gc-success/40 bg-gc-success/10 text-gc-success";
   if (label === "Joined") return "border border-gc-accent/40 bg-gc-accent/10 text-gc-accent";
@@ -352,6 +366,12 @@ export function LobbyPage() {
                       <span className="text-gc-text/70">Players</span>{" "}
                       {maxPlayers > 0 ? `${currentPlayers} / ${maxPlayers}` : "—"}
                     </p>
+                    {!isLobby && g.currentPlayerName ? (
+                      <p className="text-xs text-gc-muted">
+                        <span className="text-gc-text/70">{g.currentPlayerName}'s turn</span>
+                        {g.phase ? ` · ${phaseLabel(g.phase)}` : ""}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0">
                     {canOpenGame ? (

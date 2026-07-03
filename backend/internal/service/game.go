@@ -347,16 +347,69 @@ func (s *GamesService) GetGame(ctx context.Context, gameID string) (store.Game, 
 	return g, nil
 }
 
-func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]store.Game, error) {
+// GameSummary is a list-view projection of a game that adds the current
+// player's turn (name + phase) for in-progress games, resolved server-side
+// since only the raw user ID lives in the persisted engine state.
+type GameSummary struct {
+	store.Game
+	Phase             string `json:"phase,omitempty"`
+	CurrentPlayerName string `json:"current_player_name,omitempty"`
+}
+
+func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]GameSummary, error) {
 	if limit < 0 || offset < 0 {
 		return nil, ErrInvalidGameInput
 	}
-	return s.games.List(ctx, s.db.Queryer(), store.GameListFilter{
+	games, err := s.games.List(ctx, s.db.Queryer(), store.GameListFilter{
 		OwnerUserID: ownerUserID,
 		Status:      status,
 		Limit:       limit,
 		Offset:      offset,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]GameSummary, len(games))
+	turnUserIDByGame := make(map[int]string, len(games))
+	userIDs := make([]string, 0, len(games))
+	seenUserIDs := make(map[string]struct{}, len(games))
+	for i, g := range games {
+		out[i] = GameSummary{Game: g}
+		if g.Status != "in_progress" {
+			continue
+		}
+		var engine risk.Game
+		if err := json.Unmarshal(g.State, &engine); err != nil {
+			continue
+		}
+		if engine.CurrentPlayer < 0 || engine.CurrentPlayer >= len(engine.Players) {
+			continue
+		}
+		out[i].Phase = string(engine.Phase)
+		userID := engine.Players[engine.CurrentPlayer].ID
+		turnUserIDByGame[i] = userID
+		if _, ok := seenUserIDs[userID]; !ok {
+			seenUserIDs[userID] = struct{}{}
+			userIDs = append(userIDs, userID)
+		}
+	}
+
+	if len(userIDs) > 0 {
+		names, err := s.userNamesByIDs(ctx, userIDs)
+		if err != nil {
+			return nil, err
+		}
+		for i, userID := range turnUserIDByGame {
+			name := names[userID]
+			if name == "" {
+				name = userID
+			}
+			out[i].CurrentPlayerName = name
+		}
+	}
+
+	return out, nil
 }
 
 func (s *GamesService) UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error) {

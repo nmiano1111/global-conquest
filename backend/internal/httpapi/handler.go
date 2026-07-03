@@ -32,7 +32,7 @@ type gameService interface {
 	JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error)
 	GetGame(ctx context.Context, gameID string) (store.Game, error)
 	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
-	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]store.Game, error)
+	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error)
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
 	GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error)
 }
@@ -373,7 +373,7 @@ func (h *Handler) GetGameBootstrap(c *gin.Context) {
 // @Param        status query string false "Game status"
 // @Param        limit query int false "Max games returned"
 // @Param        offset query int false "Pagination offset"
-// @Success      200 {array} store.Game
+// @Success      200 {array} service.GameSummary
 // @Failure      400 {object} map[string]string
 // @Failure      500 {object} map[string]string
 // @Router       /api/games [get]
