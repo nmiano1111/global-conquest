@@ -244,12 +244,20 @@ export function GamePage() {
       const payload = msg.payload as Record<string, unknown> | undefined;
       const code = typeof payload?.code === "string" ? payload.code : "";
       const message = typeof payload?.message === "string" ? payload.message : "";
-      if (code === "invalid_action" || code === "unauthorized" || code === "not_in_room") {
+      if (code === "unauthorized") {
+        // The socket's session token was rejected server-side (expired/revoked).
+        // Unlike REST calls, WebSocket actions never hit a 401 that would
+        // otherwise trigger this same redirect, so do it explicitly here.
+        auth.clearSession();
+        void navigate({ to: "/login" });
+        return;
+      }
+      if (code === "invalid_action" || code === "not_in_room") {
         setActionError(message || "Action failed.");
       }
     });
     return off;
-  }, [on]);
+  }, [on, auth, navigate]);
 
   useEffect(() => {
     const off = on("your_cards", (msg) => {

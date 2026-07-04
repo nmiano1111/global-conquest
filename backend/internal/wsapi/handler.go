@@ -1,10 +1,12 @@
 package wsapi
 
 import (
+	"backend/internal/auth"
 	"backend/internal/game"
 	"backend/internal/proto/wsmsg"
 	"backend/internal/wsconn"
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -32,8 +34,20 @@ func GinHandler(s *game.Server, opts Options) gin.HandlerFunc {
 		if opts.Authenticate != nil {
 			token := c.Query("token")
 			if token != "" {
-				if u, err := opts.Authenticate(ctx, token); err == nil {
+				u, err := opts.Authenticate(ctx, token)
+				switch {
+				case err == nil:
 					authUser = u
+				case errors.Is(err, auth.ErrInvalidSession):
+					// Token is genuinely invalid/expired/blocked: fall through
+					// as anon, same as REST's 401 for a bad credential.
+				default:
+					// Transient failure (e.g. DB hiccup) resolving an otherwise
+					// valid token. Reject the upgrade instead of silently
+					// downgrading a valid session to anon for the connection's
+					// whole lifetime — the client's reconnect backoff will retry.
+					c.AbortWithStatus(http.StatusServiceUnavailable)
+					return
 				}
 			}
 		}

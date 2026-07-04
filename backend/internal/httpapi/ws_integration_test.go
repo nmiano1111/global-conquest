@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"backend/internal/auth"
 	"backend/internal/game"
 	"backend/internal/proto/wsmsg"
 	"backend/internal/service"
 	"backend/internal/store"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"testing"
@@ -167,5 +169,73 @@ func TestWebSocketPingPongAndCreateGame(t *testing.T) {
 	}
 	if created.CorrelationID != "c_create" {
 		t.Fatalf("expected correlation_id c_create, got %q", created.CorrelationID)
+	}
+}
+
+// TestWebSocketInvalidTokenFallsBackToAnon confirms a genuinely bad/expired
+// session token still upgrades the connection (as anon), matching REST's
+// 401-for-bad-credential semantics.
+func TestWebSocketInvalidTokenFallsBackToAnon(t *testing.T) {
+	g := game.NewServer()
+	go g.Run()
+
+	svc := &fakeUsersService{
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{}, auth.ErrInvalidSession
+		},
+	}
+	games := &fakeGamesService{}
+	chats := &fakeChatService{}
+	router := NewRouter(NewHandler(g, svc, games, chats))
+	base := startTestHTTPServer(t, router)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws://"+base[len("http://"):]+"/ws?token=bad-token", nil)
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+
+	hello := mustReadEnvelope(t, conn)
+	var payload map[string]any
+	if err := json.Unmarshal(hello.Payload, &payload); err != nil {
+		t.Fatalf("decode hello payload: %v", err)
+	}
+	if payload["name"] != "anon" {
+		t.Fatalf("expected anon name for invalid session, got %#v", payload["name"])
+	}
+}
+
+// TestWebSocketTransientAuthErrorRejectsUpgrade confirms a non-session error
+// (e.g. a DB hiccup) resolving an otherwise-valid token rejects the upgrade
+// rather than silently downgrading the connection to anon for its whole
+// lifetime.
+func TestWebSocketTransientAuthErrorRejectsUpgrade(t *testing.T) {
+	g := game.NewServer()
+	go g.Run()
+
+	svc := &fakeUsersService{
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{}, errors.New("db unavailable")
+		},
+	}
+	games := &fakeGamesService{}
+	chats := &fakeChatService{}
+	router := NewRouter(NewHandler(g, svc, games, chats))
+	base := startTestHTTPServer(t, router)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, "ws://"+base[len("http://"):]+"/ws?token=some-token", nil)
+	if err == nil {
+		t.Fatalf("expected ws dial to fail on transient auth error")
+	}
+	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		status := -1
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("expected HTTP 503, got %d (err=%v)", status, err)
 	}
 }
