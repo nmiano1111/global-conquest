@@ -7,6 +7,7 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -153,6 +154,7 @@ func (s *Server) Run() {
 		switch m := msg.(type) {
 		case Register:
 			s.clients[m.C.ID] = m.C
+			log.Printf("ws: hub register client=%s user=%s name=%s", m.C.ID, m.C.UserID, m.C.Name)
 			// hello back with assigned id
 			m.C.Conn.Send(envelope("hello", "", "", "", map[string]any{
 				"client_id": m.C.ID,
@@ -172,8 +174,10 @@ func (s *Server) Run() {
 func (s *Server) handleDisconnect(clientID string) {
 	c, ok := s.clients[clientID]
 	if !ok {
+		log.Printf("ws: hub unregister client=%s (already gone)", clientID)
 		return
 	}
+	log.Printf("ws: hub unregister client=%s user=%s name=%s game=%s chatRoom=%s", clientID, c.UserID, c.Name, c.Game, c.ChatRoom)
 	// If in a game, remove and broadcast
 	if c.Game != "" {
 		s.leaveGame(c, true)
@@ -191,12 +195,15 @@ func (s *Server) handleDisconnect(clientID string) {
 func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 	c, ok := s.clients[clientID]
 	if !ok {
+		log.Printf("ws: recv from unknown client=%s type=%s (dropped)", clientID, env.Type)
 		return
 	}
 
 	t := env.Type
 	id := env.ID
 	gameID := env.GameID
+
+	log.Printf("ws: recv client=%s user=%s type=%s game=%s", clientID, c.UserID, t, gameID)
 
 	switch t {
 
@@ -655,6 +662,7 @@ func envelope(t, id, corr, gameID string, payload any) wsmsg.Envelope {
 	return env
 }
 func errEnv(corrID, code, msg string) wsmsg.Envelope {
+	log.Printf("ws: error reply corrID=%s code=%s msg=%q", corrID, code, msg)
 	return envelope("error", newID("s"), corrID, "", map[string]any{
 		"code":    code,
 		"message": msg,

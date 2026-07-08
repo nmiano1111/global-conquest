@@ -3,6 +3,7 @@ package wsconn
 import (
 	"backend/internal/proto/wsmsg"
 	"context"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -16,12 +17,16 @@ type Conn struct {
 	send      chan wsmsg.Envelope
 	done      chan struct{}
 	closeOnce sync.Once
+	label     string
 }
 
 type Options struct {
 	OriginPatterns []string
 	PingInterval   time.Duration
 	SendBuffer     int
+	// Label identifies this connection in log output (e.g. the hub-assigned
+	// client ID). Optional; logs fall back to "?" when unset.
+	Label string
 }
 
 const DefaultPingInterval = 20 * time.Second
@@ -41,10 +46,16 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 		return nil, err
 	}
 
+	label := opts.Label
+	if label == "" {
+		label = "?"
+	}
+
 	c := &Conn{
-		ws:   ws,
-		send: make(chan wsmsg.Envelope, opts.SendBuffer),
-		done: make(chan struct{}),
+		ws:    ws,
+		send:  make(chan wsmsg.Envelope, opts.SendBuffer),
+		done:  make(chan struct{}),
+		label: label,
 	}
 
 	ctx := r.Context()
@@ -60,7 +71,9 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 			case <-c.done:
 				return
 			case <-t.C:
-				_ = ws.Ping(ctx)
+				if err := ws.Ping(ctx); err != nil {
+					log.Printf("ws: ping failed client=%s err=%v", c.label, err)
+				}
 			}
 		}
 	}()
@@ -74,7 +87,9 @@ func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error)
 			case <-c.done:
 				return
 			case msg := <-c.send:
-				_ = wsjson.Write(ctx, ws, msg)
+				if err := wsjson.Write(ctx, ws, msg); err != nil {
+					log.Printf("ws: write failed client=%s type=%s err=%v", c.label, msg.Type, err)
+				}
 			}
 		}
 	}()
@@ -94,6 +109,7 @@ func (c *Conn) Close(code websocket.StatusCode, reason string) error {
 func (c *Conn) Send(env wsmsg.Envelope) bool {
 	select {
 	case <-c.done:
+		log.Printf("ws: send dropped (closed) client=%s type=%s", c.label, env.Type)
 		return false
 	default:
 	}
@@ -101,6 +117,7 @@ func (c *Conn) Send(env wsmsg.Envelope) bool {
 	case c.send <- env:
 		return true
 	default:
+		log.Printf("ws: send dropped (buffer full, cap=%d) client=%s type=%s", cap(c.send), c.label, env.Type)
 		return false
 	}
 }

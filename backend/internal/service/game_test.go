@@ -91,7 +91,12 @@ func TestCreateClassicGameValidation(t *testing.T) {
 		t.Fatalf("expected ErrInvalidGameInput, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", 2, "")
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 1, "")
+	if !errors.Is(err, ErrInvalidGameInput) {
+		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
+	}
+
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 7, "")
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}

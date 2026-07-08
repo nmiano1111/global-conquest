@@ -71,7 +71,7 @@ type loginResp struct {
 }
 
 type createGameReq struct {
-	PlayerCount int    `json:"player_count" binding:"required,min=3,max=6"`
+	PlayerCount int    `json:"player_count" binding:"required,min=2,max=6"`
 	SetupMode   string `json:"setup_mode"`
 }
 

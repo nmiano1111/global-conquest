@@ -139,6 +139,49 @@ func TestAutoStartDistributesTerritoriesAndBeginsReinforce(t *testing.T) {
 	}
 }
 
+func TestNewClassicGamePlayerCountBounds(t *testing.T) {
+	if _, err := NewClassicGame([]string{"p1"}, &seqRNG{v: []int{0}}); err != ErrInvalidPlayerCount {
+		t.Fatalf("expected ErrInvalidPlayerCount for 1 player, got %v", err)
+	}
+	if _, err := NewClassicGame([]string{"p1", "p2", "p3", "p4", "p5", "p6", "p7"}, &seqRNG{v: []int{0}}); err != ErrInvalidPlayerCount {
+		t.Fatalf("expected ErrInvalidPlayerCount for 7 players, got %v", err)
+	}
+	g, err := NewClassicGame([]string{"p1", "p2"}, &seqRNG{v: []int{0}})
+	if err != nil {
+		t.Fatalf("new 2-player game: %v", err)
+	}
+	for i := range g.Players {
+		if g.SetupReserves[i] != 40 {
+			t.Fatalf("expected 40 starting armies for 2 players, got %d", g.SetupReserves[i])
+		}
+	}
+}
+
+func TestAutoStartTwoPlayers(t *testing.T) {
+	g, err := NewClassicAutoStartGame([]string{"p1", "p2"}, &seqRNG{v: []int{0}})
+	if err != nil {
+		t.Fatalf("new auto start game: %v", err)
+	}
+	if g.Phase != PhaseReinforce {
+		t.Fatalf("expected reinforce phase, got %s", g.Phase)
+	}
+	counts := make(map[int]int, len(g.Players))
+	for _, ts := range g.Territories {
+		if ts.Owner < 0 {
+			t.Fatalf("found unowned territory in auto-start state")
+		}
+		counts[ts.Owner]++
+	}
+	if counts[0] != len(g.Board.Order)/2 || counts[1] != len(g.Board.Order)/2 {
+		t.Fatalf("expected an even 21/21 territory split for 2 players, got %v", counts)
+	}
+	for i := range g.Players {
+		if g.SetupReserves[i] != 0 {
+			t.Fatalf("expected setup reserves to be consumed, got %d", g.SetupReserves[i])
+		}
+	}
+}
+
 func TestReinforcementIncludesContinentBonus(t *testing.T) {
 	g := mustGame(t)
 	for _, t := range g.Board.Order {

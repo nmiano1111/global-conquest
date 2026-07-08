@@ -21,7 +21,7 @@ const (
 )
 
 var (
-	ErrInvalidPlayerCount = errors.New("risk: player count must be between 3 and 6")
+	ErrInvalidPlayerCount = errors.New("risk: player count must be between 2 and 6")
 	ErrOutOfTurn          = errors.New("risk: out of turn")
 	ErrInvalidPhase       = errors.New("risk: action not allowed in current phase")
 	ErrInvalidMove        = errors.New("risk: invalid move")
@@ -89,7 +89,7 @@ type Game struct {
 }
 
 func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {
-	if len(playerIDs) < 3 || len(playerIDs) > 6 {
+	if len(playerIDs) < 2 || len(playerIDs) > 6 {
 		return nil, ErrInvalidPlayerCount
 	}
 	if rng == nil {
@@ -119,7 +119,7 @@ func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {
 	for i, id := range shuffled {
 		g.Players[i] = PlayerState{ID: id}
 	}
-	starting := map[int]int{3: 35, 4: 30, 5: 25, 6: 20}[len(playerIDs)]
+	starting := map[int]int{2: 40, 3: 35, 4: 30, 5: 25, 6: 20}[len(playerIDs)]
 	for i := range g.Players {
 		g.SetupReserves[i] = starting
 	}

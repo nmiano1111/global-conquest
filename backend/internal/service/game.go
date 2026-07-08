@@ -171,7 +171,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 	if ownerUserID == "" {
 		return store.Game{}, ErrInvalidGameInput
 	}
-	if playerCount < 3 || playerCount > 6 {
+	if playerCount < 2 || playerCount > 6 {
 		return store.Game{}, ErrInvalidGameInput
 	}
 
@@ -981,7 +981,7 @@ func decodeLobbyState(raw json.RawMessage) (lobbyState, error) {
 	if err := json.Unmarshal(raw, &lobby); err != nil {
 		return lobbyState{}, ErrInvalidGameInput
 	}
-	if lobby.PlayerCount < 3 || lobby.PlayerCount > 6 || len(lobby.PlayerIDs) == 0 || len(lobby.PlayerIDs) > lobby.PlayerCount {
+	if lobby.PlayerCount < 2 || lobby.PlayerCount > 6 || len(lobby.PlayerIDs) == 0 || len(lobby.PlayerIDs) > lobby.PlayerCount {
 		return lobbyState{}, ErrInvalidGameInput
 	}
 	seen := make(map[string]struct{}, len(lobby.PlayerIDs))
@@ -1001,7 +1001,7 @@ func isLegacyUninitializedSetup(g risk.Game) bool {
 	if g.Phase != risk.PhaseSetupClaim {
 		return false
 	}
-	if len(g.Players) < 3 || len(g.Players) > 6 {
+	if len(g.Players) < 2 || len(g.Players) > 6 {
 		return false
 	}
 	return true

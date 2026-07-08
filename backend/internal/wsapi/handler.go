@@ -7,6 +7,7 @@ import (
 	"backend/internal/wsconn"
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -52,20 +53,35 @@ func GinHandler(s *game.Server, opts Options) gin.HandlerFunc {
 			}
 		}
 
+		remoteAddr := c.ClientIP()
+		userAgent := c.Request.UserAgent()
+		authLabel := "anon"
+		if authUser.ID != "" {
+			authLabel = authUser.UserName + "(" + authUser.ID + ")"
+		}
+
+		// Assign the client ID before Accept so the connection's ping/write/send
+		// logs can be correlated with the hub-level register/disconnect logs.
+		clientID := randClientID()
+
 		w := unwrapWriter(c.Writer)
 
 		conn, err := wsconn.Accept(w, c.Request, wsconn.Options{
 			OriginPatterns: opts.OriginPatterns,
 			PingInterval:   opts.PingInterval,
 			SendBuffer:     opts.SendBuffer,
+			Label:          clientID,
 		})
 		if err != nil {
+			log.Printf("ws: accept failed client=%s remote=%s ua=%q auth=%s err=%v", clientID, remoteAddr, userAgent, authLabel, err)
 			return
 		}
 		c.Abort()
 
+		log.Printf("ws: connected client=%s remote=%s ua=%q auth=%s", clientID, remoteAddr, userAgent, authLabel)
+		connectedAt := time.Now()
+
 		// Create client + register with hub.
-		clientID := randClientID()
 		name := "anon"
 		if authUser.UserName != "" {
 			name = authUser.UserName
@@ -85,9 +101,12 @@ func GinHandler(s *game.Server, opts Options) gin.HandlerFunc {
 		}()
 
 		// Read pump: each envelope goes into hub
-		_ = conn.ReadLoop(ctx, func(env wsmsg.Envelope) {
+		readErr := conn.ReadLoop(ctx, func(env wsmsg.Envelope) {
 			s.Inbox() <- game.Incoming{ClientID: clientID, Env: env}
 		})
+		closeCode := websocket.CloseStatus(readErr)
+		log.Printf("ws: disconnected client=%s auth=%s duration=%s closeCode=%d err=%v",
+			clientID, authLabel, time.Since(connectedAt), closeCode, readErr)
 	}
 }
 
