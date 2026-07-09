@@ -1,9 +1,10 @@
 package risk
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
-	"math/rand/v2"
+	"math/big"
 	"slices"
 	"sort"
 )
@@ -33,7 +34,18 @@ type RNG interface {
 
 type stdRNG struct{}
 
-func (stdRNG) IntN(n int) int { return rand.IntN(n) }
+// IntN returns a cryptographically random integer in [0, n). crypto/rand.Int
+// only fails if the OS entropy source is unavailable, which would already be
+// catastrophic for the rest of the service (e.g. session token generation in
+// auth/session_token.go), so we panic rather than silently degrading to a
+// predictable fallback.
+func (stdRNG) IntN(n int) int {
+	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		panic(fmt.Sprintf("risk: crypto/rand unavailable: %v", err))
+	}
+	return int(v.Int64())
+}
 
 type PlayerState struct {
 	ID         string `json:"id"`

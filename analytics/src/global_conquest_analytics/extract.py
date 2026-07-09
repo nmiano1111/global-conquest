@@ -8,6 +8,7 @@ from global_conquest_analytics.db import get_connection
 
 _RAW_OUTPUT = Path(__file__).parents[2] / "data" / "raw" / "game_events.parquet"
 _GAMES_OUTPUT = Path(__file__).parents[2] / "data" / "raw" / "games.parquet"
+_PLAYERS_OUTPUT = Path(__file__).parents[2] / "data" / "raw" / "players.parquet"
 
 # Cast UUIDs to text so psycopg3 returns plain strings; PyArrow cannot
 # serialise uuid.UUID objects directly.
@@ -49,6 +50,18 @@ ORDER BY id
 """
 
 _GAMES_COLUMNS = ["id", "name", "event_history_complete"]
+
+# A direct dump of players (id, username), used to resolve attacker/defender
+# display names instead of showing raw UUIDs in reports.
+_PLAYERS_QUERY = """
+SELECT
+    id::text,
+    username
+FROM users
+ORDER BY id
+"""
+
+_PLAYERS_COLUMNS = ["id", "username"]
 
 
 def extract_game_events(output_path: Path = _RAW_OUTPUT) -> Path:
@@ -94,4 +107,26 @@ def extract_games(output_path: Path = _GAMES_OUTPUT) -> Path:
     df = pd.DataFrame(rows, columns=_GAMES_COLUMNS)
     df.to_parquet(output_path, index=False, engine="pyarrow")
     print(f"Extracted {len(df):,} games → {output_path}")
+    return output_path
+
+
+def extract_players(output_path: Path = _PLAYERS_OUTPUT) -> Path:
+    """Query users (id, username) and write to Parquet.
+
+    Args:
+        output_path: Destination path for the Parquet file.
+
+    Returns:
+        The resolved output path.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_PLAYERS_QUERY)
+            rows = cur.fetchall()
+
+    df = pd.DataFrame(rows, columns=_PLAYERS_COLUMNS)
+    df.to_parquet(output_path, index=False, engine="pyarrow")
+    print(f"Extracted {len(df):,} players → {output_path}")
     return output_path

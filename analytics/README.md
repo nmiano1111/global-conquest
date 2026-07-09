@@ -74,22 +74,47 @@ poetry run export-games
 
 Writes: `data/raw/games.parquet`
 
-### 4. Generate roll streak report
+### 4. Export players from Postgres
+
+Requires `DATABASE_URL` to be set. Optional but recommended — lets
+`roll-streak-report` show usernames instead of raw player UUIDs.
+
+```bash
+poetry run export-players
+```
+
+Writes: `data/raw/players.parquet`
+
+### 5. Generate roll streak report
 
 Reports consecutive attacking loss streaks, win streaks, and "attack
 droughts" (non-win runs) per player. Does **not** query Postgres — run
-`export-events` and `export-games` first.
+`export-events` and `export-games` first (and `export-players` for
+usernames).
 
 ```bash
-poetry run roll-streak-report --format markdown
-poetry run roll-streak-report --format json --game-id <game-id>
+# See available games (id, name, partial/complete event history)
+poetry run roll-streak-report --list-games
+
+# Defaults to the most recently updated game, writes to
+# reports/generated/roll_streaks/<game-name>.md
+poetry run roll-streak-report
+
+# Target a specific game by name (case-insensitive) or id
+poetry run roll-streak-report --game-name "Greasy Weasel"
+poetry run roll-streak-report --game-id <uuid> --format json
+
+# Print to stdout instead of writing a file
+poetry run roll-streak-report --game-name "Greasy Weasel" --output -
 ```
 
-Options: `--game-id`, `--player-id`, `--min-loss-streak-length` (default 2),
-`--min-win-streak-length` (default 2), `--min-drought-length` (default 3),
-`--top` (default 5, per-section streak count in Markdown; 0 = show all),
-`--format markdown|json`, `--include-partial-games` (required to proceed
-when the target game's `event_history_complete` flag is false).
+Options: `--game-id`, `--game-name`, `--list-games`, `--player-id`,
+`--min-loss-streak-length` (default 2), `--min-win-streak-length` (default 2),
+`--min-drought-length` (default 3), `--top` (default 5, per-section streak
+count in Markdown; 0 = show all), `--format markdown|json`, `--output <path>`
+(default `reports/generated/roll_streaks/<game-name>.md|json`; `-` for
+stdout only), `--include-partial-games` (required to proceed when the target
+game's `event_history_complete` flag is false).
 
 ## Output Locations
 

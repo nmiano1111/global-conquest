@@ -22,6 +22,8 @@ def render_markdown(report: RollStreakReport, top: int = 0) -> str:
             (already sorted length DESC, start_time ASC). 0 = show all.
     """
     lines: list[str] = [f"# Roll Streak Report — {report.game_name}", ""]
+    lines.append(_overview_line(report))
+    lines.append("")
 
     if report.partial_history:
         lines.append(
@@ -61,6 +63,18 @@ def render_markdown(report: RollStreakReport, top: int = 0) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _overview_line(report: RollStreakReport) -> str:
+    total_rolls = sum(p.attack_rolls_captured for p in report.summary_by_attacker)
+    total_loss_streaks = len(report.attacking_loss_streaks)
+    total_win_streaks = len(report.attacking_win_streaks)
+    total_droughts = len(report.attack_droughts)
+    return (
+        f"**{len(report.summary_by_attacker)} attacker(s)** · **{total_rolls} rolls captured** · "
+        f"{total_loss_streaks} loss streak(s) · {total_win_streaks} win streak(s) · "
+        f"{total_droughts} drought(s)"
+    )
+
+
 def _summary_table(summaries: list[PlayerStreakSummary]) -> list[str]:
     if not summaries:
         return ["_No attack rolls captured._"]
@@ -88,6 +102,8 @@ def _streak_list(prefix: str, streaks: list[Streak], top: int, unit_label: str) 
     n = len(streaks) if top <= 0 else min(top, len(streaks))
     lines: list[str] = []
     for i, s in enumerate(streaks[:n], start=1):
+        if i > 1:
+            lines.append("")
         lines.append(f"{prefix}{i}. {s.attacker_name} — {s.streak_length} {unit_label}")
         lines.append(
             f"    Events {s.start_event_seq}–{s.end_event_seq} · lost {s.attacker_armies_lost} · "
@@ -97,9 +113,9 @@ def _streak_list(prefix: str, streaks: list[Streak], top: int, unit_label: str) 
         lines.append(f"    Territories: {_territory_pairs(s)}")
         lines.append(f"    Captures: {s.captures_during_streak}")
         lines.append(f"    Rolls: {s.roll_trace}")
-        lines.append("")
     if top > 0 and len(streaks) > n:
         remaining = len(streaks) - n
+        lines.append("")
         lines.append(
             f"_({remaining} more not shown — use --top 0 or JSON output for the full list)_"
         )

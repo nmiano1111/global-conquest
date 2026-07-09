@@ -25,6 +25,7 @@ pandas-stubs = "^2.2"
 [tool.poetry.scripts]
 export-events = "global_conquest_analytics.cli:export_events"
 export-games = "global_conquest_analytics.cli:export_games"
+export-players = "global_conquest_analytics.cli:export_players"
 combat-report = "global_conquest_analytics.cli:generate_combat_report_command"
 roll-streak-report = "global_conquest_analytics.cli:generate_roll_streak_report_command"
 
