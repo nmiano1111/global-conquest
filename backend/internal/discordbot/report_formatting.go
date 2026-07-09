@@ -126,6 +126,63 @@ func formatPlayerReport(r reporting.PlayerCombatReport, gameName string) string 
 	)
 }
 
+// formatRollStreaks renders a compact roll-streak summary suitable for a
+// Discord message: per-player summary plus the top N streaks in each
+// category. The full streak detail (Rolls, Streak.ID, etc.) is available via
+// the CLI/JSON report — Discord only gets the headline numbers.
+func formatRollStreaks(r reporting.RollStreakReport, gameName string, top int) string {
+	if len(r.SummaryByAttacker) == 0 {
+		return fmt.Sprintf("No attack rolls found for **%s** yet.", gameName)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "🎲 **Roll Streak Report** · %s\n", gameName)
+	if r.PartialHistory {
+		sb.WriteString("⚠️ *This game has partial event history. Streaks only reflect captured rolls after event logging began.*\n")
+	}
+
+	sb.WriteString("\n**Summary by Attacker**\n```\n")
+	for _, p := range r.SummaryByAttacker {
+		fmt.Fprintf(&sb,
+			"%-12s rolls:%-4d W/L/S %d/%d/%d  loss:%d(%d)  win:%d(%d)  drought:%d(%d)\n",
+			truncateName(p.PlayerName, 12), p.AttackRollsCaptured,
+			p.AttackerWinCount, p.AttackerLossCount, p.SplitCount,
+			p.LossStreakCount2Plus, p.LongestLossStreak,
+			p.WinStreakCount2Plus, p.LongestWinStreak,
+			p.AttackDroughtCount3Plus, p.LongestAttackDrought,
+		)
+	}
+	sb.WriteString("```\n")
+
+	writeStreakSection(&sb, "Top Attacking Loss Streaks", r.AttackingLossStreaks, top, "losses")
+	writeStreakSection(&sb, "Top Attacking Win Streaks", r.AttackingWinStreaks, top, "wins")
+	writeStreakSection(&sb, "Top Attack Droughts", r.AttackDroughts, top, "non-wins")
+
+	return sb.String()
+}
+
+func writeStreakSection(sb *strings.Builder, title string, streaks []reporting.Streak, top int, unit string) {
+	if len(streaks) == 0 {
+		return
+	}
+	fmt.Fprintf(sb, "\n**%s**\n", title)
+	n := min(top, len(streaks))
+	for i, s := range streaks[:n] {
+		fmt.Fprintf(sb, "%d. %s — %d %s (events %d–%d) · net %+d · rolls: %s\n",
+			i+1, s.AttackerName, s.Length, unit, s.StartSeq, s.EndSeq, s.NetArmyDeltaForAttacker, s.RollTrace)
+	}
+	if len(streaks) > n {
+		fmt.Fprintf(sb, "_(%d more not shown — see full report)_\n", len(streaks)-n)
+	}
+}
+
+func truncateName(name string, max int) string {
+	if len(name) <= max {
+		return name
+	}
+	return name[:max-1] + "…"
+}
+
 func writeFaceDistribution(sb *strings.Builder, dist reporting.FaceDistribution) {
 	for face := 1; face <= 6; face++ {
 		count := dist.Counts[face]
@@ -136,4 +193,3 @@ func writeFaceDistribution(sb *strings.Builder, dist reporting.FaceDistribution)
 		fmt.Fprintf(sb, "  %d: %4d  (%.1f%%)\n", face, count, pct)
 	}
 }
-

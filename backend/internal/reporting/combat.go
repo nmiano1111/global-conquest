@@ -71,6 +71,7 @@ func decodeCombatEvent(row rawCombatRow) (CombatEvent, bool, error) {
 		TargetArmiesBefore: p.TargetArmiesBefore,
 		AttackerDice:       p.AttackerDice,
 		DefenderDice:       p.DefenderDice,
+		Comparisons:        p.Comparisons,
 		AttackerLosses:     p.AttackerLosses,
 		DefenderLosses:     p.DefenderLosses,
 		TerritoryCaptured:  p.TerritoryCaptured,

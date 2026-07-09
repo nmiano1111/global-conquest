@@ -403,11 +403,12 @@ type fakeRepo struct {
 	names     map[string]string
 
 	latestGame        *fakeGame
-	gamesByName       map[string]fakeGame    // keyed by canonical name (any case)
-	playersByUsername map[string]string      // username → playerID (any case)
+	gamesByName       map[string]fakeGame // keyed by canonical name (any case)
+	playersByUsername map[string]string   // username → playerID (any case)
 	currentPlayer     *fakeCurrentPlayer
 	activeGameNames   []string
 	playerChoices     []PlayerChoice
+	historyComplete   map[string]bool // gameID -> event_history_complete; defaults to true when absent
 }
 
 func (f *fakeRepo) LoadLatestGame(_ context.Context) (string, string, error) {
@@ -469,6 +470,16 @@ func (f *fakeRepo) LoadPlayerNames(_ context.Context, _ []string) (map[string]st
 		return map[string]string{}, nil
 	}
 	return f.names, nil
+}
+
+func (f *fakeRepo) LoadEventHistoryComplete(_ context.Context, gameID string) (bool, error) {
+	if f.historyComplete == nil {
+		return true, nil
+	}
+	if complete, ok := f.historyComplete[gameID]; ok {
+		return complete, nil
+	}
+	return true, nil
 }
 
 func makeRawRow(seq int64, captured bool) rawCombatRow {

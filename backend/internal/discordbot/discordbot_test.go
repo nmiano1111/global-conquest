@@ -547,8 +547,8 @@ func TestWorkerDeliverUnknownType(t *testing.T) {
 
 func TestAllCommandDefs_Count(t *testing.T) {
 	defs := allCommandDefs()
-	if len(defs) != 5 {
-		t.Errorf("expected 5 command defs, got %d", len(defs))
+	if len(defs) != 6 {
+		t.Errorf("expected 6 command defs, got %d", len(defs))
 	}
 }
 
@@ -558,7 +558,7 @@ func TestAllCommandDefs_Names(t *testing.T) {
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, want := range []string{pingCommandName, lastRollsCommandName, diceReportCommandName, playerStatsCommandName, playerUpCommandName} {
+	for _, want := range []string{pingCommandName, lastRollsCommandName, diceReportCommandName, playerStatsCommandName, playerUpCommandName, rollStreaksCommandName} {
 		if !names[want] {
 			t.Errorf("missing command def: %q", want)
 		}
@@ -774,18 +774,18 @@ func TestFormatPlayerReport_NoRolls(t *testing.T) {
 
 func TestFormatPlayerReport_WithRolls(t *testing.T) {
 	r := PlayerCombatReport{
-		PlayerID:               "p1",
-		PlayerDisplayName:      "Alice",
-		AttackRolls:            3,
-		TerritoriesCaptured:    1,
-		CaptureRate:            33.3,
-		AttackerDiceRolled:     9,
-		AverageAttackerDice:    3.0,
-		AttackerLosses:         1,
-		DefenderLossesInflicted: 3,
+		PlayerID:                  "p1",
+		PlayerDisplayName:         "Alice",
+		AttackRolls:               3,
+		TerritoriesCaptured:       1,
+		CaptureRate:               33.3,
+		AttackerDiceRolled:        9,
+		AverageAttackerDice:       3.0,
+		AttackerLosses:            1,
+		DefenderLossesInflicted:   3,
 		AverageSourceArmiesBefore: 7.0,
 		AverageTargetArmiesBefore: 2.0,
-		AverageArmyAdvantage:    5.0,
+		AverageArmyAdvantage:      5.0,
 	}
 	out := formatPlayerReport(r, "Test Game")
 	if !strings.Contains(out, "Alice") {
@@ -796,6 +796,79 @@ func TestFormatPlayerReport_WithRolls(t *testing.T) {
 	}
 	if !strings.Contains(out, "33.3") {
 		t.Errorf("expected capture rate, got: %q", out)
+	}
+}
+
+func TestFormatRollStreaks_Empty(t *testing.T) {
+	out := formatRollStreaks(reporting.RollStreakReport{}, "Test Game", 5)
+	if !strings.Contains(out, "No attack rolls found") {
+		t.Errorf("expected empty message, got: %q", out)
+	}
+}
+
+func TestFormatRollStreaks_PartialHistoryWarning(t *testing.T) {
+	r := reporting.RollStreakReport{
+		PartialHistory: true,
+		SummaryByAttacker: []reporting.PlayerStreakSummary{
+			{PlayerID: "p1", PlayerName: "Alice", AttackRollsCaptured: 5},
+		},
+	}
+	out := formatRollStreaks(r, "Test Game", 5)
+	if !strings.Contains(out, "partial event history") {
+		t.Errorf("expected partial history warning, got: %q", out)
+	}
+}
+
+func TestFormatRollStreaks_NoPartialHistoryWarningWhenComplete(t *testing.T) {
+	r := reporting.RollStreakReport{
+		PartialHistory: false,
+		SummaryByAttacker: []reporting.PlayerStreakSummary{
+			{PlayerID: "p1", PlayerName: "Alice", AttackRollsCaptured: 5},
+		},
+	}
+	out := formatRollStreaks(r, "Test Game", 5)
+	if strings.Contains(out, "partial event history") {
+		t.Errorf("did not expect partial history warning, got: %q", out)
+	}
+}
+
+func TestFormatRollStreaks_SummaryIncludesPlayerName(t *testing.T) {
+	r := reporting.RollStreakReport{
+		SummaryByAttacker: []reporting.PlayerStreakSummary{
+			{PlayerID: "p1", PlayerName: "Tucker", AttackRollsCaptured: 8, AttackerLossCount: 5},
+		},
+	}
+	out := formatRollStreaks(r, "Test Game", 5)
+	if !strings.Contains(out, "Tucker") {
+		t.Errorf("expected player name in summary, got: %q", out)
+	}
+}
+
+func TestFormatRollStreaks_TopNLimitsStreaksShown(t *testing.T) {
+	streaks := make([]reporting.Streak, 3)
+	for i := range streaks {
+		streaks[i] = reporting.Streak{AttackerName: "Alice", Length: 3 - i, StartSeq: int64(i), EndSeq: int64(i), RollTrace: "1-0, 1-0"}
+	}
+	r := reporting.RollStreakReport{
+		SummaryByAttacker:    []reporting.PlayerStreakSummary{{PlayerID: "p1", PlayerName: "Alice", AttackRollsCaptured: 6}},
+		AttackingLossStreaks: streaks,
+	}
+	out := formatRollStreaks(r, "Test Game", 2)
+	if !strings.Contains(out, "1 more not shown") {
+		t.Errorf("expected truncation notice for top=2 with 3 streaks, got: %q", out)
+	}
+}
+
+func TestFormatRollStreaks_RollTraceShown(t *testing.T) {
+	r := reporting.RollStreakReport{
+		SummaryByAttacker: []reporting.PlayerStreakSummary{{PlayerID: "p1", PlayerName: "Alice", AttackRollsCaptured: 2}},
+		AttackingLossStreaks: []reporting.Streak{
+			{AttackerName: "Alice", Length: 2, StartSeq: 1, EndSeq: 2, RollTrace: "2-0, 1-0"},
+		},
+	}
+	out := formatRollStreaks(r, "Test Game", 5)
+	if !strings.Contains(out, "2-0, 1-0") {
+		t.Errorf("expected roll trace, got: %q", out)
 	}
 }
 

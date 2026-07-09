@@ -19,6 +19,7 @@ type reportingRepository interface {
 	LoadRawCombatEvents(ctx context.Context, gameID string) ([]rawCombatRow, error)
 	LoadRawRecentCombatEvents(ctx context.Context, gameID string, limit int) ([]rawCombatRow, error)
 	LoadPlayerNames(ctx context.Context, playerIDs []string) (map[string]string, error)
+	LoadEventHistoryComplete(ctx context.Context, gameID string) (bool, error)
 }
 
 var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -134,6 +135,35 @@ func (svc *Service) RecentRolls(ctx context.Context, gameID string, count int) (
 		return nil, fmt.Errorf("load player names: %w", err)
 	}
 	return BuildRecentRolls(events, names), nil
+}
+
+// RollStreakReport builds the attacking-loss/win/drought streak report for a
+// game. Returns ErrNoEvents when the game has no combat_roll_resolved events.
+func (svc *Service) RollStreakReport(ctx context.Context, gameID, gameName string, thresholds StreakThresholds) (RollStreakReport, error) {
+	raw, err := svc.repo.LoadRawCombatEvents(ctx, gameID)
+	if err != nil {
+		return RollStreakReport{}, fmt.Errorf("load combat events: %w", err)
+	}
+	if len(raw) == 0 {
+		return RollStreakReport{}, ErrNoEvents
+	}
+	events, skipped, err := decodeAll(raw)
+	if err != nil {
+		return RollStreakReport{}, err
+	}
+
+	ids := uniquePlayerIDs(events)
+	names, err := svc.repo.LoadPlayerNames(ctx, ids)
+	if err != nil {
+		return RollStreakReport{}, fmt.Errorf("load player names: %w", err)
+	}
+
+	complete, err := svc.repo.LoadEventHistoryComplete(ctx, gameID)
+	if err != nil {
+		return RollStreakReport{}, fmt.Errorf("load event history completeness: %w", err)
+	}
+
+	return BuildRollStreakReport(gameID, gameName, !complete, events, skipped, names, thresholds), nil
 }
 
 func appendUnique(ids []string, id string) []string {

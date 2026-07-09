@@ -23,6 +23,7 @@ type reportingService interface {
 	DiceReport(ctx context.Context, gameID string) (reporting.DiceReport, error)
 	PlayerReport(ctx context.Context, gameID, playerID string) (reporting.PlayerCombatReport, error)
 	RecentRolls(ctx context.Context, gameID string, count int) ([]reporting.RecentCombatRoll, error)
+	RollStreakReport(ctx context.Context, gameID, gameName string, thresholds reporting.StreakThresholds) (reporting.RollStreakReport, error)
 }
 
 type Bot struct {
@@ -97,6 +98,8 @@ func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 			b.handlePlayerStats(s, i)
 		case playerUpCommandName:
 			b.handlePlayerUp(s, i)
+		case rollStreaksCommandName:
+			b.handleRollStreaks(s, i)
 		}
 	case discordgo.InteractionApplicationCommandAutocomplete:
 		b.handleAutocomplete(s, i)
@@ -332,6 +335,51 @@ func (b *Bot) handlePlayerUp(s *discordgo.Session, i *discordgo.InteractionCreat
 		playerRef = fmt.Sprintf("<@%s>", *discordName)
 	}
 	editResponse(s, i, fmt.Sprintf("%s, play your turn in **%s**! ⚔️", playerRef, resolvedName))
+}
+
+func (b *Bot) handleRollStreaks(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	gameName := ""
+	top := defaultStreakTopN
+	thresholds := reporting.DefaultStreakThresholds()
+	for _, o := range i.ApplicationCommandData().Options {
+		switch o.Name {
+		case "game":
+			gameName = o.StringValue()
+		case "top":
+			top = min(max(int(o.IntValue()), 1), maxStreakTopN)
+		case "min-loss-streak":
+			thresholds.MinLossStreakLength = int(o.IntValue())
+		case "min-win-streak":
+			thresholds.MinWinStreakLength = int(o.IntValue())
+		case "min-drought":
+			thresholds.MinDroughtLength = int(o.IntValue())
+		}
+	}
+
+	if err := deferResponse(s, i); err != nil {
+		log.Printf("discord: /roll-streaks defer error: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	gameID, resolvedName, ok := b.resolveGame(ctx, s, i, gameName)
+	if !ok {
+		return
+	}
+
+	report, err := b.reporting.RollStreakReport(ctx, gameID, resolvedName, thresholds)
+	if err != nil {
+		log.Printf("discord: /roll-streaks report error: %v", err)
+		msg := "I couldn't generate that report."
+		if errors.Is(err, reporting.ErrNoEvents) {
+			msg = "No combat events found for this game yet."
+		}
+		editResponse(s, i, msg)
+		return
+	}
+	editResponse(s, i, formatRollStreaks(report, resolvedName, top))
 }
 
 // resolveGame fetches the game ID and canonical name for the given name string

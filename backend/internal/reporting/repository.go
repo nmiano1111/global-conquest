@@ -64,6 +64,11 @@ SELECT id::text, username
 FROM users
 WHERE id::text = ANY($1::text[])`
 
+const queryEventHistoryComplete = `
+SELECT event_history_complete
+FROM games
+WHERE id = $1::uuid`
+
 const queryLatestGame = `
 SELECT id::text, name
 FROM games
@@ -93,7 +98,7 @@ WHERE status = 'in_progress'
 ORDER BY updated_at DESC
 LIMIT 25`
 
-// $1 = username prefix, $2 = game name filter ('' = all in-progress games)
+// $1 = username prefix, $2 = game name filter (” = all in-progress games)
 const queryPlayerChoices = `
 SELECT DISTINCT u.username, u.discord_name
 FROM game_players gp
@@ -153,6 +158,17 @@ func (r *Repository) LoadPlayerNames(ctx context.Context, playerIDs []string) (m
 		out[id] = name
 	}
 	return out, rows.Err()
+}
+
+// LoadEventHistoryComplete returns whether game_domain_events captures the
+// entire game from its start. See migration V13 for the backfill semantics.
+func (r *Repository) LoadEventHistoryComplete(ctx context.Context, gameID string) (bool, error) {
+	var complete bool
+	err := r.db.QueryRow(ctx, queryEventHistoryComplete, gameID).Scan(&complete)
+	if err != nil {
+		return false, fmt.Errorf("query event history complete: %w", err)
+	}
+	return complete, nil
 }
 
 // LoadLatestGame returns the ID and name of the most recently updated non-lobby

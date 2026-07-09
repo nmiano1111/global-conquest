@@ -1,6 +1,10 @@
 package reporting
 
-import "time"
+import (
+	"time"
+
+	"backend/internal/risk"
+)
 
 // CombatEvent is a decoded and validated combat_roll_resolved domain event row.
 type CombatEvent struct {
@@ -17,6 +21,7 @@ type CombatEvent struct {
 	TargetArmiesBefore int
 	AttackerDice       []int
 	DefenderDice       []int
+	Comparisons        []risk.DieComparison
 	AttackerLosses     int
 	DefenderLosses     int
 	TerritoryCaptured  bool

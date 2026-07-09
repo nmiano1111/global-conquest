@@ -23,8 +23,14 @@ const (
 	playerUpCommandName        = "player-up"
 	playerUpCommandDescription = "Remind the current player it's their turn"
 
+	rollStreaksCommandName        = "roll-streaks"
+	rollStreaksCommandDescription = "Show attacking win/loss streaks and droughts for a game"
+
 	defaultLastRollsCount = 5
 	maxLastRollsCount     = 20
+
+	defaultStreakTopN = 5
+	maxStreakTopN     = 15
 )
 
 type commandAction int
@@ -175,6 +181,42 @@ func allCommandDefs() []*discordgo.ApplicationCommand {
 			Name:        playerUpCommandName,
 			Description: playerUpCommandDescription,
 			Options:     []*discordgo.ApplicationCommandOption{gameOption},
+		},
+		{
+			Name:        rollStreaksCommandName,
+			Description: rollStreaksCommandDescription,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "top",
+					Description: fmt.Sprintf("Number of streaks to show per category (default %d, max %d)", defaultStreakTopN, maxStreakTopN),
+					Required:    false,
+					MinValue:    &minCount,
+					MaxValue:    float64(maxStreakTopN),
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "min-loss-streak",
+					Description: "Minimum consecutive losses to count as a loss streak (default 2)",
+					Required:    false,
+					MinValue:    &minCount,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "min-win-streak",
+					Description: "Minimum consecutive wins to count as a win streak (default 2)",
+					Required:    false,
+					MinValue:    &minCount,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "min-drought",
+					Description: "Minimum consecutive non-wins to count as a drought (default 3)",
+					Required:    false,
+					MinValue:    &minCount,
+				},
+				gameOption,
+			},
 		},
 	}
 }

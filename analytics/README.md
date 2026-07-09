@@ -63,6 +63,34 @@ Writes:
 - `reports/generated/combat/player_combat_summary.csv`
 - `reports/generated/combat/*.png` — four Matplotlib charts
 
+### 3. Export games from Postgres
+
+Requires `DATABASE_URL` to be set. Needed by `roll-streak-report` for game
+names and partial-event-history detection.
+
+```bash
+poetry run export-games
+```
+
+Writes: `data/raw/games.parquet`
+
+### 4. Generate roll streak report
+
+Reports consecutive attacking loss streaks, win streaks, and "attack
+droughts" (non-win runs) per player. Does **not** query Postgres — run
+`export-events` and `export-games` first.
+
+```bash
+poetry run roll-streak-report --format markdown
+poetry run roll-streak-report --format json --game-id <game-id>
+```
+
+Options: `--game-id`, `--player-id`, `--min-loss-streak-length` (default 2),
+`--min-win-streak-length` (default 2), `--min-drought-length` (default 3),
+`--top` (default 5, per-section streak count in Markdown; 0 = show all),
+`--format markdown|json`, `--include-partial-games` (required to proceed
+when the target game's `event_history_complete` flag is false).
+
 ## Output Locations
 
 | Path | Description |
