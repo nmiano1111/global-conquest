@@ -167,7 +167,7 @@ func TestRenderTurnStarted(t *testing.T) {
 		"player_display_name": "Alice",
 		"turn_number": 5
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestRenderTurnStartedWithDiscordNames(t *testing.T) {
 		"player_discord_name": "alicewonder",
 		"turn_number": 5
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestRenderTurnStartedOneDiscordNameMissing(t *testing.T) {
 		"player_display_name": "Alice",
 		"turn_number": 5
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRenderTurnStartedMissingName(t *testing.T) {
 		"player_id": "player-uuid",
 		"player_display_name": ""
 	}`)
-	_, err := renderMessage(entry)
+	_, _, err := renderMessage(entry, "")
 	if err == nil {
 		t.Fatal("expected error for missing player_display_name")
 	}
@@ -232,7 +232,7 @@ func TestRenderCardsTrade(t *testing.T) {
 		"player_display_name": "Alice",
 		"armies": 8
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestRenderCardsTradeWithDiscordName(t *testing.T) {
 		"player_discord_name": "alicewonder",
 		"armies": 4
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestRenderCardsTradesMissingName(t *testing.T) {
 		"player_display_name": "",
 		"armies": 4
 	}`)
-	_, err := renderMessage(entry)
+	_, _, err := renderMessage(entry, "")
 	if err == nil {
 		t.Fatal("expected error for missing player_display_name")
 	}
@@ -279,7 +279,7 @@ func TestRenderPlayerEliminated(t *testing.T) {
 		"eliminated_player_id": "b1",
 		"eliminated_player_display_name": "Bob"
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestRenderPlayerEliminatedWithDiscordNames(t *testing.T) {
 		"eliminated_player_display_name": "Bob",
 		"eliminated_player_discord_name": "bobsmith"
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestRenderPlayerEliminatedOneDiscordNameMissing(t *testing.T) {
 		"eliminated_player_id": "b1",
 		"eliminated_player_display_name": "Bob"
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestRenderGameOver(t *testing.T) {
 		"winner_id": "a1",
 		"winner_display_name": "Alice"
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestRenderGameOverWithDiscordName(t *testing.T) {
 		"winner_display_name": "Alice",
 		"winner_discord_name": "alicewonder"
 	}`)
-	msg, err := renderMessage(entry)
+	msg, _, err := renderMessage(entry, "")
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
@@ -356,9 +356,71 @@ func TestRenderGameOverWithDiscordName(t *testing.T) {
 	}
 }
 
+func TestRenderGameOverWithFrontendURL_LinksGameNameViaEmbed(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeGameOver, `{
+		"schema_version": 1,
+		"winner_id": "a1",
+		"winner_display_name": "Alice"
+	}`)
+	msg, embeds, err := renderMessage(entry, "https://play.example.com")
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	// Discord content does not render [text](url) markdown links, so the
+	// game name must not appear as inline backtick text in content anymore —
+	// it moves entirely into the embed.
+	if msg != "@everyone 🏆 **Alice** has won the game!" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+	if len(embeds) != 1 {
+		t.Fatalf("expected 1 embed, got %d", len(embeds))
+	}
+	if embeds[0].Title != "game-1" {
+		t.Errorf("expected embed title to be the game name, got %q", embeds[0].Title)
+	}
+	if embeds[0].URL != "https://play.example.com/app/game/game-1" {
+		t.Errorf("unexpected embed URL: %q", embeds[0].URL)
+	}
+}
+
+func TestRenderTurnStartedWithFrontendURL_LinksGameNameViaEmbed(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeTurnStarted, `{
+		"schema_version": 1,
+		"previous_player_display_name": "Bob",
+		"player_id": "player-uuid",
+		"player_display_name": "Alice",
+		"turn_number": 5
+	}`)
+	msg, embeds, err := renderMessage(entry, "https://play.example.com")
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if strings.Contains(msg, "game-1") {
+		t.Errorf("game name should not appear in content when linked via embed, got: %q", msg)
+	}
+	if len(embeds) != 1 || embeds[0].URL != "https://play.example.com/app/game/game-1" {
+		t.Fatalf("expected a linking embed, got: %v", embeds)
+	}
+}
+
+func TestRenderWithoutFrontendURL_NoEmbed(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeGameOver, `{
+		"schema_version": 1,
+		"winner_id": "a1",
+		"winner_display_name": "Alice"
+	}`)
+	_, embeds, err := renderMessage(entry, "")
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if embeds != nil {
+		t.Fatalf("expected no embeds when frontendBaseURL is unset, got: %v", embeds)
+	}
+}
+
 func TestRenderMalformedPayload(t *testing.T) {
 	entry := makeEntry(store.NotificationTypeTurnStarted, `not-valid-json`)
-	_, err := renderMessage(entry)
+	_, _, err := renderMessage(entry, "")
 	if err == nil {
 		t.Fatal("expected error for malformed payload")
 	}
@@ -366,7 +428,7 @@ func TestRenderMalformedPayload(t *testing.T) {
 
 func TestRenderUnknownNotificationType(t *testing.T) {
 	entry := makeEntry("player_surrendered", `{"schema_version":1}`)
-	_, err := renderMessage(entry)
+	_, _, err := renderMessage(entry, "")
 	if err == nil {
 		t.Fatal("expected error for unknown notification type")
 	}
@@ -405,12 +467,12 @@ func (f *fakeOutboxClaimer) MarkFailed(ctx context.Context, id string, attempt i
 }
 
 type fakeSender struct {
-	sendFn func(ctx context.Context, channelID, content string) error
+	sendFn func(ctx context.Context, channelID, content string, embeds ...*discordgo.MessageEmbed) error
 }
 
-func (f *fakeSender) SendMessage(ctx context.Context, channelID, content string) error {
+func (f *fakeSender) SendMessage(ctx context.Context, channelID, content string, embeds ...*discordgo.MessageEmbed) error {
 	if f.sendFn != nil {
-		return f.sendFn(ctx, channelID, content)
+		return f.sendFn(ctx, channelID, content, embeds...)
 	}
 	return nil
 }
@@ -434,13 +496,13 @@ func TestWorkerDeliverSuccess(t *testing.T) {
 		},
 	}
 	sender := &fakeSender{
-		sendFn: func(_ context.Context, _, content string) error {
+		sendFn: func(_ context.Context, _, content string, _ ...*discordgo.MessageEmbed) error {
 			sentContent = content
 			return nil
 		},
 	}
 
-	w := NewWorker(claimer, sender, "channel-id")
+	w := NewWorker(claimer, sender, "channel-id", "")
 	w.deliver(context.Background(), entry)
 
 	if sentContent != "@everyone 🎯 <@Alice> ended their turn. <@Bob> is up. (game `game-1`)" {
@@ -448,6 +510,36 @@ func TestWorkerDeliverSuccess(t *testing.T) {
 	}
 	if markedDelivered != "outbox-1" {
 		t.Fatalf("expected MarkDelivered called with outbox-1, got %q", markedDelivered)
+	}
+}
+
+func TestWorkerDeliverWithFrontendURL_PassesEmbedToSender(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeGameOver, `{
+		"schema_version": 1,
+		"winner_id": "a1",
+		"winner_display_name": "Alice"
+	}`)
+	entry.AttemptCount = 1
+
+	var sentEmbeds []*discordgo.MessageEmbed
+	claimer := &fakeOutboxClaimer{
+		deliverFn: func(context.Context, string) error { return nil },
+	}
+	sender := &fakeSender{
+		sendFn: func(_ context.Context, _, _ string, embeds ...*discordgo.MessageEmbed) error {
+			sentEmbeds = embeds
+			return nil
+		},
+	}
+
+	w := NewWorker(claimer, sender, "channel-id", "https://play.example.com")
+	w.deliver(context.Background(), entry)
+
+	if len(sentEmbeds) != 1 {
+		t.Fatalf("expected 1 embed passed to sender, got %d", len(sentEmbeds))
+	}
+	if sentEmbeds[0].URL != "https://play.example.com/app/game/game-1" {
+		t.Errorf("unexpected embed URL: %q", sentEmbeds[0].URL)
 	}
 }
 
@@ -475,12 +567,12 @@ func TestWorkerDeliverSendError(t *testing.T) {
 		},
 	}
 	sender := &fakeSender{
-		sendFn: func(context.Context, string, string) error {
+		sendFn: func(context.Context, string, string, ...*discordgo.MessageEmbed) error {
 			return errors.New("discord 429")
 		},
 	}
 
-	w := NewWorker(claimer, sender, "channel-id")
+	w := NewWorker(claimer, sender, "channel-id", "")
 	w.deliver(context.Background(), entry)
 
 	if failedID != "outbox-1" {
@@ -503,13 +595,13 @@ func TestWorkerDeliverMalformedPayload(t *testing.T) {
 		},
 	}
 	sender := &fakeSender{
-		sendFn: func(context.Context, string, string) error {
+		sendFn: func(context.Context, string, string, ...*discordgo.MessageEmbed) error {
 			t.Error("SendMessage must not be called for malformed payload")
 			return nil
 		},
 	}
 
-	w := NewWorker(claimer, sender, "channel-id")
+	w := NewWorker(claimer, sender, "channel-id", "")
 	w.deliver(context.Background(), entry)
 
 	if !failCalled {
@@ -529,13 +621,13 @@ func TestWorkerDeliverUnknownType(t *testing.T) {
 		},
 	}
 	sender := &fakeSender{
-		sendFn: func(context.Context, string, string) error {
+		sendFn: func(context.Context, string, string, ...*discordgo.MessageEmbed) error {
 			t.Error("SendMessage must not be called for unknown notification type")
 			return nil
 		},
 	}
 
-	w := NewWorker(claimer, sender, "channel-id")
+	w := NewWorker(claimer, sender, "channel-id", "")
 	w.deliver(context.Background(), entry)
 
 	if !failCalled {

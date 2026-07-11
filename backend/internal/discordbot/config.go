@@ -11,6 +11,10 @@ type Config struct {
 	ApplicationID   string
 	GuildID         string
 	EventsChannelID string
+	// FrontendBaseURL is optional. When set, notifications link the game name
+	// to <FrontendBaseURL>/app/game/<id>. When unset, notifications fall back
+	// to showing the game name as plain text.
+	FrontendBaseURL string
 }
 
 func ConfigFromEnv() (Config, error) {
@@ -19,6 +23,7 @@ func ConfigFromEnv() (Config, error) {
 		ApplicationID:   strings.TrimSpace(os.Getenv("DISCORD_APPLICATION_ID")),
 		GuildID:         strings.TrimSpace(os.Getenv("DISCORD_GUILD_ID")),
 		EventsChannelID: strings.TrimSpace(os.Getenv("DISCORD_EVENTS_CHANNEL_ID")),
+		FrontendBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_BASE_URL")), "/"),
 	}
 
 	var missing []string

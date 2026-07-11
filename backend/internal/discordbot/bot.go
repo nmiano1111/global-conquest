@@ -79,8 +79,15 @@ type discordMessageSender struct {
 	session *discordgo.Session
 }
 
-func (s *discordMessageSender) SendMessage(_ context.Context, channelID, content string) error {
-	_, err := s.session.ChannelMessageSend(channelID, content)
+func (s *discordMessageSender) SendMessage(_ context.Context, channelID, content string, embeds ...*discordgo.MessageEmbed) error {
+	if len(embeds) == 0 {
+		_, err := s.session.ChannelMessageSend(channelID, content)
+		return err
+	}
+	_, err := s.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: content,
+		Embeds:  embeds,
+	})
 	return err
 }
 

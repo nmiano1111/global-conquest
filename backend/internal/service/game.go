@@ -546,13 +546,6 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 					); err != nil {
 						return err
 					}
-					if engine.Phase == risk.PhaseGameOver {
-						if err := s.discordOutbox.EnqueueGameOver(ctx, q, g.ID, g.Name,
-							in.PlayerUserID, displayName(names, in.PlayerUserID), discordNames[in.PlayerUserID],
-						); err != nil {
-							return err
-						}
-					}
 				}
 			}
 		case "occupy":
@@ -570,6 +563,20 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			eventType = "territory_occupied"
 			eventBody = fmt.Sprintf("%s moved %d %s from %s to %s.", displayName(names, in.PlayerUserID), in.Armies, pluralize("army", in.Armies), from, to)
+			// Winning the game is only detected here: checkWinner() runs inside
+			// OccupyTerritory (and EndTurn, defensively), never inside Attack —
+			// a conquering attack always transitions to PhaseOccupy first.
+			if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.discordOutbox != nil {
+				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{engine.Winner})
+				if err != nil {
+					return err
+				}
+				if err := s.discordOutbox.EnqueueGameOver(ctx, q, g.ID, g.Name,
+					engine.Winner, displayName(names, engine.Winner), discordNames[engine.Winner],
+				); err != nil {
+					return err
+				}
+			}
 		case "end_attack":
 			if err := engine.EndAttackPhase(in.PlayerUserID); err != nil {
 				return err

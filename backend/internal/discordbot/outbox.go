@@ -9,11 +9,13 @@ import (
 
 	"backend/internal/db"
 	"backend/internal/store"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 // MessageSender abstracts Discord message delivery for testability.
 type MessageSender interface {
-	SendMessage(ctx context.Context, channelID, content string) error
+	SendMessage(ctx context.Context, channelID, content string, embeds ...*discordgo.MessageEmbed) error
 }
 
 // outboxClaimer is the store interface the worker needs.
@@ -48,19 +50,21 @@ func NewBoundOutboxStore(s *store.PostgresDiscordOutboxStore, d *db.DB) outboxCl
 
 // Worker polls discord_outbox and delivers pending notifications.
 type Worker struct {
-	store     outboxClaimer
-	sender    MessageSender
-	channelID string
-	cancel    context.CancelFunc
-	stopped   chan struct{}
+	store           outboxClaimer
+	sender          MessageSender
+	channelID       string
+	frontendBaseURL string
+	cancel          context.CancelFunc
+	stopped         chan struct{}
 }
 
-func NewWorker(store outboxClaimer, sender MessageSender, channelID string) *Worker {
+func NewWorker(store outboxClaimer, sender MessageSender, channelID, frontendBaseURL string) *Worker {
 	return &Worker{
-		store:     store,
-		sender:    sender,
-		channelID: channelID,
-		stopped:   make(chan struct{}),
+		store:           store,
+		sender:          sender,
+		channelID:       channelID,
+		frontendBaseURL: frontendBaseURL,
+		stopped:         make(chan struct{}),
 	}
 }
 
@@ -135,7 +139,7 @@ func (w *Worker) run(ctx context.Context) {
 }
 
 func (w *Worker) deliver(ctx context.Context, entry store.DiscordOutboxEntry) {
-	msg, err := renderMessage(entry)
+	msg, embeds, err := renderMessage(entry, w.frontendBaseURL)
 	if err != nil {
 		log.Printf("discord: notification %s (game=%s) render error: %v", entry.ID, entry.GameName, err)
 		if markErr := w.store.MarkFailed(ctx, entry.ID, entry.AttemptCount, err.Error()); markErr != nil {
@@ -144,7 +148,7 @@ func (w *Worker) deliver(ctx context.Context, entry store.DiscordOutboxEntry) {
 		return
 	}
 
-	if err := w.sender.SendMessage(ctx, w.channelID, msg); err != nil {
+	if err := w.sender.SendMessage(ctx, w.channelID, msg, embeds...); err != nil {
 		log.Printf("discord: notification %s (game=%s) delivery failed (attempt %d): %v",
 			entry.ID, entry.GameName, entry.AttemptCount, err)
 		errStr := err.Error()
@@ -160,60 +164,90 @@ func (w *Worker) deliver(ctx context.Context, entry store.DiscordOutboxEntry) {
 	}
 }
 
-// renderMessage converts an outbox entry into a Discord message string.
-func renderMessage(entry store.DiscordOutboxEntry) (string, error) {
+// gameDiscordColor is the accent color used for the game-name link embed
+// (Discord's "blurple").
+const gameDiscordColor = 0x5865F2
+
+// gameReference returns the message-content suffix and/or embed used to
+// reference the game a notification belongs to.
+//
+// Discord's plain message content does not render `[text](url)` markdown
+// hyperlinks — that only works inside embeds. So when frontendBaseURL is
+// configured, the game name is dropped from the content string and instead
+// becomes an embed with Title=gameName and URL=<link>, which Discord renders
+// as a clickable heading. When frontendBaseURL is unset, we fall back to the
+// old inline "(game `name`)" text suffix so notifications still identify the
+// game even without a configured frontend URL.
+func gameReference(entry store.DiscordOutboxEntry, frontendBaseURL string) (suffix string, embeds []*discordgo.MessageEmbed) {
+	if frontendBaseURL == "" {
+		return fmt.Sprintf(" (game `%s`)", entry.GameName), nil
+	}
+	url := frontendBaseURL + "/app/game/" + entry.GameID
+	return "", []*discordgo.MessageEmbed{
+		{
+			Title: entry.GameName,
+			URL:   url,
+			Color: gameDiscordColor,
+		},
+	}
+}
+
+// renderMessage converts an outbox entry into Discord message content and,
+// when a frontend URL is configured, an embed linking the game name.
+func renderMessage(entry store.DiscordOutboxEntry, frontendBaseURL string) (string, []*discordgo.MessageEmbed, error) {
+	gameSuffix, embeds := gameReference(entry, frontendBaseURL)
 	switch entry.NotificationType {
 	case store.NotificationTypeTurnStarted:
 		var p store.TurnStartedPayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
-			return "", fmt.Errorf("malformed turn_started payload (id=%s): %w", entry.ID, err)
+			return "", nil, fmt.Errorf("malformed turn_started payload (id=%s): %w", entry.ID, err)
 		}
 		if p.PlayerDisplayName == "" {
-			return "", fmt.Errorf("turn_started payload missing player_display_name (id=%s)", entry.ID)
+			return "", nil, fmt.Errorf("turn_started payload missing player_display_name (id=%s)", entry.ID)
 		}
 		if p.PreviousPlayerDiscordName != nil && *p.PreviousPlayerDiscordName != "" &&
 			p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
-			return fmt.Sprintf("🎯 <@%s> ended their turn. <@%s> is up. (game `%s`)", *p.PreviousPlayerDiscordName, *p.PlayerDiscordName, entry.GameName), nil
+			return fmt.Sprintf("🎯 <@%s> ended their turn. <@%s> is up.%s", *p.PreviousPlayerDiscordName, *p.PlayerDiscordName, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone 🎯 <@%s> ended their turn. <@%s> is up. (game `%s`)", p.PreviousPlayerDisplayName, p.PlayerDisplayName, entry.GameName), nil
+		return fmt.Sprintf("@everyone 🎯 <@%s> ended their turn. <@%s> is up.%s", p.PreviousPlayerDisplayName, p.PlayerDisplayName, gameSuffix), embeds, nil
 	case store.NotificationTypeCardsTrade:
 		var p store.CardsTradePayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
-			return "", fmt.Errorf("malformed cards_trade payload (id=%s): %w", entry.ID, err)
+			return "", nil, fmt.Errorf("malformed cards_trade payload (id=%s): %w", entry.ID, err)
 		}
 		if p.PlayerDisplayName == "" {
-			return "", fmt.Errorf("cards_trade payload missing player_display_name (id=%s)", entry.ID)
+			return "", nil, fmt.Errorf("cards_trade payload missing player_display_name (id=%s)", entry.ID)
 		}
 		if p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
-			return fmt.Sprintf("🃏 <@%s> traded in cards for %d armies. (game `%s`)", *p.PlayerDiscordName, p.Armies, entry.GameName), nil
+			return fmt.Sprintf("🃏 <@%s> traded in cards for %d armies.%s", *p.PlayerDiscordName, p.Armies, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone 🃏 **%s** traded in cards for %d armies. (game `%s`)", p.PlayerDisplayName, p.Armies, entry.GameName), nil
+		return fmt.Sprintf("@everyone 🃏 **%s** traded in cards for %d armies.%s", p.PlayerDisplayName, p.Armies, gameSuffix), embeds, nil
 	case store.NotificationTypePlayerEliminated:
 		var p store.PlayerEliminatedPayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
-			return "", fmt.Errorf("malformed player_eliminated payload (id=%s): %w", entry.ID, err)
+			return "", nil, fmt.Errorf("malformed player_eliminated payload (id=%s): %w", entry.ID, err)
 		}
 		if p.AttackerDisplayName == "" || p.EliminatedPlayerDisplayName == "" {
-			return "", fmt.Errorf("player_eliminated payload missing display name (id=%s)", entry.ID)
+			return "", nil, fmt.Errorf("player_eliminated payload missing display name (id=%s)", entry.ID)
 		}
 		if p.AttackerDiscordName != nil && *p.AttackerDiscordName != "" &&
 			p.EliminatedPlayerDiscordName != nil && *p.EliminatedPlayerDiscordName != "" {
-			return fmt.Sprintf("⚔️ <@%s> eliminated <@%s>! (game `%s`)", *p.AttackerDiscordName, *p.EliminatedPlayerDiscordName, entry.GameName), nil
+			return fmt.Sprintf("⚔️ <@%s> eliminated <@%s>!%s", *p.AttackerDiscordName, *p.EliminatedPlayerDiscordName, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone ⚔️ **%s** eliminated **%s**! (game `%s`)", p.AttackerDisplayName, p.EliminatedPlayerDisplayName, entry.GameName), nil
+		return fmt.Sprintf("@everyone ⚔️ **%s** eliminated **%s**!%s", p.AttackerDisplayName, p.EliminatedPlayerDisplayName, gameSuffix), embeds, nil
 	case store.NotificationTypeGameOver:
 		var p store.GameOverPayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
-			return "", fmt.Errorf("malformed game_over payload (id=%s): %w", entry.ID, err)
+			return "", nil, fmt.Errorf("malformed game_over payload (id=%s): %w", entry.ID, err)
 		}
 		if p.WinnerDisplayName == "" {
-			return "", fmt.Errorf("game_over payload missing winner_display_name (id=%s)", entry.ID)
+			return "", nil, fmt.Errorf("game_over payload missing winner_display_name (id=%s)", entry.ID)
 		}
 		if p.WinnerDiscordName != nil && *p.WinnerDiscordName != "" {
-			return fmt.Sprintf("🏆 <@%s> has won the game! (game `%s`)", *p.WinnerDiscordName, entry.GameName), nil
+			return fmt.Sprintf("🏆 <@%s> has won the game!%s", *p.WinnerDiscordName, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone 🏆 **%s** has won the game! (game `%s`)", p.WinnerDisplayName, entry.GameName), nil
+		return fmt.Sprintf("@everyone 🏆 **%s** has won the game!%s", p.WinnerDisplayName, gameSuffix), embeds, nil
 	default:
-		return "", fmt.Errorf("unknown notification type %q (id=%s)", entry.NotificationType, entry.ID)
+		return "", nil, fmt.Errorf("unknown notification type %q (id=%s)", entry.NotificationType, entry.ID)
 	}
 }

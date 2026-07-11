@@ -53,7 +53,7 @@ func main() {
 
 	// Outbox worker
 	outboxStore := discordbot.NewBoundOutboxStore(store.NewPostgresDiscordOutboxStore(), d)
-	worker := discordbot.NewWorker(outboxStore, bot.NewMessageSender(), cfg.EventsChannelID)
+	worker := discordbot.NewWorker(outboxStore, bot.NewMessageSender(), cfg.EventsChannelID, cfg.FrontendBaseURL)
 	worker.Start(ctx)
 
 	// Wait for shutdown

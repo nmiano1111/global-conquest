@@ -757,6 +757,9 @@ type fakeDiscordOutboxStore struct {
 	enqueueFn func(ctx context.Context, q db.Querier, gameID, gameName, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error
 	calls     int
 	lastQ     db.Querier
+
+	gameOverFn    func(ctx context.Context, q db.Querier, gameID, gameName, winnerID, winnerDisplayName string, winnerDiscordName *string) error
+	gameOverCalls int
 }
 
 func (f *fakeDiscordOutboxStore) EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, gameName, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error {
@@ -776,7 +779,11 @@ func (f *fakeDiscordOutboxStore) EnqueuePlayerEliminated(_ context.Context, _ db
 	return nil
 }
 
-func (f *fakeDiscordOutboxStore) EnqueueGameOver(_ context.Context, _ db.Querier, _, _, _, _ string, _ *string) error {
+func (f *fakeDiscordOutboxStore) EnqueueGameOver(ctx context.Context, q db.Querier, gameID, gameName, winnerID, winnerDisplayName string, winnerDiscordName *string) error {
+	f.gameOverCalls++
+	if f.gameOverFn != nil {
+		return f.gameOverFn(ctx, q, gameID, gameName, winnerID, winnerDisplayName, winnerDiscordName)
+	}
 	return nil
 }
 
@@ -1036,5 +1043,73 @@ func TestNonEndTurnActionProducesNoOutboxNotification(t *testing.T) {
 	}
 	if outboxStore.calls != 0 {
 		t.Fatalf("place_reinforcement must not produce outbox notification, got %d calls", outboxStore.calls)
+	}
+}
+
+// TestOccupyCompletingGameOverEnqueuesGameOverNotification is a regression
+// test for a bug where the game_over Discord notification was wired to fire
+// right after engine.Attack() returned. But Attack() never sets
+// Phase=PhaseGameOver — checkWinner() (which sets it) only runs inside
+// OccupyTerritory and EndTurn, since a conquering attack always transitions
+// to PhaseOccupy first (the conquered territory must be occupied before the
+// engine can tell whether that was the last active opponent). So the
+// notification could never actually fire. This test builds a game already
+// mid-occupy, one move away from eliminating the last opponent, and asserts
+// the "occupy" action is what triggers EnqueueGameOver.
+func TestOccupyCompletingGameOverEnqueuesGameOverNotification(t *testing.T) {
+	g := risk.Game{
+		Players: []risk.PlayerState{{ID: "p0"}, {ID: "p1", Eliminated: true}},
+		Territories: map[risk.Territory]risk.TerritoryState{
+			"Alaska":    {Owner: 0, Armies: 5},
+			"Kamchatka": {Owner: 0, Armies: 1},
+		},
+		Phase:         risk.PhaseOccupy,
+		Occupy:        &risk.OccupyState{From: "Alaska", To: "Kamchatka", MinMove: 1, MaxMove: 3},
+		CurrentPlayer: 0,
+		SetupReserves: map[int]int{},
+	}
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var capturedWinnerID, capturedWinnerName string
+	outboxStore := &fakeDiscordOutboxStore{
+		gameOverFn: func(_ context.Context, _ db.Querier, _, _, winnerID, winnerDisplayName string, _ *string) error {
+			capturedWinnerID = winnerID
+			capturedWinnerName = winnerDisplayName
+			return nil
+		},
+	}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "completed", State: raw}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	_, err = svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: "p0",
+		Action:       "occupy",
+		Armies:       1,
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction occupy: %v", err)
+	}
+	if outboxStore.gameOverCalls != 1 {
+		t.Fatalf("expected 1 EnqueueGameOver call, got %d", outboxStore.gameOverCalls)
+	}
+	if capturedWinnerID != "p0" {
+		t.Errorf("expected winner p0, got %q", capturedWinnerID)
+	}
+	if capturedWinnerName == "" {
+		t.Error("expected a non-empty winner display name")
 	}
 }
