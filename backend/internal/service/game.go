@@ -104,6 +104,7 @@ type GameBootstrap struct {
 	Name                  string                 `json:"name"`
 	Status                string                 `json:"status"`
 	Phase                 string                 `json:"phase"`
+	Winner                string                 `json:"winner,omitempty"`
 	CurrentPlayer         int                    `json:"current_player"`
 	PendingReinforcements int                    `json:"pending_reinforcements"`
 	SetsTraded            int                    `json:"sets_traded"`
@@ -140,6 +141,7 @@ type GameActionUpdate struct {
 	Action                string                 `json:"action"`
 	ActorUserID           string                 `json:"actor_user_id"`
 	Phase                 string                 `json:"phase"`
+	Winner                string                 `json:"winner,omitempty"`
 	CurrentPlayer         int                    `json:"current_player"`
 	PendingReinforcements int                    `json:"pending_reinforcements"`
 	SetsTraded            int                    `json:"sets_traded"`
@@ -689,6 +691,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			Action:                in.Action,
 			ActorUserID:           in.PlayerUserID,
 			Phase:                 string(engine.Phase),
+			Winner:                engine.Winner,
 			CurrentPlayer:         engine.CurrentPlayer,
 			PendingReinforcements: engine.PendingReinforcements,
 			SetsTraded:            engine.SetsTraded,
@@ -789,7 +792,7 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		}
 		return out, nil
 
-	case "in_progress":
+	case "in_progress", "completed":
 		var engine risk.Game
 		if err := json.Unmarshal(g.State, &engine); err != nil {
 			return GameBootstrap{}, ErrInvalidGameInput
@@ -830,6 +833,7 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 			return GameBootstrap{}, err
 		}
 		out.Phase = string(engine.Phase)
+		out.Winner = engine.Winner
 		out.CurrentPlayer = engine.CurrentPlayer
 		out.PendingReinforcements = engine.PendingReinforcements
 		out.SetsTraded = engine.SetsTraded

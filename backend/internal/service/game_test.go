@@ -107,6 +107,72 @@ func TestCreateClassicGameValidation(t *testing.T) {
 	}
 }
 
+func TestGetGameBootstrap_CompletedGame(t *testing.T) {
+	engine := risk.Game{
+		Phase:  risk.PhaseGameOver,
+		Winner: "u1",
+		Players: []risk.PlayerState{
+			{ID: "u1"},
+			{ID: "u2"},
+			{ID: "u3"},
+		},
+		Territories:   map[risk.Territory]risk.TerritoryState{"Alaska": {Owner: 0, Armies: 5}},
+		SetupReserves: map[int]int{},
+	}
+	state, err := json.Marshal(engine)
+	if err != nil {
+		t.Fatalf("marshal engine: %v", err)
+	}
+
+	svc := NewGamesService(&fakeDB{}, &fakeGamesStore{
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "completed", State: state}, nil
+		},
+	})
+
+	out, err := svc.GetGameBootstrap(context.Background(), "g1", "u1")
+	if err != nil {
+		t.Fatalf("expected no error viewing a completed game, got %v", err)
+	}
+	if out.Status != "completed" {
+		t.Errorf("expected status completed, got %q", out.Status)
+	}
+	if out.Phase != string(risk.PhaseGameOver) {
+		t.Errorf("expected phase game_over, got %q", out.Phase)
+	}
+	if out.Winner != "u1" {
+		t.Errorf("expected winner u1, got %q", out.Winner)
+	}
+	if len(out.Players) != 3 {
+		t.Errorf("expected 3 players, got %d", len(out.Players))
+	}
+}
+
+func TestGetGameBootstrap_CompletedGameForbiddenForNonParticipant(t *testing.T) {
+	engine := risk.Game{
+		Phase:         risk.PhaseGameOver,
+		Winner:        "u1",
+		Players:       []risk.PlayerState{{ID: "u1"}, {ID: "u2"}},
+		Territories:   map[risk.Territory]risk.TerritoryState{},
+		SetupReserves: map[int]int{},
+	}
+	state, err := json.Marshal(engine)
+	if err != nil {
+		t.Fatalf("marshal engine: %v", err)
+	}
+
+	svc := NewGamesService(&fakeDB{}, &fakeGamesStore{
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "completed", State: state}, nil
+		},
+	})
+
+	_, err = svc.GetGameBootstrap(context.Background(), "g1", "outsider")
+	if !errors.Is(err, ErrGameForbidden) {
+		t.Fatalf("expected ErrGameForbidden, got %v", err)
+	}
+}
+
 func TestCreateClassicGamePersistsLobbyState(t *testing.T) {
 	called := false
 	svc := NewGamesService(&fakeDB{q: countQuerier{count: 1}}, &fakeGamesStore{
