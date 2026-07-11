@@ -165,8 +165,8 @@ export function LobbyPage() {
   const onCreateGame = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setCreateError("");
-    if (playerCount < 2 || playerCount > 6) {
-      setCreateError("Player count must be between 2 and 6.");
+    if (playerCount < 3 || playerCount > 6) {
+      setCreateError("Player count must be between 3 and 6.");
       return;
     }
 
@@ -277,7 +277,7 @@ export function LobbyPage() {
               <input
                 className={`${inputClass} w-28`}
                 type="number"
-                min={2}
+                min={3}
                 max={6}
                 value={playerCount}
                 onChange={(e) => setPlayerCount(Number(e.target.value))}
