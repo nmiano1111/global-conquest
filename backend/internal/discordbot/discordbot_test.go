@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"backend/internal/reporting"
 	"backend/internal/store"
+	"backend/internal/trello"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -20,6 +22,11 @@ func TestConfigFromEnv_AllPresent(t *testing.T) {
 	t.Setenv("DISCORD_APPLICATION_ID", "appid")
 	t.Setenv("DISCORD_GUILD_ID", "guildid")
 	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", "chanid")
+	t.Setenv("TRELLO_API_KEY", "trellokey")
+	t.Setenv("TRELLO_TOKEN", "trellotoken")
+	t.Setenv("TRELLO_TRIAGE_LIST_ID", "listid")
+	t.Setenv("TRELLO_BUG_LABEL_ID", "buglabelid")
+	t.Setenv("TRELLO_FEATURE_LABEL_ID", "featurelabelid")
 
 	cfg, err := ConfigFromEnv()
 	if err != nil {
@@ -28,6 +35,31 @@ func TestConfigFromEnv_AllPresent(t *testing.T) {
 	if cfg.BotToken != "tok" || cfg.ApplicationID != "appid" ||
 		cfg.GuildID != "guildid" || cfg.EventsChannelID != "chanid" {
 		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	if cfg.TrelloAPIKey != "trellokey" || cfg.TrelloToken != "trellotoken" ||
+		cfg.TrelloTriageListID != "listid" || cfg.TrelloBugLabelID != "buglabelid" ||
+		cfg.TrelloFeatureLabelID != "featurelabelid" {
+		t.Fatalf("unexpected trello config: %+v", cfg)
+	}
+}
+
+func TestConfigFromEnv_TrelloVarMissing(t *testing.T) {
+	t.Setenv("DISCORD_BOT_TOKEN", "tok")
+	t.Setenv("DISCORD_APPLICATION_ID", "appid")
+	t.Setenv("DISCORD_GUILD_ID", "guildid")
+	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", "chanid")
+	t.Setenv("TRELLO_API_KEY", "trellokey")
+	t.Setenv("TRELLO_TOKEN", "trellotoken")
+	t.Setenv("TRELLO_TRIAGE_LIST_ID", "listid")
+	t.Setenv("TRELLO_BUG_LABEL_ID", "buglabelid")
+	t.Setenv("TRELLO_FEATURE_LABEL_ID", "")
+
+	_, err := ConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected error for missing TRELLO_FEATURE_LABEL_ID")
+	}
+	if !strings.Contains(err.Error(), "TRELLO_FEATURE_LABEL_ID") {
+		t.Fatalf("error should name missing variable, got: %v", err)
 	}
 }
 
@@ -69,6 +101,11 @@ func TestConfigFromEnv_WhitespaceTrimmed(t *testing.T) {
 	t.Setenv("DISCORD_APPLICATION_ID", "\tappid\t")
 	t.Setenv("DISCORD_GUILD_ID", " guildid ")
 	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", " chanid ")
+	t.Setenv("TRELLO_API_KEY", "trellokey")
+	t.Setenv("TRELLO_TOKEN", "trellotoken")
+	t.Setenv("TRELLO_TRIAGE_LIST_ID", "listid")
+	t.Setenv("TRELLO_BUG_LABEL_ID", "buglabelid")
+	t.Setenv("TRELLO_FEATURE_LABEL_ID", "featurelabelid")
 
 	cfg, err := ConfigFromEnv()
 	if err != nil {
@@ -101,6 +138,27 @@ func TestConfigFromEnv_ErrorDoesNotExposeToken(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), secret) {
 		t.Fatalf("error message must not contain the bot token")
+	}
+}
+
+func TestConfigFromEnv_ErrorDoesNotExposeTrelloToken(t *testing.T) {
+	secret := "super-secret-trello-token"
+	t.Setenv("DISCORD_BOT_TOKEN", "tok")
+	t.Setenv("DISCORD_APPLICATION_ID", "appid")
+	t.Setenv("DISCORD_GUILD_ID", "guildid")
+	t.Setenv("DISCORD_EVENTS_CHANNEL_ID", "chanid")
+	t.Setenv("TRELLO_API_KEY", "trellokey")
+	t.Setenv("TRELLO_TOKEN", secret)
+	t.Setenv("TRELLO_TRIAGE_LIST_ID", "")
+	t.Setenv("TRELLO_BUG_LABEL_ID", "")
+	t.Setenv("TRELLO_FEATURE_LABEL_ID", "")
+
+	_, err := ConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error message must not contain the trello token")
 	}
 }
 
@@ -639,8 +697,8 @@ func TestWorkerDeliverUnknownType(t *testing.T) {
 
 func TestAllCommandDefs_Count(t *testing.T) {
 	defs := allCommandDefs()
-	if len(defs) != 6 {
-		t.Errorf("expected 6 command defs, got %d", len(defs))
+	if len(defs) != 8 {
+		t.Errorf("expected 8 command defs, got %d", len(defs))
 	}
 }
 
@@ -650,7 +708,10 @@ func TestAllCommandDefs_Names(t *testing.T) {
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, want := range []string{pingCommandName, lastRollsCommandName, diceReportCommandName, playerStatsCommandName, playerUpCommandName, rollStreaksCommandName} {
+	for _, want := range []string{
+		pingCommandName, lastRollsCommandName, diceReportCommandName, playerStatsCommandName,
+		playerUpCommandName, rollStreaksCommandName, bugCommandName, featureCommandName,
+	} {
 		if !names[want] {
 			t.Errorf("missing command def: %q", want)
 		}
@@ -969,3 +1030,342 @@ type RecentCombatRoll = reporting.RecentCombatRoll
 type DiceReport = reporting.DiceReport
 type PlayerCombatReport = reporting.PlayerCombatReport
 type FaceDistribution = reporting.FaceDistribution
+
+// --- ticket.go: parseTicketType / custom ID tests ---
+
+func TestParseTicketType_Bug(t *testing.T) {
+	got, ok := parseTicketType("ticket_modal:bug")
+	if !ok || got != ticketTypeBug {
+		t.Fatalf("expected (bug, true), got (%q, %v)", got, ok)
+	}
+}
+
+func TestParseTicketType_Feature(t *testing.T) {
+	got, ok := parseTicketType("ticket_modal:feature")
+	if !ok || got != ticketTypeFeature {
+		t.Fatalf("expected (feature, true), got (%q, %v)", got, ok)
+	}
+}
+
+func TestParseTicketType_UnknownType(t *testing.T) {
+	_, ok := parseTicketType("ticket_modal:surprise")
+	if ok {
+		t.Fatal("expected ok=false for an unrecognized ticket type")
+	}
+}
+
+func TestParseTicketType_WrongPrefix_Ignored(t *testing.T) {
+	// Some other, unrelated modal — must be ignored (ok=false), not error.
+	_, ok := parseTicketType("some_other_modal:whatever")
+	if ok {
+		t.Fatal("expected ok=false for a non-ticket modal custom ID")
+	}
+}
+
+func TestTicketModalCustomID_RoundTripsWithParseTicketType(t *testing.T) {
+	for _, want := range []ticketType{ticketTypeBug, ticketTypeFeature} {
+		id := ticketModalCustomID(want)
+		got, ok := parseTicketType(id)
+		if !ok || got != want {
+			t.Errorf("round trip failed for %q: got (%q, %v)", want, got, ok)
+		}
+	}
+}
+
+// --- ticket.go: label mapping ---
+
+func TestTrelloLabelIDFor_Bug(t *testing.T) {
+	cfg := Config{TrelloBugLabelID: "bug-label", TrelloFeatureLabelID: "feature-label"}
+	if got := trelloLabelIDFor(ticketTypeBug, cfg); got != "bug-label" {
+		t.Errorf("expected bug-label, got %q", got)
+	}
+}
+
+func TestTrelloLabelIDFor_Feature(t *testing.T) {
+	cfg := Config{TrelloBugLabelID: "bug-label", TrelloFeatureLabelID: "feature-label"}
+	if got := trelloLabelIDFor(ticketTypeFeature, cfg); got != "feature-label" {
+		t.Errorf("expected feature-label, got %q", got)
+	}
+}
+
+func TestLabelIDsOrEmpty_NonEmpty(t *testing.T) {
+	got := labelIDsOrEmpty("abc")
+	if len(got) != 1 || got[0] != "abc" {
+		t.Errorf("unexpected result: %v", got)
+	}
+}
+
+func TestLabelIDsOrEmpty_Empty(t *testing.T) {
+	if got := labelIDsOrEmpty(""); got != nil {
+		t.Errorf("expected nil for empty label ID, got %v", got)
+	}
+}
+
+// --- ticket.go: card title/description formatting ---
+
+func TestTicketCardTitle_Bug(t *testing.T) {
+	got := ticketCardTitle(ticketTypeBug, "Login button is broken")
+	if got != "[bug] Login button is broken" {
+		t.Errorf("unexpected title: %q", got)
+	}
+}
+
+func TestTicketCardTitle_Feature(t *testing.T) {
+	got := ticketCardTitle(ticketTypeFeature, "Dark mode")
+	if got != "[feature] Dark mode" {
+		t.Errorf("unexpected title: %q", got)
+	}
+}
+
+func TestTicketCardName_FallsBackWhenTitleBlank(t *testing.T) {
+	got := ticketCardName(ticketTypeBug, map[string]string{fieldTitle: "   "})
+	if got != "[bug] Untitled bug report" {
+		t.Errorf("unexpected fallback title: %q", got)
+	}
+}
+
+func TestTicketCardName_UsesSubmittedTitle(t *testing.T) {
+	got := ticketCardName(ticketTypeFeature, map[string]string{fieldTitle: "Dark mode"})
+	if got != "[feature] Dark mode" {
+		t.Errorf("unexpected title: %q", got)
+	}
+}
+
+func TestTicketCardDescription_Bug(t *testing.T) {
+	reporter := ticketReporter{
+		DisplayName: "Tucker",
+		UserID:      "123456789",
+		GuildID:     "987654321",
+		ChannelID:   "555555555",
+	}
+	fields := map[string]string{
+		fieldWhatHappened:     "The login button does nothing.",
+		fieldExpectedBehavior: "It should log me in.",
+		fieldStepsToReproduce: "1. Click login\n2. Nothing happens",
+	}
+	got := ticketCardDescription(ticketTypeBug, reporter, fields)
+
+	want := strings.Join([]string{
+		"Reported by: Tucker",
+		"Discord user ID: 123456789",
+		"Discord guild ID: 987654321",
+		"Discord channel ID: 555555555",
+		"Ticket type: bug",
+		"Source: Discord /bug command",
+		"",
+		"What happened:",
+		"The login button does nothing.",
+		"",
+		"Expected behavior:",
+		"It should log me in.",
+		"",
+		"Steps to reproduce:",
+		"1. Click login\n2. Nothing happens",
+	}, "\n")
+	if got != want {
+		t.Errorf("unexpected description.\ngot:\n%s\n\nwant:\n%s", got, want)
+	}
+}
+
+func TestTicketCardDescription_Feature(t *testing.T) {
+	reporter := ticketReporter{DisplayName: "Alice", UserID: "u1", GuildID: "g1", ChannelID: "c1"}
+	fields := map[string]string{
+		fieldWhatShouldBeAdded: "A dark mode theme.",
+		fieldWhyUseful:         "Easier on the eyes at night.",
+	}
+	got := ticketCardDescription(ticketTypeFeature, reporter, fields)
+
+	want := strings.Join([]string{
+		"Reported by: Alice",
+		"Discord user ID: u1",
+		"Discord guild ID: g1",
+		"Discord channel ID: c1",
+		"Ticket type: feature",
+		"Source: Discord /feature command",
+		"",
+		"What should be added:",
+		"A dark mode theme.",
+		"",
+		"Why would this be useful:",
+		"Easier on the eyes at night.",
+	}, "\n")
+	if got != want {
+		t.Errorf("unexpected description.\ngot:\n%s\n\nwant:\n%s", got, want)
+	}
+}
+
+// --- ticket.go: modal field extraction (no live Discord connection needed) ---
+
+func TestExtractModalFields(t *testing.T) {
+	data := discordgo.ModalSubmitInteractionData{
+		CustomID: "ticket_modal:bug",
+		Components: []discordgo.MessageComponent{
+			&discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+				&discordgo.TextInput{CustomID: fieldTitle, Value: "Login broken"},
+			}},
+			&discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+				&discordgo.TextInput{CustomID: fieldWhatHappened, Value: "Nothing happens on click"},
+			}},
+		},
+	}
+	fields := extractModalFields(data)
+	if fields[fieldTitle] != "Login broken" {
+		t.Errorf("title: got %q", fields[fieldTitle])
+	}
+	if fields[fieldWhatHappened] != "Nothing happens on click" {
+		t.Errorf("what_happened: got %q", fields[fieldWhatHappened])
+	}
+}
+
+func TestExtractModalFields_IgnoresNonActionsRowComponents(t *testing.T) {
+	data := discordgo.ModalSubmitInteractionData{
+		Components: []discordgo.MessageComponent{
+			&discordgo.TextInput{CustomID: "stray", Value: "should be ignored"},
+		},
+	}
+	fields := extractModalFields(data)
+	if len(fields) != 0 {
+		t.Errorf("expected no fields extracted, got %v", fields)
+	}
+}
+
+func TestExtractModalFields_Empty(t *testing.T) {
+	fields := extractModalFields(discordgo.ModalSubmitInteractionData{})
+	if len(fields) != 0 {
+		t.Errorf("expected empty map, got %v", fields)
+	}
+}
+
+// --- ticket.go: reporter extraction ---
+
+func TestTicketReporterFromInteraction_UsesMemberNickWhenPresent(t *testing.T) {
+	i := &discordgo.Interaction{
+		GuildID:   "g1",
+		ChannelID: "c1",
+		Member: &discordgo.Member{
+			Nick: "Tuck",
+			User: &discordgo.User{ID: "u1", Username: "tuckerreu"},
+		},
+	}
+	r := ticketReporterFromInteraction(i)
+	if r.DisplayName != "Tuck" {
+		t.Errorf("expected nickname to be preferred, got %q", r.DisplayName)
+	}
+	if r.UserID != "u1" || r.GuildID != "g1" || r.ChannelID != "c1" {
+		t.Errorf("unexpected reporter: %+v", r)
+	}
+}
+
+func TestTicketReporterFromInteraction_FallsBackToUsernameWithoutNick(t *testing.T) {
+	i := &discordgo.Interaction{
+		Member: &discordgo.Member{User: &discordgo.User{ID: "u1", Username: "tuckerreu"}},
+	}
+	r := ticketReporterFromInteraction(i)
+	if r.DisplayName != "tuckerreu" {
+		t.Errorf("expected username fallback, got %q", r.DisplayName)
+	}
+}
+
+func TestTicketReporterFromInteraction_FallsBackToUserForDMs(t *testing.T) {
+	i := &discordgo.Interaction{
+		User: &discordgo.User{ID: "u2", Username: "dmuser"},
+	}
+	r := ticketReporterFromInteraction(i)
+	if r.DisplayName != "dmuser" || r.UserID != "u2" {
+		t.Errorf("unexpected reporter: %+v", r)
+	}
+}
+
+// --- ticket.go: Trello creation result -> ephemeral message ---
+
+func TestTicketSubmitResultMessage_Success(t *testing.T) {
+	card := &trello.CreatedCard{ID: "c1", URL: "https://trello.com/c/abc123"}
+	got := ticketSubmitResultMessage(ticketTypeBug, card, nil)
+	want := "Created bug report: https://trello.com/c/abc123"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTicketSubmitResultMessage_Failure(t *testing.T) {
+	got := ticketSubmitResultMessage(ticketTypeFeature, nil, errors.New("trello: create card failed with status 401: unauthorized"))
+	if !strings.Contains(got, "couldn't create") {
+		t.Errorf("expected a user-friendly failure message, got %q", got)
+	}
+	// Must not leak the underlying error (which could contain response bodies).
+	if strings.Contains(got, "401") || strings.Contains(got, "unauthorized") {
+		t.Errorf("failure message should not leak internal error details, got %q", got)
+	}
+}
+
+// --- ticket.go: modal builders ---
+
+func TestBugReportModal_HasExpectedFieldsAndCustomID(t *testing.T) {
+	modal := bugReportModal()
+	if modal.CustomID != "ticket_modal:bug" {
+		t.Errorf("unexpected custom ID: %q", modal.CustomID)
+	}
+	fieldIDs := modalFieldCustomIDs(t, modal.Components)
+	want := []string{fieldTitle, fieldWhatHappened, fieldExpectedBehavior, fieldStepsToReproduce}
+	if !reflect.DeepEqual(fieldIDs, want) {
+		t.Errorf("unexpected field IDs: got %v, want %v", fieldIDs, want)
+	}
+}
+
+func TestFeatureRequestModal_HasExpectedFieldsAndCustomID(t *testing.T) {
+	modal := featureRequestModal()
+	if modal.CustomID != "ticket_modal:feature" {
+		t.Errorf("unexpected custom ID: %q", modal.CustomID)
+	}
+	fieldIDs := modalFieldCustomIDs(t, modal.Components)
+	want := []string{fieldTitle, fieldWhatShouldBeAdded, fieldWhyUseful}
+	if !reflect.DeepEqual(fieldIDs, want) {
+		t.Errorf("unexpected field IDs: got %v, want %v", fieldIDs, want)
+	}
+}
+
+func modalFieldCustomIDs(t *testing.T, components []discordgo.MessageComponent) []string {
+	t.Helper()
+	ids := make([]string, 0, len(components))
+	for _, comp := range components {
+		row, ok := comp.(discordgo.ActionsRow)
+		if !ok {
+			t.Fatalf("expected a discordgo.ActionsRow, got %T", comp)
+		}
+		if len(row.Components) != 1 {
+			t.Fatalf("expected 1 text input per row, got %d", len(row.Components))
+		}
+		input, ok := row.Components[0].(discordgo.TextInput)
+		if !ok {
+			t.Fatalf("expected a discordgo.TextInput, got %T", row.Components[0])
+		}
+		ids = append(ids, input.CustomID)
+	}
+	return ids
+}
+
+// --- Fake Trello client for handler-level tests ---
+
+type fakeTrelloClient struct {
+	createCardFn func(ctx context.Context, input trello.CreateCardInput) (*trello.CreatedCard, error)
+	lastInput    trello.CreateCardInput
+}
+
+func (f *fakeTrelloClient) CreateCard(ctx context.Context, input trello.CreateCardInput) (*trello.CreatedCard, error) {
+	f.lastInput = input
+	if f.createCardFn != nil {
+		return f.createCardFn(ctx, input)
+	}
+	return &trello.CreatedCard{ID: "c1", URL: "https://trello.com/c/c1"}, nil
+}
+
+func TestNew_WiresTrelloClient(t *testing.T) {
+	trelloClient := &fakeTrelloClient{}
+	bot, err := New(Config{BotToken: "tok"}, nil, trelloClient)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if bot.trello != trelloClient {
+		t.Error("expected the Bot to store the provided trello client")
+	}
+}

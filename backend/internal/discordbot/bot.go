@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"backend/internal/reporting"
+	"backend/internal/trello"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -26,19 +27,27 @@ type reportingService interface {
 	RollStreakReport(ctx context.Context, gameID, gameName string, thresholds reporting.StreakThresholds) (reporting.RollStreakReport, error)
 }
 
+// trelloCardCreator is the interface the Bot uses to create Trello cards for
+// /bug and /feature. *trello.Client satisfies it; test fakes can satisfy it
+// without a live Trello API call.
+type trelloCardCreator interface {
+	CreateCard(ctx context.Context, input trello.CreateCardInput) (*trello.CreatedCard, error)
+}
+
 type Bot struct {
 	session   *discordgo.Session
 	cfg       Config
 	reporting reportingService
+	trello    trelloCardCreator
 }
 
-func New(cfg Config, svc reportingService) (*Bot, error) {
+func New(cfg Config, svc reportingService, trelloClient trelloCardCreator) (*Bot, error) {
 	s, err := discordgo.New("Bot " + cfg.BotToken)
 	if err != nil {
 		return nil, fmt.Errorf("create discord session: %w", err)
 	}
 	s.Identify.Intents = discordgo.IntentsGuilds
-	return &Bot{session: s, cfg: cfg, reporting: svc}, nil
+	return &Bot{session: s, cfg: cfg, reporting: svc, trello: trelloClient}, nil
 }
 
 func (b *Bot) Start() error {
@@ -94,23 +103,47 @@ func (s *discordMessageSender) SendMessage(_ context.Context, channelID, content
 func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	switch i.Type {
 	case discordgo.InteractionApplicationCommand:
-		switch i.ApplicationCommandData().Name {
-		case pingCommandName:
-			b.handlePing(s, i)
-		case lastRollsCommandName:
-			b.handleLastRolls(s, i)
-		case diceReportCommandName:
-			b.handleDiceReport(s, i)
-		case playerStatsCommandName:
-			b.handlePlayerStats(s, i)
-		case playerUpCommandName:
-			b.handlePlayerUp(s, i)
-		case rollStreaksCommandName:
-			b.handleRollStreaks(s, i)
-		}
+		b.handleApplicationCommand(s, i)
 	case discordgo.InteractionApplicationCommandAutocomplete:
 		b.handleAutocomplete(s, i)
+	case discordgo.InteractionModalSubmit:
+		b.handleModalSubmit(s, i)
 	}
+}
+
+func (b *Bot) handleApplicationCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	switch i.ApplicationCommandData().Name {
+	case pingCommandName:
+		b.handlePing(s, i)
+	case lastRollsCommandName:
+		b.handleLastRolls(s, i)
+	case diceReportCommandName:
+		b.handleDiceReport(s, i)
+	case playerStatsCommandName:
+		b.handlePlayerStats(s, i)
+	case playerUpCommandName:
+		b.handlePlayerUp(s, i)
+	case rollStreaksCommandName:
+		b.handleRollStreaks(s, i)
+	case bugCommandName:
+		b.handleBugCommand(s, i)
+	case featureCommandName:
+		b.handleFeatureCommand(s, i)
+	}
+}
+
+// handleModalSubmit routes modal-submit interactions. It's kept separate
+// from handleApplicationCommand so slash-command routing doesn't turn into a
+// single tangled switch as more modal types are added later.
+func (b *Bot) handleModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	data := i.ModalSubmitData()
+	t, ok := parseTicketType(data.CustomID)
+	if !ok {
+		// Not a modal we recognize — ignore rather than error, so unrelated
+		// future modals don't need to be plumbed through here.
+		return
+	}
+	b.handleTicketModalSubmit(s, i, t, data)
 }
 
 func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -389,6 +422,58 @@ func (b *Bot) handleRollStreaks(s *discordgo.Session, i *discordgo.InteractionCr
 	editResponse(s, i, formatRollStreaks(report, resolvedName, top))
 }
 
+// handleBugCommand opens the bug-report modal. Opening a modal *is* the
+// initial interaction response — there's no separate defer step here, unlike
+// the report commands above.
+func (b *Bot) handleBugCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseModal,
+		Data: bugReportModal(),
+	}); err != nil {
+		log.Printf("discord: /bug modal open error: %v", err)
+	}
+}
+
+// handleFeatureCommand opens the feature-request modal.
+func (b *Bot) handleFeatureCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseModal,
+		Data: featureRequestModal(),
+	}); err != nil {
+		log.Printf("discord: /feature modal open error: %v", err)
+	}
+}
+
+// handleTicketModalSubmit handles submission of either ticket modal: it
+// defers an ephemeral response (Trello card creation is a network call and
+// may not finish within Discord's 3-second initial-response window), then
+// creates the card and edits the response with the result.
+func (b *Bot) handleTicketModalSubmit(s *discordgo.Session, i *discordgo.InteractionCreate, t ticketType, data discordgo.ModalSubmitInteractionData) {
+	if err := deferEphemeralResponse(s, i); err != nil {
+		log.Printf("discord: /%s modal defer error: %v", t, err)
+		return
+	}
+
+	fields := extractModalFields(data)
+	reporter := ticketReporterFromInteraction(i.Interaction)
+	description := ticketCardDescription(t, reporter, fields)
+	labelID := trelloLabelIDFor(t, b.cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	card, err := b.trello.CreateCard(ctx, trello.CreateCardInput{
+		ListID:      b.cfg.TrelloTriageListID,
+		Name:        ticketCardName(t, fields),
+		Description: description,
+		LabelIDs:    labelIDsOrEmpty(labelID),
+	})
+	if err != nil {
+		log.Printf("discord: trello create card error (type=%s, reporter=%s): %v", t, reporter.UserID, err)
+	}
+	editResponse(s, i, ticketSubmitResultMessage(t, card, err))
+}
+
 // resolveGame fetches the game ID and canonical name for the given name string
 // (empty = most recent active game). Edits the deferred response on failure.
 func (b *Bot) resolveGame(ctx context.Context, s *discordgo.Session, i *discordgo.InteractionCreate, name string) (gameID, gameName string, ok bool) {
@@ -430,6 +515,15 @@ func (b *Bot) resolvePlayer(ctx context.Context, s *discordgo.Session, i *discor
 func deferResponse(s *discordgo.Session, i *discordgo.InteractionCreate) error {
 	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+}
+
+// deferEphemeralResponse sends a deferred response visible only to the
+// invoking user.
+func deferEphemeralResponse(s *discordgo.Session, i *discordgo.InteractionCreate) error {
+	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
 	})
 }
 

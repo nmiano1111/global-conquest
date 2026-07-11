@@ -11,6 +11,7 @@ import (
 	"backend/internal/discordbot"
 	"backend/internal/reporting"
 	"backend/internal/store"
+	"backend/internal/trello"
 
 	"github.com/joho/godotenv"
 )
@@ -43,7 +44,8 @@ func main() {
 	reportSvc := reporting.NewService(reporting.NewRepository(d.Queryer()))
 
 	// Discord bot
-	bot, err := discordbot.New(cfg, reportSvc)
+	trelloClient := trello.NewClient(cfg.TrelloAPIKey, cfg.TrelloToken)
+	bot, err := discordbot.New(cfg, reportSvc, trelloClient)
 	if err != nil {
 		log.Fatal(err)
 	}

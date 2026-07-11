@@ -15,6 +15,14 @@ type Config struct {
 	// to <FrontendBaseURL>/app/game/<id>. When unset, notifications fall back
 	// to showing the game name as plain text.
 	FrontendBaseURL string
+
+	// Trello credentials for the /bug and /feature commands. A single
+	// account-level API key + token pair — no per-user OAuth. Never logged.
+	TrelloAPIKey         string
+	TrelloToken          string
+	TrelloTriageListID   string
+	TrelloBugLabelID     string
+	TrelloFeatureLabelID string
 }
 
 func ConfigFromEnv() (Config, error) {
@@ -24,6 +32,12 @@ func ConfigFromEnv() (Config, error) {
 		GuildID:         strings.TrimSpace(os.Getenv("DISCORD_GUILD_ID")),
 		EventsChannelID: strings.TrimSpace(os.Getenv("DISCORD_EVENTS_CHANNEL_ID")),
 		FrontendBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_BASE_URL")), "/"),
+
+		TrelloAPIKey:         strings.TrimSpace(os.Getenv("TRELLO_API_KEY")),
+		TrelloToken:          strings.TrimSpace(os.Getenv("TRELLO_TOKEN")),
+		TrelloTriageListID:   strings.TrimSpace(os.Getenv("TRELLO_TRIAGE_LIST_ID")),
+		TrelloBugLabelID:     strings.TrimSpace(os.Getenv("TRELLO_BUG_LABEL_ID")),
+		TrelloFeatureLabelID: strings.TrimSpace(os.Getenv("TRELLO_FEATURE_LABEL_ID")),
 	}
 
 	var missing []string
@@ -38,6 +52,21 @@ func ConfigFromEnv() (Config, error) {
 	}
 	if cfg.EventsChannelID == "" {
 		missing = append(missing, "DISCORD_EVENTS_CHANNEL_ID")
+	}
+	if cfg.TrelloAPIKey == "" {
+		missing = append(missing, "TRELLO_API_KEY")
+	}
+	if cfg.TrelloToken == "" {
+		missing = append(missing, "TRELLO_TOKEN")
+	}
+	if cfg.TrelloTriageListID == "" {
+		missing = append(missing, "TRELLO_TRIAGE_LIST_ID")
+	}
+	if cfg.TrelloBugLabelID == "" {
+		missing = append(missing, "TRELLO_BUG_LABEL_ID")
+	}
+	if cfg.TrelloFeatureLabelID == "" {
+		missing = append(missing, "TRELLO_FEATURE_LABEL_ID")
 	}
 
 	if len(missing) > 0 {

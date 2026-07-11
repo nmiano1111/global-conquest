@@ -26,6 +26,12 @@ const (
 	rollStreaksCommandName        = "roll-streaks"
 	rollStreaksCommandDescription = "Show attacking win/loss streaks and droughts for a game"
 
+	bugCommandName        = "bug"
+	bugCommandDescription = "Report a bug"
+
+	featureCommandName        = "feature"
+	featureCommandDescription = "Request a feature"
+
 	defaultLastRollsCount = 5
 	maxLastRollsCount     = 20
 
@@ -217,6 +223,14 @@ func allCommandDefs() []*discordgo.ApplicationCommand {
 				},
 				gameOption,
 			},
+		},
+		{
+			Name:        bugCommandName,
+			Description: bugCommandDescription,
+		},
+		{
+			Name:        featureCommandName,
+			Description: featureCommandDescription,
 		},
 	}
 }
