@@ -47,6 +47,7 @@ export function LobbyPage() {
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState("");
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [showCompleted, setShowCompleted] = useState(false);
   const { on, send, status: wsStatus } = useSocket();
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -243,11 +244,14 @@ export function LobbyPage() {
 
   const currentUserID = auth.user?.id ?? "";
   const statusOrder = (s: string) => (s === "lobby" ? 0 : s === "in_progress" ? 1 : 2);
-  const gamesSorted = [...games].sort((a, b) => {
-    const od = statusOrder(a.status) - statusOrder(b.status);
-    if (od !== 0) return od;
-    return b.createdAt.localeCompare(a.createdAt);
-  });
+  const hiddenCompletedCount = games.filter((g) => g.status === "completed").length;
+  const gamesSorted = [...games]
+    .filter((g) => showCompleted || g.status !== "completed")
+    .sort((a, b) => {
+      const od = statusOrder(a.status) - statusOrder(b.status);
+      if (od !== 0) return od;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
 
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -308,9 +312,19 @@ export function LobbyPage() {
 
         {/* Games list */}
         <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-gc-text">Games</h3>
-            <span className="text-xs text-gc-muted">{gamesSorted.length} total</span>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs text-gc-muted">
+                <input
+                  type="checkbox"
+                  checked={showCompleted}
+                  onChange={(e) => setShowCompleted(e.target.checked)}
+                />
+                Show completed{hiddenCompletedCount > 0 ? ` (${hiddenCompletedCount})` : ""}
+              </label>
+              <span className="text-xs text-gc-muted">{gamesSorted.length} total</span>
+            </div>
           </div>
 
           {loading ? (
@@ -324,7 +338,11 @@ export function LobbyPage() {
           ) : null}
 
           {!loading && !error && gamesSorted.length === 0 ? (
-            <p className="py-4 text-center text-sm text-gc-muted">No games yet. Create one above.</p>
+            <p className="py-4 text-center text-sm text-gc-muted">
+              {games.length === 0
+                ? "No games yet. Create one above."
+                : "No games to show. All games are completed — check “Show completed” to see them."}
+            </p>
           ) : null}
 
           <ul className="grid gap-2">
