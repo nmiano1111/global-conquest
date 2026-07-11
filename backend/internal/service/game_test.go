@@ -148,11 +148,14 @@ func TestGetGameBootstrap_CompletedGame(t *testing.T) {
 	}
 }
 
-func TestGetGameBootstrap_CompletedGameForbiddenForNonParticipant(t *testing.T) {
+func TestGetGameBootstrap_NonParticipantCanSpectate(t *testing.T) {
 	engine := risk.Game{
-		Phase:         risk.PhaseGameOver,
-		Winner:        "u1",
-		Players:       []risk.PlayerState{{ID: "u1"}, {ID: "u2"}},
+		Phase:  risk.PhaseGameOver,
+		Winner: "u1",
+		Players: []risk.PlayerState{
+			{ID: "u1", Cards: []risk.Card{{Territory: "Alaska", Symbol: "infantry"}}},
+			{ID: "u2"},
+		},
 		Territories:   map[risk.Territory]risk.TerritoryState{},
 		SetupReserves: map[int]int{},
 	}
@@ -167,9 +170,45 @@ func TestGetGameBootstrap_CompletedGameForbiddenForNonParticipant(t *testing.T) 
 		},
 	})
 
-	_, err = svc.GetGameBootstrap(context.Background(), "g1", "outsider")
-	if !errors.Is(err, ErrGameForbidden) {
-		t.Fatalf("expected ErrGameForbidden, got %v", err)
+	out, err := svc.GetGameBootstrap(context.Background(), "g1", "outsider")
+	if err != nil {
+		t.Fatalf("expected a non-participant to be able to spectate, got %v", err)
+	}
+	if len(out.Players) != 2 {
+		t.Fatalf("expected 2 players, got %d", len(out.Players))
+	}
+	for _, p := range out.Players {
+		if len(p.Cards) != 0 {
+			t.Errorf("spectator should not see any player's cards, got %d cards for %s", len(p.Cards), p.UserID)
+		}
+	}
+}
+
+func TestGetGameBootstrap_LobbyNonParticipantCanSpectate(t *testing.T) {
+	lobby := lobbyState{
+		PlayerCount: 4,
+		PlayerIDs:   []string{"u1", "u2"},
+	}
+	state, err := json.Marshal(lobby)
+	if err != nil {
+		t.Fatalf("marshal lobby: %v", err)
+	}
+
+	svc := NewGamesService(&fakeDB{}, &fakeGamesStore{
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "lobby", State: state}, nil
+		},
+	})
+
+	out, err := svc.GetGameBootstrap(context.Background(), "g1", "outsider")
+	if err != nil {
+		t.Fatalf("expected a non-participant to be able to view a lobby, got %v", err)
+	}
+	if out.Phase != "lobby" {
+		t.Errorf("expected phase lobby, got %q", out.Phase)
+	}
+	if len(out.Players) != 2 {
+		t.Errorf("expected 2 players, got %d", len(out.Players))
 	}
 }
 

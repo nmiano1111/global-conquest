@@ -332,7 +332,6 @@ export function LobbyPage() {
               const currentPlayers = g.playerIds.length;
               const maxPlayers = g.playerCount ?? 0;
               const hasJoined = currentUserID !== "" && g.playerIds.includes(currentUserID);
-              const canOpenGame = hasJoined;
               const isLobby = g.status === "lobby";
               const canJoin = isLobby && maxPlayers > 0 && currentPlayers < maxPlayers && !hasJoined;
               const isFull = isLobby && maxPlayers > 0 && currentPlayers >= maxPlayers;
@@ -351,11 +350,18 @@ export function LobbyPage() {
               return (
                 <li
                   key={g.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gc-border bg-gc-surface-2 px-3 py-3 transition-colors hover:border-gc-border/80"
+                  className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3 transition-colors hover:border-gc-border/80 ${
+                    hasJoined ? "border-gc-accent/40 bg-gc-accent/5" : "border-gc-border bg-gc-surface-2"
+                  }`}
                 >
                   <div className="grid gap-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium text-gc-text truncate">{g.name || g.id}</span>
+                      {hasJoined ? (
+                        <span className="rounded-full border border-gc-accent/40 bg-gc-accent/10 px-2 py-0.5 text-[11px] font-medium text-gc-accent">
+                          Playing
+                        </span>
+                      ) : null}
                       <span
                         className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass(statusLabel)}`}
                       >
@@ -374,15 +380,9 @@ export function LobbyPage() {
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0">
-                    {canOpenGame ? (
-                      <Link className={buttonGhostClass} to="/app/game/$gameID" params={{ gameID: g.id }}>
-                        Open
-                      </Link>
-                    ) : (
-                      <button className={buttonGhostClass} type="button" disabled>
-                        Open
-                      </button>
-                    )}
+                    <Link className={buttonGhostClass} to="/app/game/$gameID" params={{ gameID: g.id }}>
+                      Open
+                    </Link>
                     {canJoin ? (
                       <button
                         className={buttonPrimaryClass}

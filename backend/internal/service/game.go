@@ -747,9 +747,6 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		if err != nil {
 			return GameBootstrap{}, err
 		}
-		if !containsID(lobby.PlayerIDs, requesterUserID) {
-			return GameBootstrap{}, ErrGameForbidden
-		}
 		names, err := s.userNamesByIDs(ctx, lobby.PlayerIDs)
 		if err != nil {
 			return GameBootstrap{}, err
@@ -824,9 +821,6 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		ids := make([]string, 0, len(engine.Players))
 		for _, p := range engine.Players {
 			ids = append(ids, p.ID)
-		}
-		if !containsID(ids, requesterUserID) {
-			return GameBootstrap{}, ErrGameForbidden
 		}
 		names, err := s.userNamesByIDs(ctx, ids)
 		if err != nil {
