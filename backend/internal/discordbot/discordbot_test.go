@@ -356,7 +356,7 @@ func TestRenderGameOverWithDiscordName(t *testing.T) {
 	}
 }
 
-func TestRenderGameOverWithFrontendURL_LinksGameNameViaEmbed(t *testing.T) {
+func TestRenderGameOverWithFrontendURL_KeepsGameNameAndAddsLinkEmbed(t *testing.T) {
 	entry := makeEntry(store.NotificationTypeGameOver, `{
 		"schema_version": 1,
 		"winner_id": "a1",
@@ -366,24 +366,24 @@ func TestRenderGameOverWithFrontendURL_LinksGameNameViaEmbed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	// Discord content does not render [text](url) markdown links, so the
-	// game name must not appear as inline backtick text in content anymore —
-	// it moves entirely into the embed.
-	if msg != "@everyone 🏆 **Alice** has won the game!" {
+	// The "(game `name`)" text suffix stays exactly as it was before links
+	// existed; the link is a separate embed (Discord content does not render
+	// [text](url) markdown, so a clickable link requires an embed either way).
+	if msg != "@everyone 🏆 **Alice** has won the game! (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 	if len(embeds) != 1 {
 		t.Fatalf("expected 1 embed, got %d", len(embeds))
 	}
-	if embeds[0].Title != "game-1" {
-		t.Errorf("expected embed title to be the game name, got %q", embeds[0].Title)
+	if embeds[0].Title != "Click to view game" {
+		t.Errorf("expected embed title %q, got %q", "Click to view game", embeds[0].Title)
 	}
 	if embeds[0].URL != "https://play.example.com/app/game/game-1" {
 		t.Errorf("unexpected embed URL: %q", embeds[0].URL)
 	}
 }
 
-func TestRenderTurnStartedWithFrontendURL_LinksGameNameViaEmbed(t *testing.T) {
+func TestRenderTurnStartedWithFrontendURL_KeepsGameNameAndAddsLinkEmbed(t *testing.T) {
 	entry := makeEntry(store.NotificationTypeTurnStarted, `{
 		"schema_version": 1,
 		"previous_player_display_name": "Bob",
@@ -395,8 +395,8 @@ func TestRenderTurnStartedWithFrontendURL_LinksGameNameViaEmbed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if strings.Contains(msg, "game-1") {
-		t.Errorf("game name should not appear in content when linked via embed, got: %q", msg)
+	if !strings.Contains(msg, "(game `game-1`)") {
+		t.Errorf("expected game name suffix to stay in content, got: %q", msg)
 	}
 	if len(embeds) != 1 || embeds[0].URL != "https://play.example.com/app/game/game-1" {
 		t.Fatalf("expected a linking embed, got: %v", embeds)

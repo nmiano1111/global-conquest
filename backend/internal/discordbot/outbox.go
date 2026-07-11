@@ -171,21 +171,20 @@ const gameDiscordColor = 0x5865F2
 // gameReference returns the message-content suffix and/or embed used to
 // reference the game a notification belongs to.
 //
-// Discord's plain message content does not render `[text](url)` markdown
-// hyperlinks — that only works inside embeds. So when frontendBaseURL is
-// configured, the game name is dropped from the content string and instead
-// becomes an embed with Title=gameName and URL=<link>, which Discord renders
-// as a clickable heading. When frontendBaseURL is unset, we fall back to the
-// old inline "(game `name`)" text suffix so notifications still identify the
-// game even without a configured frontend URL.
+// The "(game `name`)" text suffix is always included, same as before links
+// existed. When frontendBaseURL is configured, a separate "Click to view
+// game" embed is attached — Discord's plain message content does not render
+// `[text](url)` markdown hyperlinks, so a clickable link requires an embed
+// regardless of what the content text says.
 func gameReference(entry store.DiscordOutboxEntry, frontendBaseURL string) (suffix string, embeds []*discordgo.MessageEmbed) {
+	suffix = fmt.Sprintf(" (game `%s`)", entry.GameName)
 	if frontendBaseURL == "" {
-		return fmt.Sprintf(" (game `%s`)", entry.GameName), nil
+		return suffix, nil
 	}
 	url := frontendBaseURL + "/app/game/" + entry.GameID
-	return "", []*discordgo.MessageEmbed{
+	return suffix, []*discordgo.MessageEmbed{
 		{
-			Title: entry.GameName,
+			Title: "Click to view game",
 			URL:   url,
 			Color: gameDiscordColor,
 		},
