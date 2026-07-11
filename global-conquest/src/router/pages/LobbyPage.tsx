@@ -314,15 +314,26 @@ export function LobbyPage() {
         <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-gc-text">Games</h3>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1.5 text-xs text-gc-muted">
-                <input
-                  type="checkbox"
-                  checked={showCompleted}
-                  onChange={(e) => setShowCompleted(e.target.checked)}
-                />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gc-muted">
                 Show completed{hiddenCompletedCount > 0 ? ` (${hiddenCompletedCount})` : ""}
-              </label>
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={showCompleted}
+                aria-label="Show completed games"
+                onClick={() => setShowCompleted((v) => !v)}
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                  showCompleted ? "bg-gc-accent" : "border border-gc-border bg-gc-surface-2"
+                }`}
+              >
+                <span
+                  className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    showCompleted ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
               <span className="text-xs text-gc-muted">{gamesSorted.length} total</span>
             </div>
           </div>
@@ -375,11 +386,6 @@ export function LobbyPage() {
                   <div className="grid gap-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium text-gc-text truncate">{g.name || g.id}</span>
-                      {hasJoined ? (
-                        <span className="rounded-full border border-gc-accent/40 bg-gc-accent/10 px-2 py-0.5 text-[11px] font-medium text-gc-accent">
-                          Playing
-                        </span>
-                      ) : null}
                       <span
                         className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass(statusLabel)}`}
                       >
