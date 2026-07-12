@@ -62,6 +62,7 @@ func NewRouter(h *Handler) *gin.Engine {
 			games.GET("/:id", h.GetGame)
 			games.GET("/:id/bootstrap", h.GetGameBootstrap)
 			games.PUT("/:id/state", h.UpdateGameState)
+			games.DELETE("/:id", h.RequireAdmin(), h.DeleteGame)
 		}
 		leaderboard := api.Group("/leaderboard")
 		{

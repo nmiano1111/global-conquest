@@ -3,9 +3,12 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func TestPostgresGamesStoreCreate(t *testing.T) {
@@ -70,6 +73,28 @@ func TestPostgresGamesStoreGetByIDForUpdate(t *testing.T) {
 	}
 	if out.Status != "in_progress" {
 		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestPostgresGamesStoreDelete(t *testing.T) {
+	q := &stubQuerier{row: &stubRow{values: []any{"g1"}}}
+	s := NewPostgresGamesStore()
+
+	if err := s.Delete(context.Background(), q, "g1"); err != nil {
+		t.Fatalf("delete game: %v", err)
+	}
+	if !strings.Contains(q.lastSQL, "DELETE FROM games") {
+		t.Fatalf("expected games delete SQL, got %q", q.lastSQL)
+	}
+}
+
+func TestPostgresGamesStoreDeleteNotFound(t *testing.T) {
+	q := &stubQuerier{row: &stubRow{err: pgx.ErrNoRows}}
+	s := NewPostgresGamesStore()
+
+	err := s.Delete(context.Background(), q, "missing")
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected pgx.ErrNoRows, got %v", err)
 	}
 }
 

@@ -246,6 +246,14 @@ export async function createGame(input: CreateGameRequest): Promise<GameRecord> 
   return normalizeGame(res);
 }
 
+/** Permanently deletes a game and everything derived from it. Admin only (backend enforced). */
+export async function deleteGame(gameID: string): Promise<void> {
+  await request<unknown>({
+    method: "DELETE",
+    url: `/games/${encodeURIComponent(gameID)}`,
+  });
+}
+
 export async function joinGame(gameID: string): Promise<GameRecord> {
   const res = await request<unknown>({
     method: "POST",

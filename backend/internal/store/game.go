@@ -45,6 +45,7 @@ type GamesStore interface {
 	GetByIDForUpdate(ctx context.Context, q db.Querier, gameID string) (Game, error)
 	List(ctx context.Context, q db.Querier, filter GameListFilter) ([]Game, error)
 	UpdateState(ctx context.Context, q db.Querier, in UpdateGameState) (Game, error)
+	Delete(ctx context.Context, q db.Querier, gameID string) error
 }
 
 type PostgresGamesStore struct{}
@@ -158,4 +159,14 @@ func (s *PostgresGamesStore) UpdateState(ctx context.Context, exec db.Querier, i
 		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
+}
+
+// Delete removes a game row. Every dependent table (game_events,
+// game_domain_events, discord_outbox, game_players, game_chat_messages)
+// has an ON DELETE CASCADE FK to games(id), so this cleans up everything.
+// Returns ErrNoRows (via pgx) if the game doesn't exist.
+func (s *PostgresGamesStore) Delete(ctx context.Context, exec db.Querier, gameID string) error {
+	const stmt = `DELETE FROM games WHERE id = $1::uuid RETURNING id`
+	var id string
+	return exec.QueryRow(ctx, stmt, gameID).Scan(&id)
 }

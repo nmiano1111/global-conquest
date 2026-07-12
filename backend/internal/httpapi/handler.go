@@ -35,6 +35,7 @@ type gameService interface {
 	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error)
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
 	GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error)
+	DeleteGame(ctx context.Context, gameID string) error
 }
 
 type chatService interface {
@@ -332,6 +333,33 @@ func (h *Handler) GetGame(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, g)
+}
+
+// DeleteGame godoc
+// @Summary      Delete a game
+// @Description  Permanently deletes a game and everything derived from it (events, chat, discord outbox rows). Admin only.
+// @Tags         games
+// @Produce      json
+// @Param        id path string true "Game ID"
+// @Success      204
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/games/{id} [delete]
+func (h *Handler) DeleteGame(c *gin.Context) {
+	gameID := c.Param("id")
+	if err := h.games.DeleteGame(c.Request.Context(), gameID); err != nil {
+		switch {
+		case errors.Is(err, service.ErrGameNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		case errors.Is(err, service.ErrInvalidGameInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete game"})
+		}
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // GetGameBootstrap godoc

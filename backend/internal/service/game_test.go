@@ -52,6 +52,7 @@ type fakeGamesStore struct {
 	getByIDForUpdate func(context.Context, db.Querier, string) (store.Game, error)
 	listFn           func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error)
 	updateStateFn    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error)
+	deleteFn         func(context.Context, db.Querier, string) error
 }
 
 func (f *fakeGamesStore) Create(ctx context.Context, q db.Querier, in store.NewGame) (store.Game, error) {
@@ -72,6 +73,13 @@ func (f *fakeGamesStore) List(ctx context.Context, q db.Querier, filter store.Ga
 
 func (f *fakeGamesStore) UpdateState(ctx context.Context, q db.Querier, in store.UpdateGameState) (store.Game, error) {
 	return f.updateStateFn(ctx, q, in)
+}
+
+func (f *fakeGamesStore) Delete(ctx context.Context, q db.Querier, gameID string) error {
+	if f.deleteFn != nil {
+		return f.deleteFn(ctx, q, gameID)
+	}
+	return nil
 }
 
 func TestCreateClassicGameValidation(t *testing.T) {

@@ -6,3 +6,6 @@ export const buttonPrimaryClass =
 
 export const buttonGhostClass =
   "inline-flex items-center justify-center rounded-lg border border-gc-border bg-transparent px-3 py-2 text-sm font-medium text-gc-text transition hover:bg-gc-surface-2 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50";
+
+export const buttonDangerClass =
+  "inline-flex items-center justify-center rounded-lg border border-gc-danger/40 bg-gc-danger/10 px-3 py-2 text-sm font-medium text-gc-danger transition hover:bg-gc-danger/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50";

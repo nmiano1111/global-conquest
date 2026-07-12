@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
 import { listLobbyMessages, normalizeLobbyMessage, postLobbyMessage, type LobbyMessage } from "../../api/chat";
-import { createGame, joinGame, listGames, type GameRecord } from "../../api/games";
+import { createGame, deleteGame, joinGame, listGames, type GameRecord } from "../../api/games";
 import { useAuth } from "../../auth";
 import { useSocket } from "../../realtime";
-import { buttonGhostClass, buttonPrimaryClass, inputClass } from "./styles";
+import { buttonDangerClass, buttonGhostClass, buttonPrimaryClass, inputClass } from "./styles";
 
 const PHASE_LABELS: Record<string, string> = {
   setup_claim: "Setup",
@@ -47,6 +47,8 @@ export function LobbyPage() {
   const [createError, setCreateError] = useState("");
   const [joiningGameID, setJoiningGameID] = useState("");
   const [joinError, setJoinError] = useState("");
+  const [deletingGameID, setDeletingGameID] = useState("");
+  const [deleteError, setDeleteError] = useState("");
   const [messages, setMessages] = useState<LobbyMessage[]>([]);
   const [chatBody, setChatBody] = useState("");
   const [chatSending, setChatSending] = useState(false);
@@ -229,6 +231,28 @@ export function LobbyPage() {
     }
   };
 
+  const onDeleteGame = async (gameID: string, gameName: string) => {
+    if (!window.confirm(`Permanently delete "${gameName || gameID}"? This cannot be undone.`)) {
+      return;
+    }
+    setDeleteError("");
+    setDeletingGameID(gameID);
+    try {
+      await deleteGame(gameID);
+      await loadGames();
+    } catch (err) {
+      const apiErr = err as ApiError;
+      if (apiErr.status === 401) {
+        auth.clearSession();
+        await navigate({ to: "/login" });
+        return;
+      }
+      setDeleteError(apiErr.message || "Failed to delete game");
+    } finally {
+      setDeletingGameID("");
+    }
+  };
+
   const onSendChat = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const body = chatBody.trim();
@@ -389,6 +413,9 @@ export function LobbyPage() {
           {joinError ? (
             <p className="mb-2 text-sm text-gc-danger">{joinError}</p>
           ) : null}
+          {deleteError ? (
+            <p className="mb-2 text-sm text-gc-danger">{deleteError}</p>
+          ) : null}
 
           {!loading && !error && gamesSorted.length === 0 ? (
             <p className="py-4 text-center text-sm text-gc-muted">
@@ -463,6 +490,16 @@ export function LobbyPage() {
                         {hasJoined ? "Joined" : isFull ? "Full" : "Closed"}
                       </button>
                     )}
+                    {auth.user?.role === "admin" ? (
+                      <button
+                        className={buttonDangerClass}
+                        type="button"
+                        onClick={() => void onDeleteGame(g.id, g.name)}
+                        disabled={deletingGameID === g.id}
+                      >
+                        {deletingGameID === g.id ? "Deleting…" : "Delete"}
+                      </button>
+                    ) : null}
                   </div>
                 </li>
               );

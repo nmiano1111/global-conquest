@@ -32,6 +32,7 @@ type fakeGamesService struct {
 	getGameBootstrapFn  func(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
 	listGamesFn         func(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error)
 	updateGameStateFn   func(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
+	deleteGameFn        func(ctx context.Context, gameID string) error
 }
 
 type fakeChatService struct {
@@ -109,6 +110,13 @@ func (f *fakeGamesService) UpdateGameState(ctx context.Context, gameID, status s
 
 func (f *fakeGamesService) GetLeaderboard(_ context.Context, _ int) ([]store.LeaderboardEntry, error) {
 	return nil, nil
+}
+
+func (f *fakeGamesService) DeleteGame(ctx context.Context, gameID string) error {
+	if f.deleteGameFn != nil {
+		return f.deleteGameFn(ctx, gameID)
+	}
+	return nil
 }
 
 func (f *fakeChatService) ListLobbyMessages(ctx context.Context, limit int) ([]store.ChatMessage, error) {
@@ -836,5 +844,58 @@ func TestListGamesBadLimit(t *testing.T) {
 	rr := doJSONWithAuth(t, router, http.MethodGet, "/api/games/?limit=bad", "valid-token", nil)
 	if rr.code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rr.code)
+	}
+}
+
+func TestDeleteGameForbiddenForNonAdmin(t *testing.T) {
+	userSvc := &fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "alice", Role: "player"}, nil
+		},
+		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	}
+	gamesSvc := &fakeGamesService{
+		deleteGameFn: func(context.Context, string) error {
+			t.Fatal("delete should not be called for a non-admin")
+			return nil
+		},
+	}
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
+
+	rr := doJSONWithAuth(t, router, http.MethodDelete, "/api/games/g1", "valid-token", nil)
+	if rr.code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestDeleteGameSucceedsForAdmin(t *testing.T) {
+	deleteCalled := false
+	userSvc := &fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "root", Role: "admin"}, nil
+		},
+		getUserFn: func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:   func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	}
+	gamesSvc := &fakeGamesService{
+		deleteGameFn: func(_ context.Context, gameID string) error {
+			deleteCalled = true
+			if gameID != "g1" {
+				t.Fatalf("expected gameID=g1, got %s", gameID)
+			}
+			return nil
+		},
+	}
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
+
+	rr := doJSONWithAuth(t, router, http.MethodDelete, "/api/games/g1", "valid-token", nil)
+	if rr.code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", rr.code, rr.body.String())
+	}
+	if !deleteCalled {
+		t.Fatal("expected DeleteGame to be called")
 	}
 }

@@ -540,6 +540,22 @@ func (s *GamesService) GetGame(ctx context.Context, gameID string) (store.Game, 
 	return g, nil
 }
 
+// DeleteGame permanently removes a game and everything derived from it
+// (events, chat history, discord outbox rows, player records). Callers are
+// responsible for authorization — this is admin-only at the HTTP layer.
+func (s *GamesService) DeleteGame(ctx context.Context, gameID string) error {
+	if gameID == "" {
+		return ErrInvalidGameInput
+	}
+	if err := s.games.Delete(ctx, s.db.Queryer(), gameID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrGameNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 // GameSummary is a list-view projection of a game that adds the current
 // player's turn (name + phase) for in-progress games, resolved server-side
 // since only the raw user ID lives in the persisted engine state.

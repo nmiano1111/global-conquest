@@ -3,11 +3,14 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"backend/internal/db"
 	"backend/internal/risk"
 	"backend/internal/store"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // fixedBotNames is a deterministic bot-name assigner for tests, avoiding
@@ -648,5 +651,52 @@ func TestJoinClassicGameDoesNotEnqueueGameStartedWhenLobbyStaysOpen(t *testing.T
 	}
 	if outboxStore.gameStartedCalls != 0 {
 		t.Fatalf("expected no game_started notification while a human slot remains open, got %d", outboxStore.gameStartedCalls)
+	}
+}
+
+// --- DeleteGame: admin-only cleanup, authorization enforced at the HTTP layer. ---
+
+func TestDeleteGameSucceeds(t *testing.T) {
+	deleteCalled := false
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
+		deleteFn: func(_ context.Context, _ db.Querier, gameID string) error {
+			deleteCalled = true
+			if gameID != "g1" {
+				t.Fatalf("expected gameID=g1, got %s", gameID)
+			}
+			return nil
+		},
+	})
+
+	if err := svc.DeleteGame(context.Background(), "g1"); err != nil {
+		t.Fatalf("delete game: %v", err)
+	}
+	if !deleteCalled {
+		t.Fatal("expected the store's Delete to be called")
+	}
+}
+
+func TestDeleteGameRejectsEmptyID(t *testing.T) {
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
+		deleteFn: func(context.Context, db.Querier, string) error {
+			t.Fatal("delete should not be called for an empty game ID")
+			return nil
+		},
+	})
+
+	if err := svc.DeleteGame(context.Background(), ""); err != ErrInvalidGameInput {
+		t.Fatalf("expected ErrInvalidGameInput, got %v", err)
+	}
+}
+
+func TestDeleteGameNotFound(t *testing.T) {
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
+		deleteFn: func(context.Context, db.Querier, string) error {
+			return pgx.ErrNoRows
+		},
+	})
+
+	if err := svc.DeleteGame(context.Background(), "missing"); !errors.Is(err, ErrGameNotFound) {
+		t.Fatalf("expected ErrGameNotFound, got %v", err)
 	}
 }
