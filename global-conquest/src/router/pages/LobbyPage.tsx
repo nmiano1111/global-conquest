@@ -21,6 +21,10 @@ function phaseLabel(phase: string): string {
   return PHASE_LABELS[phase] ?? phase;
 }
 
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 function statusBadgeClass(label: string): string {
   if (label === "Open") return "border border-gc-success/40 bg-gc-success/10 text-gc-success";
   if (label === "Joined") return "border border-gc-accent/40 bg-gc-accent/10 text-gc-accent";
@@ -37,6 +41,7 @@ export function LobbyPage() {
   const [error, setError] = useState("");
   const [games, setGames] = useState<GameRecord[]>([]);
   const [playerCount, setPlayerCount] = useState(3);
+  const [botCount, setBotCount] = useState(0);
   const [setupMode, setSetupMode] = useState<"random" | "manual">("random");
   const [creatingGame, setCreatingGame] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -163,6 +168,15 @@ export function LobbyPage() {
     };
   }, [isTyping, wsStatus, send, auth.user?.username]);
 
+  const maxBotCount = Math.max(0, playerCount - 1);
+
+  const onPlayerCountChange = (value: number) => {
+    setPlayerCount(value);
+    // At least one human slot (the creator) must remain open, so clamp
+    // rather than leave a bot count the new total can no longer support.
+    setBotCount((prev) => Math.min(prev, Math.max(0, value - 1)));
+  };
+
   const onCreateGame = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setCreateError("");
@@ -170,10 +184,18 @@ export function LobbyPage() {
       setCreateError("Player count must be between 3 and 6.");
       return;
     }
+    if (botCount < 0 || botCount > playerCount - 1) {
+      setCreateError("Computer players must leave at least one human slot open.");
+      return;
+    }
 
     setCreatingGame(true);
     try {
-      await createGame({ playerCount, setupMode: auth.user?.role === "admin" ? setupMode : undefined });
+      await createGame({
+        playerCount,
+        botCount,
+        setupMode: auth.user?.role === "admin" ? setupMode : undefined,
+      });
       await loadGames();
     } catch (err) {
       const apiErr = err as ApiError;
@@ -284,8 +306,21 @@ export function LobbyPage() {
                 min={3}
                 max={6}
                 value={playerCount}
-                onChange={(e) => setPlayerCount(Number(e.target.value))}
+                onChange={(e) => onPlayerCountChange(Number(e.target.value))}
                 required
+              />
+            </label>
+            <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
+              Computer players
+              <input
+                className={`${inputClass} w-28`}
+                type="number"
+                min={0}
+                max={maxBotCount}
+                value={botCount}
+                onChange={(e) =>
+                  setBotCount(Math.max(0, Math.min(maxBotCount, Number(e.target.value))))
+                }
               />
             </label>
             {auth.user?.role === "admin" && (
@@ -305,6 +340,13 @@ export function LobbyPage() {
               {creatingGame ? "Creating…" : "Create Game"}
             </button>
           </form>
+          <p className="mt-2 text-xs text-gc-muted">
+            {playerCount}-player game: {pluralize(playerCount - botCount, "human player")}, {pluralize(botCount, "computer player")}.
+            {" "}
+            {playerCount - botCount - 1 > 0
+              ? `You occupy one of the human slots. ${pluralize(playerCount - botCount - 1, "additional human player")} will need to join.`
+              : "You occupy the only human slot."}
+          </p>
           {createError ? (
             <p className="mt-2 text-sm text-gc-danger">{createError}</p>
           ) : null}

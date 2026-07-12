@@ -108,7 +108,7 @@ func TestRunnerNotBotTurnStopsImmediately(t *testing.T) {
 	g := botGame("human", risk.ControllerHuman)
 	loader := &fakeLoader{states: []loadedState{{game: g, status: "in_progress"}}}
 	submitter := &fakeSubmitter{}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: &fakeStrategy{}}, &fakeSleeper{}, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: &fakeStrategy{}}, &fakeSleeper{}, DefaultPacingConfig())
 
 	reason, err := r.RunTurn(context.Background(), "g1", ExecutionSimulation)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestRunnerStopsWhenGameOver(t *testing.T) {
 	g.Phase = risk.PhaseGameOver
 	loader := &fakeLoader{states: []loadedState{{game: g, status: "completed"}}}
 	submitter := &fakeSubmitter{}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: &fakeStrategy{}}, &fakeSleeper{}, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: &fakeStrategy{}}, &fakeSleeper{}, DefaultPacingConfig())
 
 	reason, err := r.RunTurn(context.Background(), "g1", ExecutionSimulation)
 	if err != nil {
@@ -145,7 +145,7 @@ func TestRunnerStopsWhenCommittedActionEndsGame(t *testing.T) {
 		return game.GameActionUpdate{Phase: string(risk.PhaseGameOver)}, nil
 	}}
 	strat := &fakeStrategy{cmd: Command{Action: ActionEndTurn}}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, DefaultPacingConfig())
 
 	reason, err := r.RunTurn(context.Background(), "g1", ExecutionSimulation)
 	if err != nil {
@@ -174,7 +174,7 @@ func TestRunnerStopsWhenCurrentPlayerChanges(t *testing.T) {
 	}}
 	submitter := &fakeSubmitter{}
 	strat := &fakeStrategy{cmd: Command{Action: ActionEndTurn}}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, DefaultPacingConfig())
 
 	reason, err := r.RunTurn(context.Background(), "g1", ExecutionSimulation)
 	if err != nil {
@@ -198,7 +198,7 @@ func TestRunnerUsesNormalCommandPath(t *testing.T) {
 		return game.GameActionUpdate{}, errors.New("stop after one call")
 	}}
 	strat := &fakeStrategy{cmd: Command{Action: ActionPlaceReinforcement, Territory: "Alaska", Armies: 3}}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, DefaultPacingConfig())
 
 	_, _ = r.RunTurn(context.Background(), "the-game-id", ExecutionSimulation)
 
@@ -218,7 +218,7 @@ func TestRunnerRetriesBoundedOnRejection(t *testing.T) {
 		return game.GameActionUpdate{}, errors.New("always rejected")
 	}}
 	strat := &fakeStrategy{cmd: Command{Action: ActionEndTurn}}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, DefaultPacingConfig())
 
 	reason, err := r.RunTurn(context.Background(), "g1", ExecutionSimulation)
 	if reason != StopMaxRetriesExceeded {
@@ -234,7 +234,7 @@ func TestRunnerStrategyErrorStops(t *testing.T) {
 	loader := &fakeLoader{states: []loadedState{{game: g, status: "in_progress"}}}
 	submitter := &fakeSubmitter{}
 	strat := &fakeStrategy{err: errors.New("no legal move")}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, DefaultPacingConfig())
 
 	reason, err := r.RunTurn(context.Background(), "g1", ExecutionSimulation)
 	if reason != StopStrategyError || err == nil {
@@ -252,7 +252,7 @@ func TestRunnerRespondsToCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	strat := &fakeStrategy{cmd: Command{Action: ActionEndTurn}}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, &fakeSleeper{}, DefaultPacingConfig())
 
 	reason, err := r.RunTurn(ctx, "g1", ExecutionSimulation)
 	if err != nil {
@@ -272,14 +272,15 @@ func TestRunnerLiveModeSleepsSimulationDoesNot(t *testing.T) {
 		return game.GameActionUpdate{}, errors.New("stop after one call")
 	}}
 	strat := &fakeStrategy{cmd: Command{Action: ActionEndTurn}}
-	rLive := NewRunner(loaderLive, submitterLive, StrategyRegistry{StrategyBasicV1: strat}, sleeperLive, 5*time.Millisecond)
+	rLive := NewRunner(loaderLive, submitterLive, StrategyRegistry{StrategyBasicV1: strat}, sleeperLive, DefaultPacingConfig())
 	if _, err := rLive.RunTurn(context.Background(), "g1", ExecutionLive); err == nil {
 		t.Fatalf("expected the rejected command to bubble up as an error eventually")
 	}
-	// The command was rejected before any sleep would occur, so live mode
-	// must not have slept on a rejected attempt either.
-	if len(sleeperLive.delays) != 0 {
-		t.Fatalf("expected no sleep on a rejected command, got %d", len(sleeperLive.delays))
+	// Exactly one sleep is expected: the turn-start pause before the first
+	// command attempt. A rejected command itself must never add a sleep —
+	// only a committed one does.
+	if len(sleeperLive.delays) != 1 {
+		t.Fatalf("expected exactly one (turn-start) sleep despite repeated rejections, got %d", len(sleeperLive.delays))
 	}
 
 	sleeperSim := &fakeSleeper{}
@@ -296,7 +297,7 @@ func TestRunnerLiveModeSleepsSimulationDoesNot(t *testing.T) {
 		}(), status: "in_progress"},
 	}}
 	submitterSim := &fakeSubmitter{}
-	rSim := NewRunner(loaderSim, submitterSim, StrategyRegistry{StrategyBasicV1: strat}, sleeperSim, 5*time.Millisecond)
+	rSim := NewRunner(loaderSim, submitterSim, StrategyRegistry{StrategyBasicV1: strat}, sleeperSim, DefaultPacingConfig())
 	if _, err := rSim.RunTurn(context.Background(), "g1", ExecutionSimulation); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -324,7 +325,7 @@ func TestRunnerLiveModeSleepsAfterCommit(t *testing.T) {
 	}}
 	sleeper := &recordingOrderSleeper{order: &order}
 	strat := &fakeStrategy{cmd: Command{Action: ActionEndTurn}}
-	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, sleeper, time.Millisecond)
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, sleeper, DefaultPacingConfig())
 
 	reason, err := r.RunTurn(context.Background(), "g1", ExecutionLive)
 	if err != nil {
@@ -333,8 +334,12 @@ func TestRunnerLiveModeSleepsAfterCommit(t *testing.T) {
 	if reason != StopTurnEnded {
 		t.Fatalf("expected StopTurnEnded, got %s", reason)
 	}
-	if len(order) != 2 || order[0] != "commit" || order[1] != "sleep" {
-		t.Fatalf("expected commit to be strictly ordered before sleep, got %v", order)
+	// order[0] is the turn-start sleep, which precedes the first command by
+	// design; the invariant this test actually cares about is that the
+	// commit itself is never followed by anything other than a sleep (in
+	// particular, never another command submitted before sleeping).
+	if len(order) != 3 || order[0] != "sleep" || order[1] != "commit" || order[2] != "sleep" {
+		t.Fatalf("expected turn-start sleep, then commit strictly before the post-commit sleep, got %v", order)
 	}
 }
 

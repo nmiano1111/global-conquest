@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"backend/internal/bot"
 	"backend/internal/db"
 	"backend/internal/gamename"
 	"backend/internal/risk"
@@ -35,6 +37,7 @@ type discordOutboxStore interface {
 	EnqueueCardsTrade(ctx context.Context, q db.Querier, gameID, gameName, playerID, playerDisplayName string, playerDiscordName *string, armies int) error
 	EnqueuePlayerEliminated(ctx context.Context, q db.Querier, gameID, gameName, attackerID, attackerDisplayName string, attackerDiscordName *string, eliminatedPlayerID, eliminatedPlayerDisplayName string, eliminatedPlayerDiscordName *string) error
 	EnqueueGameOver(ctx context.Context, q db.Querier, gameID, gameName, winnerID, winnerDisplayName string, winnerDiscordName *string) error
+	EnqueueGameStarted(ctx context.Context, q db.Querier, gameID, gameName, playerID, playerDisplayName string, playerDiscordName *string) error
 }
 
 type GamesService struct {
@@ -44,6 +47,8 @@ type GamesService struct {
 	gamePlayers      gamePlayersStore
 	gameDomainEvents gameDomainEventStore
 	discordOutbox    discordOutboxStore
+	assignBotNames   func(count int, exclude []string) []string
+	gameStarted      func(gameID string)
 }
 
 var (
@@ -58,7 +63,37 @@ var (
 )
 
 func NewGamesService(db gameDB, games store.GamesStore) *GamesService {
-	return &GamesService{db: db, games: games}
+	return &GamesService{
+		db:    db,
+		games: games,
+		assignBotNames: func(count int, exclude []string) []string {
+			return bot.AssignBotNames(nil, count, exclude)
+		},
+	}
+}
+
+// SetBotNameAssigner overrides how bot display names are chosen. Production
+// wiring never needs to call this; it exists so tests can inject a
+// deterministic fake selector instead of real randomness.
+func (s *GamesService) SetBotNameAssigner(assign func(count int, exclude []string) []string) {
+	s.assignBotNames = assign
+}
+
+// SetGameStartedHook registers a callback invoked whenever CreateClassicGame
+// or JoinClassicGame transitions a game to in_progress. This is the only
+// way a bot runner ever gets triggered for a game that starts this way:
+// unlike a normal game_action, starting a game here never goes through
+// game.Server, so nothing else would ever notice a bot-controlled player
+// is now current. Production wiring sets this to the bot manager's
+// Trigger method; it is nil-safe (never required) for tests.
+func (s *GamesService) SetGameStartedHook(fn func(gameID string)) {
+	s.gameStarted = fn
+}
+
+func (s *GamesService) notifyGameStarted(gameID string) {
+	if s.gameStarted != nil {
+		s.gameStarted(gameID)
+	}
 }
 
 type gameEventStore interface {
@@ -86,6 +121,14 @@ type lobbyState struct {
 	PlayerCount int      `json:"player_count"`
 	PlayerIDs   []string `json:"player_ids"`
 	SetupMode   string   `json:"setup_mode,omitempty"`
+
+	// BotCount is how many of PlayerIDs are bot-controlled. BotNames maps
+	// each bot's player ID to its assigned display name — bots occupy a
+	// slot in PlayerIDs immediately at creation (see CreateClassicGame), so
+	// existing lobby-fullness/start logic in JoinClassicGame needs no
+	// changes to account for them.
+	BotCount int               `json:"bot_count,omitempty"`
+	BotNames map[string]string `json:"bot_names,omitempty"`
 }
 
 type GameBootstrapPlayer struct {
@@ -96,6 +139,7 @@ type GameBootstrapPlayer struct {
 	Cards       []risk.Card `json:"cards,omitempty"`
 	SetupArmies int         `json:"setup_armies"`
 	Eliminated  bool        `json:"eliminated"`
+	IsBot       bool        `json:"is_bot"`
 }
 
 type GameBootstrap struct {
@@ -105,6 +149,7 @@ type GameBootstrap struct {
 	Status                string                 `json:"status"`
 	Phase                 string                 `json:"phase"`
 	Winner                string                 `json:"winner,omitempty"`
+	PlayerCount           int                    `json:"player_count"`
 	CurrentPlayer         int                    `json:"current_player"`
 	PendingReinforcements int                    `json:"pending_reinforcements"`
 	SetsTraded            int                    `json:"sets_traded"`
@@ -151,6 +196,14 @@ type GameActionUpdate struct {
 	Result                any                    `json:"result,omitempty"`
 	Event                 *GameEventEntry        `json:"event,omitempty"`
 	ActorCards            []risk.Card            `json:"-"`
+
+	// ActionTerritory/ActionFrom/ActionTo tell the frontend which
+	// territory (or territory pair) this action touched, so it can
+	// highlight them the same way a human's own click would — this is
+	// the only signal for bot-driven actions, which have no click at all.
+	ActionTerritory string `json:"action_territory,omitempty"`
+	ActionFrom      string `json:"action_from,omitempty"`
+	ActionTo        string `json:"action_to,omitempty"`
 }
 
 type GameEventEntry struct {
@@ -169,11 +222,16 @@ type GameOccupyRequirement struct {
 	MaxMove int    `json:"max_move"`
 }
 
-func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string) (store.Game, error) {
+func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error) {
 	if ownerUserID == "" {
 		return store.Game{}, ErrInvalidGameInput
 	}
 	if playerCount < 3 || playerCount > 6 {
+		return store.Game{}, ErrInvalidGameInput
+	}
+	// The creator always occupies one human slot, so at most playerCount-1
+	// slots may be bots.
+	if botCount < 0 || botCount > playerCount-1 {
 		return store.Game{}, ErrInvalidGameInput
 	}
 
@@ -189,21 +247,154 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 		return store.Game{}, ErrUnknownPlayerIDs
 	}
 
-	state, err := json.Marshal(lobbyState{
+	// Best-effort: exclude the creator's own username from the bot name
+	// pool. A lookup failure here is not fatal to game creation — it just
+	// means bot names aren't deduplicated against this one human name.
+	var ownerName string
+	if names, err := s.userNamesByIDsQ(ctx, s.db.Queryer(), []string{ownerUserID}); err == nil {
+		ownerName = names[ownerUserID]
+	}
+
+	playerIDs := []string{ownerUserID}
+	botNames := map[string]string{}
+	if botCount > 0 {
+		assigned := s.assignBotNames(botCount, []string{ownerName})
+		for _, name := range assigned {
+			id, err := newBotPlayerID()
+			if err != nil {
+				return store.Game{}, err
+			}
+			playerIDs = append(playerIDs, id)
+			botNames[id] = name
+		}
+	}
+
+	lobby := lobbyState{
 		PlayerCount: playerCount,
-		PlayerIDs:   []string{ownerUserID},
+		PlayerIDs:   playerIDs,
 		SetupMode:   setupMode,
+		BotCount:    botCount,
+		BotNames:    botNames,
+	}
+
+	// If bots already fill every non-creator slot, the lobby is full the
+	// instant it's created — no other human will ever call JoinClassicGame
+	// to trigger the start, so it must start immediately here instead.
+	status := "lobby"
+	var stateJSON []byte
+	var startedEngine *risk.Game
+	var stateErr error
+	if len(playerIDs) == playerCount {
+		startedEngine, stateJSON, stateErr = s.startEngineForFullLobby(lobby)
+		status = "in_progress"
+	} else {
+		stateJSON, stateErr = json.Marshal(lobby)
+	}
+	if stateErr != nil {
+		return store.Game{}, stateErr
+	}
+
+	g, err := s.games.Create(ctx, s.db.Queryer(), store.NewGame{
+		OwnerUserID: ownerUserID,
+		Name:        gamename.Generate(),
+		Status:      status,
+		State:       stateJSON,
 	})
 	if err != nil {
 		return store.Game{}, err
 	}
 
-	return s.games.Create(ctx, s.db.Queryer(), store.NewGame{
-		OwnerUserID: ownerUserID,
-		Name:        gamename.Generate(),
-		Status:      "lobby",
-		State:       state,
-	})
+	if startedEngine != nil && s.gamePlayers != nil {
+		if err := s.gamePlayers.InsertGamePlayers(ctx, s.db.Queryer(), humanGamePlayers(g.ID, startedEngine.Players)); err != nil {
+			return store.Game{}, err
+		}
+	}
+	if startedEngine != nil {
+		firstPlayerID := startedEngine.Players[startedEngine.CurrentPlayer].ID
+		firstPlayerNames, err := s.userNamesByIDsQ(ctx, s.db.Queryer(), []string{firstPlayerID})
+		if err != nil {
+			return store.Game{}, err
+		}
+		overlayBotNames(firstPlayerNames, botNames)
+		firstPlayerName := displayName(firstPlayerNames, firstPlayerID)
+		if s.gameEvent != nil {
+			startBody := fmt.Sprintf("All bot slots filled. %s goes first.", firstPlayerName)
+			if _, err := s.gameEvent.SaveGameEvent(ctx, s.db.Queryer(), g.ID, ownerUserID, "game_started", startBody); err != nil {
+				return store.Game{}, err
+			}
+		}
+		if s.discordOutbox != nil {
+			discordNames, err := s.discordNamesByIDsQ(ctx, s.db.Queryer(), []string{firstPlayerID})
+			if err != nil {
+				return store.Game{}, err
+			}
+			if err := s.discordOutbox.EnqueueGameStarted(ctx, s.db.Queryer(), g.ID, g.Name, firstPlayerID, firstPlayerName, discordNames[firstPlayerID]); err != nil {
+				return store.Game{}, err
+			}
+		}
+	}
+	if startedEngine != nil {
+		s.notifyGameStarted(g.ID)
+	}
+
+	return g, nil
+}
+
+// startEngineForFullLobby starts the classic engine for a lobby that has
+// just become full — whether because bots already occupied every
+// non-creator slot at creation, or because a human join just filled the
+// last one — and marks the bot players in the resulting state. Both
+// CreateClassicGame and JoinClassicGame call this so the two paths can
+// never drift apart.
+func (s *GamesService) startEngineForFullLobby(lobby lobbyState) (*risk.Game, []byte, error) {
+	var startedEngine *risk.Game
+	var err error
+	if lobby.SetupMode == "manual" {
+		startedEngine, err = risk.NewClassicRandomTerritoryGame(lobby.PlayerIDs, nil)
+	} else {
+		startedEngine, err = risk.NewClassicAutoStartGame(lobby.PlayerIDs, nil)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	applyBotMetadata(startedEngine, lobby.BotNames)
+	nextState, err := json.Marshal(startedEngine)
+	if err != nil {
+		return nil, nil, err
+	}
+	return startedEngine, nextState, nil
+}
+
+// humanGamePlayers filters out bot players: bots have no row in `users`
+// and no session, so inserting them would violate game_players.user_id's
+// FK to users(id). They still exist as full players in the engine state;
+// they just never appear in game_players/leaderboard bookkeeping.
+func humanGamePlayers(gameID string, players []risk.PlayerState) []store.NewGamePlayer {
+	out := make([]store.NewGamePlayer, 0, len(players))
+	for i, p := range players {
+		if p.IsBot() {
+			continue
+		}
+		out = append(out, store.NewGamePlayer{GameID: gameID, UserID: p.ID, PlayerIndex: i})
+	}
+	return out
+}
+
+// newBotPlayerID mints a synthetic player ID for a bot in the same
+// textual format Postgres's gen_random_uuid() produces for real users, so
+// bot IDs are indistinguishable in logs/events. Bots are never inserted
+// into the `users` table or the `game_players` table (no fake accounts,
+// no session), so this never needs to be DB-unique against real users —
+// only unique enough to not collide within one game, which 122 bits of
+// randomness guarantees for any practical player count.
+func newBotPlayerID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate bot player id: %w", err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error) {
@@ -212,6 +403,7 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 	}
 
 	var out store.Game
+	started := false
 	err := s.db.WithTxQ(ctx, func(q db.Querier) error {
 		g, err := s.games.GetByIDForUpdate(ctx, q, gameID)
 		if err != nil {
@@ -245,23 +437,16 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		if err != nil {
 			return err
 		}
+		overlayBotNames(names, lobby.BotNames)
 		nextStatus := "lobby"
 		var nextState []byte
 		var startedEngine *risk.Game
 		if len(lobby.PlayerIDs) == lobby.PlayerCount {
-			if lobby.SetupMode == "manual" {
-				startedEngine, err = risk.NewClassicRandomTerritoryGame(lobby.PlayerIDs, nil)
-			} else {
-				startedEngine, err = risk.NewClassicAutoStartGame(lobby.PlayerIDs, nil)
-			}
+			startedEngine, nextState, err = s.startEngineForFullLobby(lobby)
 			if err != nil {
 				return err
 			}
 			nextStatus = "in_progress"
-			nextState, err = json.Marshal(startedEngine)
-			if err != nil {
-				return err
-			}
 			if s.gameEvent != nil {
 				joinBody := fmt.Sprintf(
 					"%s joined the game lobby (%d/%d players).",
@@ -279,6 +464,16 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 					startBody = fmt.Sprintf("All players joined. Armies have been randomly distributed. %s goes first.", displayName(names, startedEngine.Players[startedEngine.CurrentPlayer].ID))
 				}
 				if _, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, playerID, "game_started", startBody); err != nil {
+					return err
+				}
+			}
+			if s.discordOutbox != nil {
+				firstPlayerID := startedEngine.Players[startedEngine.CurrentPlayer].ID
+				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{firstPlayerID})
+				if err != nil {
+					return err
+				}
+				if err := s.discordOutbox.EnqueueGameStarted(ctx, q, g.ID, g.Name, firstPlayerID, displayName(names, firstPlayerID), discordNames[firstPlayerID]); err != nil {
 					return err
 				}
 			}
@@ -310,21 +505,17 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		}
 
 		if startedEngine != nil && s.gamePlayers != nil {
-			players := make([]store.NewGamePlayer, len(startedEngine.Players))
-			for i, p := range startedEngine.Players {
-				players[i] = store.NewGamePlayer{
-					GameID:      g.ID,
-					UserID:      p.ID,
-					PlayerIndex: i,
-				}
-			}
-			if err := s.gamePlayers.InsertGamePlayers(ctx, q, players); err != nil {
+			if err := s.gamePlayers.InsertGamePlayers(ctx, q, humanGamePlayers(g.ID, startedEngine.Players)); err != nil {
 				return err
 			}
 		}
+		started = startedEngine != nil
 
 		return nil
 	})
+	if err == nil && started {
+		s.notifyGameStarted(out.ID)
+	}
 	return out, err
 }
 
@@ -376,6 +567,7 @@ func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string
 	turnUserIDByGame := make(map[int]string, len(games))
 	userIDs := make([]string, 0, len(games))
 	seenUserIDs := make(map[string]struct{}, len(games))
+	botNames := make(map[string]string, len(games))
 	for i, g := range games {
 		out[i] = GameSummary{Game: g}
 		if g.Status != "in_progress" {
@@ -389,11 +581,14 @@ func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string
 			continue
 		}
 		out[i].Phase = string(engine.Phase)
-		userID := engine.Players[engine.CurrentPlayer].ID
-		turnUserIDByGame[i] = userID
-		if _, ok := seenUserIDs[userID]; !ok {
-			seenUserIDs[userID] = struct{}{}
-			userIDs = append(userIDs, userID)
+		current := engine.Players[engine.CurrentPlayer]
+		turnUserIDByGame[i] = current.ID
+		if current.Name != "" {
+			botNames[current.ID] = current.Name
+		}
+		if _, ok := seenUserIDs[current.ID]; !ok {
+			seenUserIDs[current.ID] = struct{}{}
+			userIDs = append(userIDs, current.ID)
 		}
 	}
 
@@ -402,6 +597,7 @@ func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string
 		if err != nil {
 			return nil, err
 		}
+		overlayBotNames(names, botNames)
 		for i, userID := range turnUserIDByGame {
 			name := names[userID]
 			if name == "" {
@@ -465,11 +661,21 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 		if err != nil {
 			return err
 		}
+		for _, p := range engine.Players {
+			if p.Name != "" {
+				names[p.ID] = p.Name
+			}
+		}
 		prevOccupy := occupyRequirement(engine.Occupy)
 
 		var result any
 		var eventType, eventBody string
 		var domainEv *risk.DomainEvent
+		// actionTerritory/actionFrom/actionTo tell the frontend which
+		// territories this action touched, so it can highlight them the
+		// same way a human's own click would — including for bot-driven
+		// actions, which have no click to derive a highlight from.
+		var actionTerritory, actionFrom, actionTo string
 		switch in.Action {
 		case "place_reinforcement":
 			if in.Territory == "" || in.Armies <= 0 {
@@ -478,6 +684,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			if err := engine.PlaceReinforcement(in.PlayerUserID, risk.Territory(in.Territory), in.Armies); err != nil {
 				return err
 			}
+			actionTerritory = in.Territory
 			eventType = "reinforcement_placed"
 			eventBody = fmt.Sprintf("%s placed %d %s on %s.", displayName(names, in.PlayerUserID), in.Armies, pluralize("army", in.Armies), in.Territory)
 		case "attack":
@@ -517,6 +724,8 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			domainEv = ev
 			result = ar
+			actionFrom = in.From
+			actionTo = in.To
 			eventType = "attack_resolved"
 			eventBody = fmt.Sprintf(
 				"%s attacked %s from %s. Dice: attacker [%s], defender [%s]. Losses: %s %d, %s %d.",
@@ -561,6 +770,8 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				from = prevOccupy.From
 				to = prevOccupy.To
 			}
+			actionFrom = from
+			actionTo = to
 			eventType = "territory_occupied"
 			eventBody = fmt.Sprintf("%s moved %d %s from %s to %s.", displayName(names, in.PlayerUserID), in.Armies, pluralize("army", in.Armies), from, to)
 			// Winning the game is only detected here: checkWinner() runs inside
@@ -590,6 +801,8 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			if err := engine.Fortify(in.PlayerUserID, risk.Territory(in.From), risk.Territory(in.To), in.Armies); err != nil {
 				return err
 			}
+			actionFrom = in.From
+			actionTo = in.To
 			eventType = "fortified"
 			eventBody = fmt.Sprintf("%s fortified %s from %s with %d %s.", displayName(names, in.PlayerUserID), in.To, in.From, in.Armies, pluralize("army", in.Armies))
 		case "end_turn":
@@ -637,6 +850,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			if err := engine.PlaceInitialArmy(in.PlayerUserID, risk.Territory(in.Territory)); err != nil {
 				return err
 			}
+			actionTerritory = in.Territory
 			eventType = "initial_army_placed"
 			eventBody = fmt.Sprintf("%s placed an army on %s.", displayName(names, in.PlayerUserID), in.Territory)
 		default:
@@ -707,6 +921,9 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			Territories:           territories,
 			Result:                result,
 			ActorCards:            actorCards,
+			ActionTerritory:       actionTerritory,
+			ActionFrom:            actionFrom,
+			ActionTo:              actionTo,
 		}
 		if s.gameEvent != nil && strings.TrimSpace(eventBody) != "" {
 			saved, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, in.PlayerUserID, eventType, eventBody)
@@ -758,7 +975,9 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		if err != nil {
 			return GameBootstrap{}, err
 		}
+		overlayBotNames(names, lobby.BotNames)
 		out.Phase = "lobby"
+		out.PlayerCount = lobby.PlayerCount
 		out.CurrentPlayer = -1
 		out.PendingReinforcements = 0
 		out.Occupy = nil
@@ -768,12 +987,14 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 			if name == "" {
 				name = id
 			}
+			_, isBot := lobby.BotNames[id]
 			out.Players = append(out.Players, GameBootstrapPlayer{
 				UserID:     id,
 				UserName:   name,
 				Color:      bootstrapColor(len(out.Players)),
 				CardCount:  0,
 				Eliminated: false,
+				IsBot:      isBot,
 			})
 		}
 		out.Territories = json.RawMessage(`{}`)
@@ -835,13 +1056,17 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 		}
 		out.Phase = string(engine.Phase)
 		out.Winner = engine.Winner
+		out.PlayerCount = len(engine.Players)
 		out.CurrentPlayer = engine.CurrentPlayer
 		out.PendingReinforcements = engine.PendingReinforcements
 		out.SetsTraded = engine.SetsTraded
 		out.Occupy = occupyRequirement(engine.Occupy)
 		out.Players = make([]GameBootstrapPlayer, 0, len(engine.Players))
 		for i, p := range engine.Players {
-			name := names[p.ID]
+			name := p.Name
+			if name == "" {
+				name = names[p.ID]
+			}
 			if name == "" {
 				name = p.ID
 			}
@@ -857,6 +1082,7 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 				Cards:       cards,
 				SetupArmies: engine.SetupReserves[i],
 				Eliminated:  p.Eliminated,
+				IsBot:       p.IsBot(),
 			})
 		}
 		tb, err := json.Marshal(engine.Territories)
@@ -962,6 +1188,33 @@ func (s *GamesService) discordNamesByIDsQ(ctx context.Context, q db.Querier, ids
 		out[id] = name
 	}
 	return out, rows.Err()
+}
+
+// overlayBotNames sets each bot's assigned display name into names,
+// overriding whatever (empty) result the users-table lookup produced for
+// that ID. Bots never have a users row, so without this every bot would
+// display as its raw player ID.
+func overlayBotNames(names map[string]string, botNames map[string]string) {
+	for id, name := range botNames {
+		if name != "" {
+			names[id] = name
+		}
+	}
+}
+
+// applyBotMetadata marks each player in g whose ID is a key in botNames as
+// bot-controlled, using the one strategy this milestone supports.
+// NewClassicAutoStartGame/NewClassicRandomTerritoryGame build plain
+// PlayerState{ID: id} entries with no notion of which IDs are bots, so this
+// is applied once, right after the engine starts.
+func applyBotMetadata(g *risk.Game, botNames map[string]string) {
+	for i := range g.Players {
+		if name, ok := botNames[g.Players[i].ID]; ok {
+			g.Players[i].Controller = risk.ControllerBot
+			g.Players[i].Strategy = bot.StrategyBasicV1
+			g.Players[i].Name = name
+		}
+	}
 }
 
 func containsID(ids []string, target string) bool {

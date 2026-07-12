@@ -19,6 +19,8 @@ export type GameRecord = {
 export type CreateGameRequest = {
   playerCount: number;
   setupMode?: string;
+  /** How many of playerCount should be bot-controlled. Omitted/0 creates a human-only game. */
+  botCount?: number;
 };
 
 export type Card = {
@@ -34,6 +36,7 @@ export type GameBootstrapPlayer = {
   cards: Card[];
   setupArmies: number;
   eliminated: boolean;
+  isBot: boolean;
 };
 
 export type GameOccupyRequirement = {
@@ -58,6 +61,7 @@ export type GameBootstrap = {
   name: string;
   status: string;
   phase: string;
+  playerCount: number;
   currentPlayer: number;
   pendingReinforcements: number;
   setsTraded: number;
@@ -146,6 +150,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
       name: "",
       status: "",
       phase: "",
+      playerCount: 0,
       currentPlayer: -1,
       pendingReinforcements: 0,
       setsTraded: 0,
@@ -176,6 +181,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
         cards,
         setupArmies: readNumber(p.setup_armies ?? p.setupArmies),
         eliminated: p.eliminated === true,
+        isBot: p.is_bot === true || p.isBot === true,
       };
     });
   const territories =
@@ -213,6 +219,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     name: readString(record.name ?? record.Name),
     status: readString(record.status ?? record.Status),
     phase: readString(record.phase ?? record.Phase),
+    playerCount: readNumber(record.player_count ?? record.playerCount, 0),
     currentPlayer: readNumber(record.current_player ?? record.currentPlayer, -1),
     pendingReinforcements: readNumber(record.pending_reinforcements ?? record.pendingReinforcements, 0),
     setsTraded: readNumber(record.sets_traded ?? record.setsTraded, 0),
@@ -234,6 +241,7 @@ export async function listGames(): Promise<GameRecord[]> {
 export async function createGame(input: CreateGameRequest): Promise<GameRecord> {
   const data: Record<string, unknown> = { player_count: input.playerCount };
   if (input.setupMode) data.setup_mode = input.setupMode;
+  if (input.botCount) data.bot_count = input.botCount;
   const res = await request<unknown>({ method: "POST", url: "/games/", data });
   return normalizeGame(res);
 }

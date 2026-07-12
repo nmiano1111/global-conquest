@@ -107,6 +107,10 @@ type GameActionUpdate struct {
 	Result                any
 	Event                 *GameEventMessage
 	ActorCards            []wsmsg.CardPayload
+
+	ActionTerritory string
+	ActionFrom      string
+	ActionTo        string
 }
 
 type GameOccupyRequirement struct {
@@ -465,6 +469,31 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			}))
 		}
 
+	case wsmsg.TypeTerritorySelect:
+		// Purely a live-cursor relay: never touches game state, never
+		// persisted, no authoritative meaning. A client with nothing
+		// selected sends an all-empty payload, which is relayed the same
+		// way — that's how everyone else learns "they deselected."
+		if gameID == "" {
+			c.Conn.Send(errEnv(id, "invalid_message", "game_id is required"))
+			return
+		}
+		if c.ChatRoom != gameID {
+			c.Conn.Send(errEnv(id, "not_in_room", "join the game chat room first"))
+			return
+		}
+		var payload wsmsg.TerritorySelectPayload
+		if err := json.Unmarshal(env.Payload, &payload); err != nil {
+			c.Conn.Send(errEnv(id, "invalid_message", "invalid payload"))
+			return
+		}
+		s.broadcastTerritorySelected(gameID, wsmsg.TerritorySelectedPayload{
+			UserID:    c.UserID,
+			Territory: strings.TrimSpace(payload.Territory),
+			From:      strings.TrimSpace(payload.From),
+			To:        strings.TrimSpace(payload.To),
+		})
+
 	default:
 		// generic ack
 		c.Conn.Send(envelope("ack", newID("s"), id, gameID, nil))
@@ -518,6 +547,11 @@ func (s *Server) commitGameAction(in GameActionInput) (GameActionUpdate, error) 
 		Players:     statePlayers,
 		Territories: updated.Territories,
 		Result:      updated.Result,
+
+		ActionTerritory: updated.ActionTerritory,
+		ActionFrom:      updated.ActionFrom,
+		ActionTo:        updated.ActionTo,
+
 		Event: func() *wsmsg.GameEventPayload {
 			if updated.Event == nil {
 				return nil
@@ -689,6 +723,16 @@ func (s *Server) broadcastGameChatMessage(roomID string, message map[string]any)
 
 func (s *Server) broadcastGameStateUpdate(roomID string, payload wsmsg.GameStateUpdatedPayload) {
 	ev := envelope(string(wsmsg.TypeGameStateUpdated), newID("s"), "", roomID, payload)
+	clientIDs := s.chatRooms[roomID]
+	for clientID := range clientIDs {
+		if c, ok := s.clients[clientID]; ok {
+			c.Conn.Send(ev)
+		}
+	}
+}
+
+func (s *Server) broadcastTerritorySelected(roomID string, payload wsmsg.TerritorySelectedPayload) {
+	ev := envelope(string(wsmsg.TypeTerritorySelected), newID("s"), "", roomID, payload)
 	clientIDs := s.chatRooms[roomID]
 	for clientID := range clientIDs {
 		if c, ok := s.clients[clientID]; ok {

@@ -1,0 +1,126 @@
+package bot
+
+import (
+	"math/rand"
+	"time"
+
+	"backend/internal/game"
+	"backend/internal/risk"
+)
+
+// PaceCategory is a coarse, loggable significance label for a committed
+// bot action. The runner picks the actual delay from PacingConfig based on
+// the finer-grained situation (e.g. "first attack" vs "repeat attack" both
+// log as PaceNormal but use different ranges); the category exists purely
+// for observability, not as the thing that determines the sleep duration.
+type PaceCategory string
+
+const (
+	PaceMinor       PaceCategory = "minor"
+	PaceNormal      PaceCategory = "normal"
+	PaceSignificant PaceCategory = "significant"
+	PaceDramatic    PaceCategory = "dramatic"
+)
+
+// PacingConfig holds the bounded random delay range applied after each
+// distinct kind of committed bot action in live mode. Ranges are sampled
+// uniformly rather than using an identical fixed pause, so turns don't feel
+// mechanical.
+type PacingConfig struct {
+	TurnStartMin, TurnStartMax         time.Duration
+	CardTurnInMin, CardTurnInMax       time.Duration
+	ReinforcementMin, ReinforcementMax time.Duration
+	FirstAttackMin, FirstAttackMax     time.Duration
+	RepeatAttackMin, RepeatAttackMax   time.Duration
+	CaptureMin, CaptureMax             time.Duration
+	OccupationMin, OccupationMax       time.Duration
+	FortifyMin, FortifyMax             time.Duration
+	EndAttackMin, EndAttackMax         time.Duration
+	DramaticMin, DramaticMax           time.Duration
+}
+
+// DefaultPacingConfig returns the live pacing ranges. Roughly 1.5x the
+// original first-pass values across the board (per user feedback that bot
+// turns felt a little too quick), keeping the same relative proportions.
+func DefaultPacingConfig() PacingConfig {
+	return PacingConfig{
+		TurnStartMin:     1200 * time.Millisecond,
+		TurnStartMax:     2200 * time.Millisecond,
+		CardTurnInMin:    1500 * time.Millisecond,
+		CardTurnInMax:    2700 * time.Millisecond,
+		ReinforcementMin: 600 * time.Millisecond,
+		ReinforcementMax: 1200 * time.Millisecond,
+		FirstAttackMin:   1000 * time.Millisecond,
+		FirstAttackMax:   1800 * time.Millisecond,
+		RepeatAttackMin:  500 * time.Millisecond,
+		RepeatAttackMax:  1000 * time.Millisecond,
+		CaptureMin:       1500 * time.Millisecond,
+		CaptureMax:       2700 * time.Millisecond,
+		OccupationMin:    750 * time.Millisecond,
+		OccupationMax:    1500 * time.Millisecond,
+		FortifyMin:       1000 * time.Millisecond,
+		FortifyMax:       2000 * time.Millisecond,
+		// end_attack is a phase transition with no visible board change;
+		// end_turn intentionally has no extra pacing here — the pause that
+		// matters happens before the *next* bot's first action (TurnStart),
+		// not after the current player relinquishes control.
+		EndAttackMin: 450 * time.Millisecond,
+		EndAttackMax: 900 * time.Millisecond,
+		DramaticMin:  2200 * time.Millisecond,
+		DramaticMax:  3500 * time.Millisecond,
+	}
+}
+
+type paceDecision struct {
+	category PaceCategory
+	min, max time.Duration
+}
+
+// classifyAction determines the pacing for a just-committed command. It
+// relies on the typed Result the engine already produced (risk.AttackResult
+// for attacks) and the resulting Phase, rather than diffing arbitrary JSON —
+// both are already available on game.GameActionUpdate without any new
+// domain event type.
+func (cfg PacingConfig) classifyAction(cmd Command, update game.GameActionUpdate, repeatTarget bool) paceDecision {
+	if update.Phase == string(risk.PhaseGameOver) {
+		return paceDecision{PaceDramatic, cfg.DramaticMin, cfg.DramaticMax}
+	}
+	switch cmd.Action {
+	case ActionAttack:
+		if ar, ok := update.Result.(risk.AttackResult); ok {
+			if ar.Eliminated != "" {
+				return paceDecision{PaceDramatic, cfg.DramaticMin, cfg.DramaticMax}
+			}
+			if ar.Conquered {
+				return paceDecision{PaceSignificant, cfg.CaptureMin, cfg.CaptureMax}
+			}
+		}
+		if repeatTarget {
+			return paceDecision{PaceNormal, cfg.RepeatAttackMin, cfg.RepeatAttackMax}
+		}
+		return paceDecision{PaceNormal, cfg.FirstAttackMin, cfg.FirstAttackMax}
+	case ActionTradeCards:
+		return paceDecision{PaceSignificant, cfg.CardTurnInMin, cfg.CardTurnInMax}
+	case ActionPlaceReinforcement, ActionPlaceInitialArmy:
+		return paceDecision{PaceMinor, cfg.ReinforcementMin, cfg.ReinforcementMax}
+	case ActionOccupy:
+		return paceDecision{PaceMinor, cfg.OccupationMin, cfg.OccupationMax}
+	case ActionFortify:
+		return paceDecision{PaceNormal, cfg.FortifyMin, cfg.FortifyMax}
+	case ActionEndAttack:
+		return paceDecision{PaceMinor, cfg.EndAttackMin, cfg.EndAttackMax}
+	default: // end_turn and anything else: no extra pacing
+		return paceDecision{PaceMinor, 0, 0}
+	}
+}
+
+// randomDuration samples uniformly from [min, max]. Jitter itself is not
+// worth making deterministic/injectable — tests only assert the resulting
+// delay falls within the expected bounds for a given situation.
+func randomDuration(min, max time.Duration) time.Duration {
+	if max <= min {
+		return min
+	}
+	delta := int64(max - min)
+	return min + time.Duration(rand.Int63n(delta+1))
+}

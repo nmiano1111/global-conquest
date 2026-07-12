@@ -38,6 +38,8 @@ export interface MobileGameViewProps {
   selectedTerritory: string;
   activeFrom: string;
   activeTo: string;
+  /** Passive highlight for bot actions and other players' live territory presses — see GameMap. */
+  highlightedTerritories?: ReadonlySet<string>;
   armiesInput: number;
   clampedArmiesInput: number;
   clampedAttackerDice: number;
@@ -100,6 +102,7 @@ export function MobileGameView(props: MobileGameViewProps) {
     players, playerColors, territoryState, myCards, selectedCardIndices,
     mySetupArmies, nextTradeBonus, pendingReinforcements, occupyRequirement,
     diceResult, selectedTerritory, activeFrom, activeTo,
+    highlightedTerritories,
     clampedArmiesInput, clampedAttackerDice,
     minArmiesInput, maxArmiesInput, maxAttackDiceAllowed, maxDefendDiceAllowed,
     canAttackSelection, renderEventBody, onMapTerritoryClick,
@@ -245,6 +248,7 @@ export function MobileGameView(props: MobileGameViewProps) {
                 <div key={p.userId} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs ${isCurrent ? "bg-slate-700" : ""}`}>
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: playerColors[i] ?? "#94a3b8" }} />
                   <span className="font-medium" style={{ color: playerColors[i] ?? "#94a3b8" }}>{p.userName}</span>
+                  {p.isBot && <span title="Computer-controlled">🤖</span>}
                   {isCurrent && <span className="ml-auto text-[10px] font-semibold text-slate-400 uppercase tracking-wide">playing</span>}
                   {p.eliminated && <span className="ml-auto text-[10px] text-slate-600 line-through">eliminated</span>}
                 </div>
@@ -276,6 +280,7 @@ export function MobileGameView(props: MobileGameViewProps) {
                 <span className="font-medium" style={{ color: playerColors[i] ?? "#94a3b8" }}>
                   {p.userName}
                 </span>
+                {p.isBot && <span title="Computer-controlled">🤖</span>}
                 <span className="ml-auto text-slate-500">{p.setupArmies} left</span>
               </div>
             ))}
@@ -661,6 +666,7 @@ export function MobileGameView(props: MobileGameViewProps) {
           selectedTerritory={selectedTerritory}
           activeFrom={activeFrom}
           activeTo={activeTo}
+          highlightedTerritories={highlightedTerritories}
           playerColors={playerColors}
           onTerritoryClick={onMapTerritoryClick}
         />
@@ -688,6 +694,7 @@ export function MobileGameView(props: MobileGameViewProps) {
               >
                 {p.userName}
               </span>
+              {p.isBot && <span title="Computer-controlled">🤖</span>}
               {!p.eliminated && p.cardCount > 0 && (
                 <span className="rounded-full bg-indigo-900/70 px-1.5 py-0.5 text-xs font-semibold text-indigo-300">
                   🃏{p.cardCount}

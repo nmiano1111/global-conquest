@@ -17,21 +17,23 @@ const (
 	TypeGameChatLeave    Type = "game_chat_leave"
 	TypeGameChatSend     Type = "game_chat_send"
 	TypeGameAction       Type = "game_action"
+	TypeTerritorySelect  Type = "territory_select"
 
 	// server->client
-	TypeError            Type = "error"
-	TypeYourCards        Type = "your_cards"
-	TypeGameCreated      Type = "game_created"
-	TypeJoinedGame       Type = "joined_game"
-	TypeLeftGame         Type = "left_game"
-	TypeGameList         Type = "game_list"
-	TypePlayerJoined     Type = "player_joined"
-	TypePlayerLeft       Type = "player_left"
-	TypeLobbyTypingState Type = "lobby_typing_state"
-	TypeLobbyChatMessage Type = "lobby_chat_message"
-	TypeGameChatMessage  Type = "game_chat_message"
-	TypeGameChatHistory  Type = "game_chat_history"
-	TypeGameStateUpdated Type = "game_state_updated"
+	TypeError             Type = "error"
+	TypeYourCards         Type = "your_cards"
+	TypeGameCreated       Type = "game_created"
+	TypeJoinedGame        Type = "joined_game"
+	TypeLeftGame          Type = "left_game"
+	TypeGameList          Type = "game_list"
+	TypePlayerJoined      Type = "player_joined"
+	TypePlayerLeft        Type = "player_left"
+	TypeLobbyTypingState  Type = "lobby_typing_state"
+	TypeLobbyChatMessage  Type = "lobby_chat_message"
+	TypeGameChatMessage   Type = "game_chat_message"
+	TypeGameChatHistory   Type = "game_chat_history"
+	TypeGameStateUpdated  Type = "game_state_updated"
+	TypeTerritorySelected Type = "territory_selected"
 )
 
 type Envelope struct {
@@ -153,6 +155,27 @@ type GameActionPayload struct {
 	CardIndices  [3]int `json:"card_indices"`
 }
 
+// TerritorySelectPayload is sent by a client whenever its local player
+// selection changes (including clearing it — an all-empty payload means
+// "I deselected"). This is purely a live-cursor-style signal: it never
+// touches games.state, is never persisted, and carries no authority — the
+// hub only relays it to the rest of the game's chat room.
+type TerritorySelectPayload struct {
+	Territory string `json:"territory,omitempty"`
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+}
+
+// TerritorySelectedPayload is the relayed broadcast, tagged with whose
+// selection it is so clients can ignore their own echo and can eventually
+// distinguish multiple simultaneous selections.
+type TerritorySelectedPayload struct {
+	UserID    string `json:"user_id"`
+	Territory string `json:"territory,omitempty"`
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+}
+
 type CardPayload struct {
 	Territory string `json:"territory"`
 	Symbol    string `json:"symbol"`
@@ -182,6 +205,13 @@ type GameStateUpdatedPayload struct {
 	Territories           json.RawMessage          `json:"territories"`
 	Result                any                      `json:"result,omitempty"`
 	Event                 *GameEventPayload        `json:"event,omitempty"`
+
+	// ActionTerritory/ActionFrom/ActionTo name the territory (or pair) this
+	// action touched, so the frontend can highlight them exactly as it
+	// would for a human's own click — the only such signal for bot moves.
+	ActionTerritory string `json:"action_territory,omitempty"`
+	ActionFrom      string `json:"action_from,omitempty"`
+	ActionTo        string `json:"action_to,omitempty"`
 }
 
 type GameOccupyRequirement struct {

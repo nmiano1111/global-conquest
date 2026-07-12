@@ -32,6 +32,20 @@ export function GamePage() {
   const [selectedTerritory, setSelectedTerritory] = useState("");
   const [selectedFrom, setSelectedFrom] = useState("");
   const [selectedTo, setSelectedTo] = useState("");
+  // Passive highlight for whatever the most recently committed action
+  // touched (bot or human) — separate from selectedTerritory/selectedFrom/
+  // selectedTo above, which also drive form/attack-panel logic. This is
+  // purely visual and gets superseded by the next action, or cleared the
+  // moment the local user clicks the map themselves.
+  const [lastActionTerritory, setLastActionTerritory] = useState("");
+  const [lastActionFrom, setLastActionFrom] = useState("");
+  const [lastActionTo, setLastActionTo] = useState("");
+  // Other connected players' live territory presses, relayed over the
+  // socket (see territory_select/territory_selected) — keyed by user id so
+  // multiple players' selections can be shown at once. Purely a passive
+  // display signal: never persisted, never authoritative.
+  type RemoteSelection = { territory: string; from: string; to: string };
+  const [remoteSelections, setRemoteSelections] = useState<Record<string, RemoteSelection>>({});
   const [armiesInput, setArmiesInput] = useState(1);
   const [attackerDice, setAttackerDice] = useState(3);
   const [diceResult, setDiceResult] = useState<DiceRollResult | null>(null);
@@ -187,6 +201,9 @@ export function GamePage() {
             cards: meta?.cards ?? [],
             setupArmies: p.setupArmies,
             eliminated: p.eliminated,
+            // isBot never changes after bootstrap and every broadcast only
+            // carries gameplay fields, so it's simply carried over here.
+            isBot: meta?.isBot ?? false,
           };
         });
         return {
@@ -235,6 +252,14 @@ export function GamePage() {
           });
         }
       }
+      // Reflect whichever territories the just-committed action touched
+      // (bot or human) as a passive highlight. Always set (defaulting to
+      // "" when absent, e.g. end_turn/trade_cards) so a stale highlight
+      // from an earlier action doesn't linger past an action with nothing
+      // to show.
+      setLastActionTerritory(typeof payload?.action_territory === "string" ? payload.action_territory : "");
+      setLastActionFrom(typeof payload?.action_from === "string" ? payload.action_from : "");
+      setLastActionTo(typeof payload?.action_to === "string" ? payload.action_to : "");
     });
     return off;
   }, [gameID, on]);
@@ -274,6 +299,36 @@ export function GamePage() {
     });
     return off;
   }, [on]);
+
+  useEffect(() => {
+    const off = on("territory_selected", (msg) => {
+      const payload = msg.payload as Record<string, unknown> | undefined;
+      const userID = typeof payload?.user_id === "string" ? payload.user_id : "";
+      if (!userID || userID === auth.user?.id) return; // ignore our own echo
+      setRemoteSelections((prev) => ({
+        ...prev,
+        [userID]: {
+          territory: typeof payload?.territory === "string" ? payload.territory : "",
+          from: typeof payload?.from === "string" ? payload.from : "",
+          to: typeof payload?.to === "string" ? payload.to : "",
+        },
+      }));
+    });
+    return off;
+  }, [on, auth.user?.id]);
+
+  // Broadcast the local user's own selection to everyone else in the game
+  // whenever it changes, including clearing it (an all-empty send is how
+  // others learn we deselected). This is a pure relay — the server never
+  // interprets it, it just fans it back out to the room.
+  useEffect(() => {
+    if (wsStatus !== "connected") return;
+    send(
+      "territory_select",
+      { territory: selectedTerritory, from: selectedFrom, to: selectedTo },
+      { game_id: gameID }
+    );
+  }, [selectedTerritory, selectedFrom, selectedTo, wsStatus, send, gameID]);
 
   useEffect(() => {
     const off = on("game_chat_history", (msg) => {
@@ -340,6 +395,21 @@ export function GamePage() {
   const mySetupArmies = useMemo(() => players[meIndex]?.setupArmies ?? 0, [players, meIndex]);
   const activeFrom = phaseMode === "occupy" && occupyRequirement ? occupyRequirement.from : selectedFrom;
   const activeTo = phaseMode === "occupy" && occupyRequirement ? occupyRequirement.to : selectedTo;
+  // Everything to passively highlight that isn't already covered by the
+  // local user's own selection: the last committed action's territories
+  // (bot or human) plus every other connected player's live press.
+  const highlightedTerritories = useMemo(() => {
+    const set = new Set<string>();
+    if (lastActionTerritory) set.add(lastActionTerritory);
+    if (lastActionFrom) set.add(lastActionFrom);
+    if (lastActionTo) set.add(lastActionTo);
+    for (const sel of Object.values(remoteSelections)) {
+      if (sel.territory) set.add(sel.territory);
+      if (sel.from) set.add(sel.from);
+      if (sel.to) set.add(sel.to);
+    }
+    return set;
+  }, [lastActionTerritory, lastActionFrom, lastActionTo, remoteSelections]);
   const playerColors = useMemo(
     () => players.map((p, i) => p.color || MAP_PLAYER_COLORS[i % MAP_PLAYER_COLORS.length]),
     [players]
@@ -527,6 +597,11 @@ export function GamePage() {
 
   const onMapTerritoryClick = (name: string) => {
     setActionError("");
+    // A fresh click always takes over the display — don't leave a stale
+    // bot/action highlight competing with the user's own live selection.
+    setLastActionTerritory("");
+    setLastActionFrom("");
+    setLastActionTo("");
     const tRaw = territoryState?.[name];
     const t = tRaw && typeof tRaw === "object" ? (tRaw as Record<string, unknown>) : null;
     const owner = typeof t?.owner === "number" ? t.owner : -1;
@@ -678,6 +753,7 @@ export function GamePage() {
         selectedTerritory={selectedTerritory}
         activeFrom={activeFrom}
         activeTo={activeTo}
+        highlightedTerritories={highlightedTerritories}
         armiesInput={armiesInput}
         clampedArmiesInput={clampedArmiesInput}
         clampedAttackerDice={clampedAttackerDice}
@@ -855,6 +931,7 @@ export function GamePage() {
             selectedTerritory={selectedTerritory}
             activeFrom={activeFrom}
             activeTo={activeTo}
+            highlightedTerritories={highlightedTerritories}
             playerColors={playerColors}
             onTerritoryClick={onMapTerritoryClick}
           />
@@ -910,7 +987,10 @@ export function GamePage() {
         <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-gc-text">Players</h3>
-            <span className="text-xs text-gc-muted">{players.length}</span>
+            <span className="text-xs text-gc-muted">
+              {players.length}
+              {game && game.playerCount > 0 ? ` / ${game.playerCount}` : ""}
+            </span>
           </div>
           {players.length === 0 ? (
             <p className="text-sm text-gc-muted">No player data yet.</p>
@@ -928,6 +1008,14 @@ export function GamePage() {
                       style={{ backgroundColor: p.color || "#94a3b8" }}
                     />
                     <span style={{ color: p.color || "#dde4f0" }}>{p.userName || p.userId}</span>
+                    {p.isBot ? (
+                      <span
+                        title="Computer-controlled"
+                        className="rounded-full border border-gc-border bg-gc-surface px-1.5 py-0.5 text-[10px] font-medium text-gc-muted"
+                      >
+                        🤖 Computer
+                      </span>
+                    ) : null}
                   </span>
                   {game && players[game.currentPlayer]?.userId === p.userId ? (
                     <span className="rounded-full border border-gc-success/40 bg-gc-success/10 px-2 py-0.5 text-[11px] font-medium text-gc-success">
@@ -949,6 +1037,16 @@ export function GamePage() {
                 )}
               </li>
             ))}
+            {game && game.playerCount > players.length
+              ? Array.from({ length: game.playerCount - players.length }).map((_, i) => (
+                  <li
+                    key={`open-slot-${i}`}
+                    className="rounded-lg border border-dashed border-gc-border bg-transparent px-3 py-2 text-sm text-gc-muted"
+                  >
+                    Open human slot
+                  </li>
+                ))
+              : null}
           </ul>
         </section>
 

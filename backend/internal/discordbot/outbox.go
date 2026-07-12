@@ -246,6 +246,18 @@ func renderMessage(entry store.DiscordOutboxEntry, frontendBaseURL string) (stri
 			return fmt.Sprintf("🏆 <@%s> has won the game!%s", *p.WinnerDiscordName, gameSuffix), embeds, nil
 		}
 		return fmt.Sprintf("@everyone 🏆 **%s** has won the game!%s", p.WinnerDisplayName, gameSuffix), embeds, nil
+	case store.NotificationTypeGameStarted:
+		var p store.GameStartedPayload
+		if err := json.Unmarshal(entry.Payload, &p); err != nil {
+			return "", nil, fmt.Errorf("malformed game_started payload (id=%s): %w", entry.ID, err)
+		}
+		if p.PlayerDisplayName == "" {
+			return "", nil, fmt.Errorf("game_started payload missing player_display_name (id=%s)", entry.ID)
+		}
+		if p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
+			return fmt.Sprintf("🚦 The game has begun! <@%s> goes first.%s", *p.PlayerDiscordName, gameSuffix), embeds, nil
+		}
+		return fmt.Sprintf("@everyone 🚦 The game has begun! **%s** goes first.%s", p.PlayerDisplayName, gameSuffix), embeds, nil
 	default:
 		return "", nil, fmt.Errorf("unknown notification type %q (id=%s)", entry.NotificationType, entry.ID)
 	}

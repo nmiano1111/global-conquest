@@ -86,22 +86,22 @@ func TestCreateClassicGameValidation(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	_, err := svc.CreateClassicGame(context.Background(), "", 3, "")
+	_, err := svc.CreateClassicGame(context.Background(), "", 3, "", 0)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", 1, "")
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 1, "", 0)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", 2, "")
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 2, "", 0)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", 7, "")
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 7, "", 0)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}
@@ -239,7 +239,7 @@ func TestCreateClassicGamePersistsLobbyState(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	out, err := svc.CreateClassicGame(context.Background(), "u1", 4, "")
+	out, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 0)
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestCreateClassicGameRejectsUnknownOwner(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	_, err := svc.CreateClassicGame(context.Background(), "u1", 3, "")
+	_, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 0)
 	if !errors.Is(err, ErrUnknownPlayerIDs) {
 		t.Fatalf("expected ErrUnknownPlayerIDs, got %v", err)
 	}
@@ -760,6 +760,9 @@ type fakeDiscordOutboxStore struct {
 
 	gameOverFn    func(ctx context.Context, q db.Querier, gameID, gameName, winnerID, winnerDisplayName string, winnerDiscordName *string) error
 	gameOverCalls int
+
+	gameStartedFn    func(ctx context.Context, q db.Querier, gameID, gameName, playerID, playerDisplayName string, playerDiscordName *string) error
+	gameStartedCalls int
 }
 
 func (f *fakeDiscordOutboxStore) EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, gameName, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error {
@@ -783,6 +786,14 @@ func (f *fakeDiscordOutboxStore) EnqueueGameOver(ctx context.Context, q db.Queri
 	f.gameOverCalls++
 	if f.gameOverFn != nil {
 		return f.gameOverFn(ctx, q, gameID, gameName, winnerID, winnerDisplayName, winnerDiscordName)
+	}
+	return nil
+}
+
+func (f *fakeDiscordOutboxStore) EnqueueGameStarted(ctx context.Context, q db.Querier, gameID, gameName, playerID, playerDisplayName string, playerDiscordName *string) error {
+	f.gameStartedCalls++
+	if f.gameStartedFn != nil {
+		return f.gameStartedFn(ctx, q, gameID, gameName, playerID, playerDisplayName, playerDiscordName)
 	}
 	return nil
 }

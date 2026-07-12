@@ -106,7 +106,7 @@ func TestBotDrivesLopsidedGameToGameOver(t *testing.T) {
 	loader := service.NewBotGameLoader(gamesSvc)
 	submitter := &directSubmitter{svc: service.NewGameActionService(gamesSvc)}
 	strategies := bot.StrategyRegistry{bot.StrategyBasicV1: bot.NewBasicStrategy()}
-	runner := bot.NewRunner(loader, submitter, strategies, bot.RealSleeper{}, 0)
+	runner := bot.NewRunner(loader, submitter, strategies, bot.RealSleeper{}, bot.DefaultPacingConfig())
 
 	reason, err := runner.RunTurn(ctx, gameID, bot.ExecutionSimulation)
 	if err != nil {

@@ -32,15 +32,17 @@ setup_claim → setup_reinforce → reinforce → attack ──→ occupy → at
 
 ## Bot Players
 
-> Deep reference: `project-docs/bot_player/` (design docs by phase; `phase_1_foundation/00_Phase_1_Implementation_Status.md` documents what's actually built vs. designed).
+> Deep reference: `project-docs/bot_player/` (design docs by phase; `phase_1_foundation/00_Phase_1_Implementation_Status.md` and `phase_2_first_playable_bot/00_Bot_Creation_And_Live_Pacing_Status.md` document what's actually built vs. designed).
 
-Phase 1 (foundation) is implemented in `backend/internal/bot/`. A player is bot-controlled via `risk.PlayerState.Controller == risk.ControllerBot` (`IsBot()`), with `Strategy` naming which strategy to use — currently only `"basic-v1"` exists, and it plays *legal*, not *strong*, games.
+A player is bot-controlled via `risk.PlayerState.Controller == risk.ControllerBot` (`IsBot()`), with `Strategy` naming which strategy to use — currently only `"basic-v1"` exists, and it plays *legal*, not *strong*, games. `PlayerState.Name` holds a bot's assigned display name (humans leave it empty and use the normal `users` table lookup instead).
 
 - **`bot.Strategy`** picks one `bot.Command` (the same action shape a human WebSocket command uses) from read-only `risk.Legal*` query helpers (`risk/legal_actions.go`) — never duplicates engine legality, never mutates state.
 - **`bot.Runner.RunTurn`** drives one bot's one turn, one command at a time, always against freshly reloaded authoritative state, submitting through `game.Server.SubmitGameAction` — the *same* transactional `ApplyGameAction` + broadcast path human commands use, run inside the hub's single goroutine via the inbox channel (never a direct call from another goroutine).
 - **`bot.Manager`** keeps an in-memory, single-process registry ensuring at most one runner per game, and chains into the next bot's turn only when a runner reports `StopTurnEnded` — never busy-loops on a human turn.
-- **`ExecutionLive` vs `ExecutionSimulation`**: live mode applies one flat delay (`bot.DefaultLiveDelay`) via an injectable `Sleeper`; simulation mode never sleeps.
+- **`ExecutionLive` vs `ExecutionSimulation`**: live mode applies bounded random delays per situation (`bot.PacingConfig` — turn start, card turn-in, reinforcement, first/repeat attack, capture, occupation, fortify, elimination/completion) via an injectable `Sleeper`; simulation mode never sleeps. Classification uses the engine's typed `risk.AttackResult` and resulting phase, not JSON diffing.
 - Triggered after every committed action (`game.Server`'s `BotTrigger` callback) and on backend startup (`recoverBotGames` in `cmd/backend/main.go`, scanning `in_progress` games) — no in-memory bot plan is ever persisted; resuming just means reloading JSONB state.
+
+**Creating a mixed human/bot game**: `POST /api/games` takes an optional `bot_count` (`0 <= bot_count <= player_count - 1`; the creator always occupies one human slot). Bots are created immediately — no session, no `users` row, no `game_players` row (that table's `user_id` has an FK to `users`) — and occupy a lobby slot right away, so existing "is the lobby full" logic in `JoinClassicGame` needed no changes. If bots fill every non-creator slot at creation, `CreateClassicGame` starts the engine immediately (nobody would ever call join to trigger it) via the same `startEngineForFullLobby` helper `JoinClassicGame` uses. Bot names come from a curated pool of 1980s/1990s wrestlers (`bot.WrestlerNames`, `backend/internal/bot/names.go`), deduplicated within a game and against the creator's username.
 
 ---
 

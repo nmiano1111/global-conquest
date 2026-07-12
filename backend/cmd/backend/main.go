@@ -80,9 +80,14 @@ func main() {
 	// bots
 	botLoader := service.NewBotGameLoader(gamesSvc)
 	strategies := bot.StrategyRegistry{bot.StrategyBasicV1: bot.NewBasicStrategy()}
-	botRunner := bot.NewRunner(botLoader, s, strategies, bot.RealSleeper{}, bot.DefaultLiveDelay)
+	botRunner := bot.NewRunner(botLoader, s, strategies, bot.RealSleeper{}, bot.DefaultPacingConfig())
 	botManager := bot.NewManager(context.Background(), botRunner, bot.ExecutionLive)
 	s.SetBotTrigger(botManager.Trigger)
+	// CreateClassicGame/JoinClassicGame can transition a game straight to
+	// in_progress over REST, entirely bypassing game.Server's hub — the
+	// BotTrigger above never fires for that path, so nothing would ever
+	// start a bot's first turn without this.
+	gamesSvc.SetGameStartedHook(botManager.Trigger)
 	recoverBotGames(ctx, gamesSvc, botManager)
 
 	// http

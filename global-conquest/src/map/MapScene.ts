@@ -289,6 +289,7 @@ export class MapScene {
     activeFrom: string,
     activeTo: string,
     playerColors: string[],
+    highlightedTerritories?: ReadonlySet<string>,
   ) {
     for (const [name, node] of this.nodes) {
       const raw = territoryStates?.[name];
@@ -300,7 +301,8 @@ export class MapScene {
         isSelected:
           name === selectedTerritory ||
           name === activeFrom ||
-          name === activeTo,
+          name === activeTo ||
+          (highlightedTerritories?.has(name) ?? false),
       };
       node.update(state, playerColors);
     }

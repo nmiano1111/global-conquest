@@ -57,6 +57,10 @@ type PlayerState struct {
 	// no strategy assigned. See ControllerType and PlayerState.IsBot.
 	Controller ControllerType `json:"controller,omitempty"`
 	Strategy   string         `json:"strategy,omitempty"`
+
+	// Name is a bot's assigned display name. Humans have no row here — an
+	// empty Name always means "look up the human's username instead."
+	Name string `json:"name,omitempty"`
 }
 
 type TerritoryState struct {

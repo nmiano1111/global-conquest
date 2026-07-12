@@ -21,6 +21,9 @@ const PayloadSchemaVersionPlayerEliminated = 1
 const NotificationTypeGameOver = "game_over"
 const PayloadSchemaVersionGameOver = 1
 
+const NotificationTypeGameStarted = "game_started"
+const PayloadSchemaVersionGameStarted = 1
+
 // TurnStartedPayload is the structured payload for a turn_started notification.
 type TurnStartedPayload struct {
 	SchemaVersion             int     `json:"schema_version"`
@@ -58,6 +61,16 @@ type GameOverPayload struct {
 	WinnerID           string  `json:"winner_id"`
 	WinnerDisplayName  string  `json:"winner_display_name"`
 	WinnerDiscordName  *string `json:"winner_discord_name,omitempty"`
+}
+
+// GameStartedPayload is the structured payload for a game_started
+// notification — the very first turn of a game, which turn_started never
+// covers since it only fires when a player's turn ends (see EnqueueTurnStarted).
+type GameStartedPayload struct {
+	SchemaVersion     int     `json:"schema_version"`
+	PlayerID          string  `json:"player_id"`
+	PlayerDisplayName string  `json:"player_display_name"`
+	PlayerDiscordName *string `json:"player_discord_name,omitempty"`
 }
 
 // DiscordOutboxEntry is a row returned from discord_outbox.
@@ -253,6 +266,49 @@ func (s *PostgresDiscordOutboxStore) EnqueueGameOver(
 			seq.event_sequence,
 			'game_over',
 			format('game:%s:sequence:%s:game-over', $1::text, seq.event_sequence::text),
+			$3::jsonb
+		FROM seq
+		RETURNING id::text, game_id::text, game_sequence
+	`
+	var id, gid string
+	var seq int64
+	return q.QueryRow(ctx, stmt, gameID, gameName, string(payload)).Scan(&id, &gid, &seq)
+}
+
+// EnqueueGameStarted inserts a game_started notification row inside the
+// caller's transaction — the game's very first turn, distinct from every
+// later turn_started notification.
+func (s *PostgresDiscordOutboxStore) EnqueueGameStarted(
+	ctx context.Context,
+	q db.Querier,
+	gameID, gameName, playerID, playerDisplayName string,
+	playerDiscordName *string,
+) error {
+	payload, err := json.Marshal(GameStartedPayload{
+		SchemaVersion:     PayloadSchemaVersionGameStarted,
+		PlayerID:          playerID,
+		PlayerDisplayName: playerDisplayName,
+		PlayerDiscordName: playerDiscordName,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal game_started payload: %w", err)
+	}
+
+	const stmt = `
+		WITH seq AS (
+			UPDATE games
+			SET event_sequence = event_sequence + 1
+			WHERE id = $1::uuid
+			RETURNING event_sequence
+		)
+		INSERT INTO discord_outbox
+			(game_id, game_name, game_sequence, notification_type, deduplication_key, payload)
+		SELECT
+			$1::uuid,
+			$2,
+			seq.event_sequence,
+			'game_started',
+			format('game:%s:sequence:%s:game-started', $1::text, seq.event_sequence::text),
 			$3::jsonb
 		FROM seq
 		RETURNING id::text, game_id::text, game_sequence

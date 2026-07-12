@@ -70,6 +70,10 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 		Territories: out.Territories,
 		Result:      out.Result,
 		ActorCards:  actorCards,
+
+		ActionTerritory: out.ActionTerritory,
+		ActionFrom:      out.ActionFrom,
+		ActionTo:        out.ActionTo,
 		Event: func() *game.GameEventMessage {
 			if out.Event == nil {
 				return nil

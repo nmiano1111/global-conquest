@@ -28,7 +28,7 @@ type userService interface {
 }
 
 type gameService interface {
-	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string) (store.Game, error)
+	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error)
 	JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error)
 	GetGame(ctx context.Context, gameID string) (store.Game, error)
 	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
@@ -73,6 +73,12 @@ type loginResp struct {
 type createGameReq struct {
 	PlayerCount int    `json:"player_count" binding:"required,min=3,max=6"`
 	SetupMode   string `json:"setup_mode"`
+	// BotCount is how many of the player_count slots should be filled with
+	// bot-controlled players immediately. Omitted/zero preserves existing
+	// human-only game creation. The creator always occupies one human
+	// slot, so bot_count must leave at least one open (validated again,
+	// authoritatively, in GamesService.CreateClassicGame).
+	BotCount int `json:"bot_count" binding:"min=0"`
 }
 
 type updateGameStateReq struct {
@@ -249,7 +255,7 @@ func (h *Handler) CreateGame(c *gin.Context) {
 		setupMode = "manual"
 	}
 
-	g, err := h.games.CreateClassicGame(c.Request.Context(), authUser.ID, req.PlayerCount, setupMode)
+	g, err := h.games.CreateClassicGame(c.Request.Context(), authUser.ID, req.PlayerCount, setupMode, req.BotCount)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidGameInput),

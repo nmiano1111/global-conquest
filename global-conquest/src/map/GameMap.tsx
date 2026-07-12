@@ -9,6 +9,14 @@ interface GameMapProps {
   activeTo: string;
   playerColors: string[];
   onTerritoryClick: (name: string) => void;
+  /**
+   * Passive highlight for territories not covered by the local user's own
+   * selection — the most recently committed bot action, and other players'
+   * live territory presses relayed over the socket. Kept separate from
+   * selectedTerritory/activeFrom/activeTo since those also drive form
+   * logic (e.g. attack-panel gating); this is purely visual.
+   */
+  highlightedTerritories?: ReadonlySet<string>;
 }
 
 export interface GameMapHandle {
@@ -17,6 +25,8 @@ export interface GameMapHandle {
   resetZoom: () => void;
 }
 
+const EMPTY_HIGHLIGHT: ReadonlySet<string> = new Set();
+
 export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap({
   game,
   selectedTerritory,
@@ -24,20 +34,35 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
   activeTo,
   playerColors,
   onTerritoryClick,
+  highlightedTerritories = EMPTY_HIGHLIGHT,
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<MapScene | null>(null);
+
+  // Always-current snapshot of props so the async init handler can apply
+  // initial game state without needing to redeclare the init effect.
+  const stateRef = useRef({
+    game,
+    selectedTerritory,
+    activeFrom,
+    activeTo,
+    playerColors,
+    highlightedTerritories,
+  });
+  stateRef.current = {
+    game,
+    selectedTerritory,
+    activeFrom,
+    activeTo,
+    playerColors,
+    highlightedTerritories,
+  };
 
   useImperativeHandle(ref, () => ({
     zoomIn: () => sceneRef.current?.zoomIn(),
     zoomOut: () => sceneRef.current?.zoomOut(),
     resetZoom: () => sceneRef.current?.resetZoom(),
   }));
-
-  // Always-current snapshot of props so the async init handler can apply
-  // initial game state without needing to redeclare the init effect.
-  const stateRef = useRef({ game, selectedTerritory, activeFrom, activeTo, playerColors });
-  stateRef.current = { game, selectedTerritory, activeFrom, activeTo, playerColors };
 
   // Keep click handler in a ref so Pixi never captures a stale closure.
   const onClickRef = useRef(onTerritoryClick);
@@ -83,6 +108,7 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
           s.activeFrom,
           s.activeTo,
           s.playerColors,
+          s.highlightedTerritories,
         );
       })
       .catch(console.error);
@@ -123,8 +149,9 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
       activeFrom,
       activeTo,
       playerColors,
+      highlightedTerritories,
     );
-  }, [game, selectedTerritory, activeFrom, activeTo, playerColors]);
+  }, [game, selectedTerritory, activeFrom, activeTo, playerColors, highlightedTerritories]);
 
   return (
     <div

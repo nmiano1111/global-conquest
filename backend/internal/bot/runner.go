@@ -10,10 +10,6 @@ import (
 	"backend/internal/risk"
 )
 
-// DefaultLiveDelay is applied between committed bot actions in live mode.
-// Phase 1 uses one flat delay rather than action-specific pacing.
-const DefaultLiveDelay = 750 * time.Millisecond
-
 // maxRejectedCommandRetries bounds how many times the runner will reload
 // state and retry after the engine rejects a bot command. Repeated
 // rejection indicates a bug in the strategy or legal-action helpers, not a
@@ -64,23 +60,35 @@ type Runner struct {
 	submitter  ActionSubmitter
 	strategies StrategyRegistry
 	sleeper    Sleeper
-	liveDelay  time.Duration
+	pacing     PacingConfig
 }
 
-func NewRunner(loader GameLoader, submitter ActionSubmitter, strategies StrategyRegistry, sleeper Sleeper, liveDelay time.Duration) *Runner {
+func NewRunner(loader GameLoader, submitter ActionSubmitter, strategies StrategyRegistry, sleeper Sleeper, pacing PacingConfig) *Runner {
 	return &Runner{
 		loader:     loader,
 		submitter:  submitter,
 		strategies: strategies,
 		sleeper:    sleeper,
-		liveDelay:  liveDelay,
+		pacing:     pacing,
 	}
+}
+
+// pace sleeps for a duration sampled from [min, max] in live mode. It is a
+// no-op in simulation mode and never sleeps inside a transaction — it is
+// only ever called after a command has already committed and its result
+// broadcast.
+func (r *Runner) pace(ctx context.Context, mode ExecutionMode, min, max time.Duration) error {
+	if mode != ExecutionLive {
+		return nil
+	}
+	return r.sleeper.Sleep(ctx, randomDuration(min, max))
 }
 
 func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode) (reason StopReason, err error) {
 	var botPlayerID string
 	first := true
 	retries := 0
+	lastAttackTarget := ""
 
 	defer func() {
 		if botPlayerID != "" {
@@ -121,6 +129,9 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 			botPlayerID = current.ID
 			first = false
 			log.Printf("bot: runner started game_id=%s player_id=%s strategy=%s phase=%s", gameID, botPlayerID, current.Strategy, g.Phase)
+			if err := r.pace(ctx, mode, r.pacing.TurnStartMin, r.pacing.TurnStartMax); err != nil {
+				return StopCanceled, nil
+			}
 		} else if current.ID != botPlayerID {
 			return StopTurnEnded, nil
 		}
@@ -150,16 +161,22 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 			continue
 		}
 		retries = 0
-		log.Printf("bot: command committed game_id=%s player_id=%s action=%s phase=%s", gameID, botPlayerID, cmd.Action, update.Phase)
+
+		repeatTarget := cmd.Action == ActionAttack && cmd.To == lastAttackTarget
+		if cmd.Action == ActionAttack {
+			lastAttackTarget = cmd.To
+		} else {
+			lastAttackTarget = ""
+		}
+		decision := r.pacing.classifyAction(cmd, update, repeatTarget)
+		log.Printf("bot: command committed game_id=%s player_id=%s action=%s phase=%s pace=%s", gameID, botPlayerID, cmd.Action, update.Phase, decision.category)
+
+		if err := r.pace(ctx, mode, decision.min, decision.max); err != nil {
+			return StopCanceled, nil
+		}
 
 		if update.Phase == string(risk.PhaseGameOver) {
 			return StopGameOver, nil
-		}
-
-		if mode == ExecutionLive {
-			if err := r.sleeper.Sleep(ctx, r.liveDelay); err != nil {
-				return StopCanceled, nil
-			}
 		}
 	}
 }

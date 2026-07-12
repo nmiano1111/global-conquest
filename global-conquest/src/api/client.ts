@@ -49,11 +49,20 @@ function toApiError(err: unknown): ApiError {
   // Try to preserve server-provided error payloads
   const details = axErr.response?.data;
 
-  // Prefer a useful message
+  // Prefer a useful message. The backend's error responses use
+  // `{"error": "..."}` (see httpapi/handler.go); some also use `message`,
+  // so check both rather than falling back to Axios's generic
+  // "Request failed with status code N" text.
   let message = axErr.message || "Request failed";
-  if (details && typeof details === "object" && "message" in details) {
-    const detailMessage = (details as { message?: unknown }).message;
-    if (typeof detailMessage === "string" && detailMessage.trim() !== "") {
+  if (details && typeof details === "object") {
+    const detailRecord = details as { message?: unknown; error?: unknown };
+    const detailMessage =
+      typeof detailRecord.message === "string" && detailRecord.message.trim() !== ""
+        ? detailRecord.message
+        : typeof detailRecord.error === "string" && detailRecord.error.trim() !== ""
+          ? detailRecord.error
+          : undefined;
+    if (detailMessage) {
       message = detailMessage;
     }
   }

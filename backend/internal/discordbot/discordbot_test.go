@@ -441,6 +441,49 @@ func TestRenderGameOverWithFrontendURL_KeepsGameNameAndAddsLinkEmbed(t *testing.
 	}
 }
 
+func TestRenderGameStarted(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeGameStarted, `{
+		"schema_version": 1,
+		"player_id": "a1",
+		"player_display_name": "Alice"
+	}`)
+	msg, _, err := renderMessage(entry, "")
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "@everyone 🚦 The game has begun! **Alice** goes first. (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderGameStartedWithDiscordName(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeGameStarted, `{
+		"schema_version": 1,
+		"player_id": "a1",
+		"player_display_name": "Alice",
+		"player_discord_name": "alicewonder"
+	}`)
+	msg, _, err := renderMessage(entry, "")
+	if err != nil {
+		t.Fatalf("renderMessage: %v", err)
+	}
+	if msg != "🚦 The game has begun! <@alicewonder> goes first. (game `game-1`)" {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+}
+
+func TestRenderGameStartedMissingName(t *testing.T) {
+	entry := makeEntry(store.NotificationTypeGameStarted, `{
+		"schema_version": 1,
+		"player_id": "a1",
+		"player_display_name": ""
+	}`)
+	_, _, err := renderMessage(entry, "")
+	if err == nil {
+		t.Fatal("expected error for missing player_display_name")
+	}
+}
+
 func TestRenderTurnStartedWithFrontendURL_KeepsGameNameAndAddsLinkEmbed(t *testing.T) {
 	entry := makeEntry(store.NotificationTypeTurnStarted, `{
 		"schema_version": 1,
