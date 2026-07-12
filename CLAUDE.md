@@ -15,7 +15,7 @@
 **`risk.Game`** is serialized as JSONB in `games.state`. Key fields:
 - `Phase Phase` — drives all action legality
 - `Territories map[Territory]TerritoryState` — owner (player index) + army count
-- `Players []PlayerState` — card hand, eliminated flag
+- `Players []PlayerState` — card hand, eliminated flag, controller (`human`/`bot`, omitempty — see Bot Players below)
 - `CurrentPlayer int`, `PendingReinforcements int`
 - `Occupy *OccupyState` — non-nil only during occupy phase (post-conquest)
 - `Deck, Discard []Card`, `SetsTraded int`
@@ -26,6 +26,21 @@ setup_claim → setup_reinforce → reinforce → attack ──→ occupy → at
                                                     └──→ fortify → reinforce (next player)
                                                                         └──→ game_over
 ```
+`setup_claim` is engine-only and unused in practice: `JoinClassicGame` always starts games via `NewClassicAutoStartGame` or `NewClassicRandomTerritoryGame`, both of which skip straight to `setup_reinforce` or `reinforce`. Territories are always randomly distributed — no player (human or bot) ever chooses a territory claim.
+
+---
+
+## Bot Players
+
+> Deep reference: `project-docs/bot_player/` (design docs by phase; `phase_1_foundation/00_Phase_1_Implementation_Status.md` documents what's actually built vs. designed).
+
+Phase 1 (foundation) is implemented in `backend/internal/bot/`. A player is bot-controlled via `risk.PlayerState.Controller == risk.ControllerBot` (`IsBot()`), with `Strategy` naming which strategy to use — currently only `"basic-v1"` exists, and it plays *legal*, not *strong*, games.
+
+- **`bot.Strategy`** picks one `bot.Command` (the same action shape a human WebSocket command uses) from read-only `risk.Legal*` query helpers (`risk/legal_actions.go`) — never duplicates engine legality, never mutates state.
+- **`bot.Runner.RunTurn`** drives one bot's one turn, one command at a time, always against freshly reloaded authoritative state, submitting through `game.Server.SubmitGameAction` — the *same* transactional `ApplyGameAction` + broadcast path human commands use, run inside the hub's single goroutine via the inbox channel (never a direct call from another goroutine).
+- **`bot.Manager`** keeps an in-memory, single-process registry ensuring at most one runner per game, and chains into the next bot's turn only when a runner reports `StopTurnEnded` — never busy-loops on a human turn.
+- **`ExecutionLive` vs `ExecutionSimulation`**: live mode applies one flat delay (`bot.DefaultLiveDelay`) via an injectable `Sleeper`; simulation mode never sleeps.
+- Triggered after every committed action (`game.Server`'s `BotTrigger` callback) and on backend startup (`recoverBotGames` in `cmd/backend/main.go`, scanning `in_progress` games) — no in-memory bot plan is ever persisted; resuming just means reloading JSONB state.
 
 ---
 
@@ -33,7 +48,7 @@ setup_claim → setup_reinforce → reinforce → attack ──→ occupy → at
 
 - **`risk/engine.go` is the sole authority for game rules.** Never replicate rule logic in service or frontend.
 - **All game mutations use `SELECT … FOR UPDATE` inside `WithTxQ`.** Using `GetByID` (non-locking) instead of `GetByIDForUpdate` causes race conditions. `[service/game.go:169–170, 305–306]`
-- **`game.Server` (`game/server.go`) is single-goroutine.** `s.clients` and `s.chatRooms` are only accessed inside `Run()`. Do not add direct concurrent access.
+- **`game.Server` (`game/server.go`) is single-goroutine.** `s.clients` and `s.chatRooms` are only accessed inside `Run()`. Do not add direct concurrent access. Bot runners submit via `Server.SubmitGameAction`, which posts onto the same inbox channel `Run()` already reads — never call `ApplyGameAction` directly from a bot goroutine, since that would skip the broadcast and violate this invariant.
 - **`game_state_updated` is a full snapshot, not a diff.** Clients replace state entirely on each message (`GamePage.tsx:162–184`).
 - **A client must send `game_chat_join` before the hub delivers game state updates or accepts game actions.** `[game/server.go:364–366]`
 - **Migrations are append-only.** `V1__`–`V6__` are in production. Add `V7__*.sql` for any schema change; never modify existing files.
@@ -86,6 +101,7 @@ npm run dev    # Vite on :5173; /api and /ws proxied to :8080 (vite.config.ts)
 |---|---|---|
 | Unit (auth, engine, services, stores) | `make test` | `backend/internal/*/` |
 | HTTP + WebSocket integration | `make test` | `backend/internal/httpapi/` |
+| Bot strategy/runner/manager | `make test` | `backend/internal/bot/` |
 | End-to-end (requires live DB) | `make e2e` | `backend/internal/e2e/` |
 
 No frontend tests.

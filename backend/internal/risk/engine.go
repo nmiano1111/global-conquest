@@ -51,6 +51,12 @@ type PlayerState struct {
 	ID         string `json:"id"`
 	Cards      []Card `json:"cards"`
 	Eliminated bool   `json:"eliminated"`
+
+	// Controller and Strategy are omitempty so existing serialized games
+	// (all-human, no such fields) continue to decode as human players with
+	// no strategy assigned. See ControllerType and PlayerState.IsBot.
+	Controller ControllerType `json:"controller,omitempty"`
+	Strategy   string         `json:"strategy,omitempty"`
 }
 
 type TerritoryState struct {

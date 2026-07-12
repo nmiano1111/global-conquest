@@ -21,7 +21,18 @@ type Server struct {
 	chatRooms map[string]map[string]struct{}
 	chatLog   GameChatLogStore
 	actions   GameActionService
+
+	// botTrigger is invoked after every committed game action (human or
+	// bot-submitted) with the affected game ID, so a bot manager can check
+	// whether the new current player needs a runner started. It is called
+	// from inside Run(), never concurrently.
+	botTrigger BotTrigger
 }
+
+// BotTrigger is notified after a game action commits. Implementations must
+// not block the hub goroutine for long; typical implementations just
+// enqueue/dedupe a background runner start.
+type BotTrigger func(gameID string)
 
 type Client struct {
 	ID       string
@@ -129,6 +140,19 @@ type PublishLobbyChat struct {
 	Message map[string]any
 }
 
+// GameActionRequest submits a game action through the normal command path
+// without a connected websocket client (used by bot runners). Result must
+// be buffered (capacity >= 1) so Run() never blocks sending the reply.
+type GameActionRequest struct {
+	Input  GameActionInput
+	Result chan<- GameActionResult
+}
+
+type GameActionResult struct {
+	Update GameActionUpdate
+	Err    error
+}
+
 func NewServer() *Server {
 	return &Server{
 		inbox:     make(chan any, 256),
@@ -149,6 +173,29 @@ func (s *Server) SetGameActionService(actions GameActionService) {
 	s.actions = actions
 }
 
+func (s *Server) SetBotTrigger(trigger BotTrigger) {
+	s.botTrigger = trigger
+}
+
+// SubmitGameAction runs a game action through the same normal command path
+// human WebSocket clients use (ApplyGameAction, event/outbox persistence,
+// commit, broadcast), without requiring a connected Client. It is safe to
+// call from any goroutine: the work happens inside Run() via the inbox.
+func (s *Server) SubmitGameAction(ctx context.Context, in GameActionInput) (GameActionUpdate, error) {
+	resultCh := make(chan GameActionResult, 1)
+	select {
+	case s.inbox <- GameActionRequest{Input: in, Result: resultCh}:
+	case <-ctx.Done():
+		return GameActionUpdate{}, ctx.Err()
+	}
+	select {
+	case res := <-resultCh:
+		return res.Update, res.Err
+	case <-ctx.Done():
+		return GameActionUpdate{}, ctx.Err()
+	}
+}
+
 func (s *Server) Run() {
 	for msg := range s.inbox {
 		switch m := msg.(type) {
@@ -167,6 +214,9 @@ func (s *Server) Run() {
 			s.handleIncoming(m.ClientID, m.Env)
 		case PublishLobbyChat:
 			s.broadcastLobbyChat(m.Message)
+		case GameActionRequest:
+			update, err := s.commitGameAction(m.Input)
+			m.Result <- GameActionResult{Update: update, Err: err}
 		}
 	}
 }
@@ -391,7 +441,7 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			c.Conn.Send(errEnv(id, "invalid_message", "invalid payload"))
 			return
 		}
-		updated, err := s.actions.ApplyGameAction(context.Background(), GameActionInput{
+		updated, err := s.commitGameAction(GameActionInput{
 			GameID:       gameID,
 			PlayerUserID: c.UserID,
 			Action:       strings.TrimSpace(payload.Action),
@@ -408,52 +458,6 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 			return
 		}
 
-		statePlayers := make([]wsmsg.GameStatePlayerPayload, 0, len(updated.Players))
-		for _, p := range updated.Players {
-			statePlayers = append(statePlayers, wsmsg.GameStatePlayerPayload{
-				UserID:      p.UserID,
-				CardCount:   p.CardCount,
-				SetupArmies: p.SetupArmies,
-				Eliminated:  p.Eliminated,
-			})
-		}
-		s.broadcastGameStateUpdate(gameID, wsmsg.GameStateUpdatedPayload{
-			GameID:                updated.GameID,
-			Action:                updated.Action,
-			ActorUserID:           updated.ActorUserID,
-			Phase:                 updated.Phase,
-			CurrentPlayer:         updated.CurrentPlayer,
-			PendingReinforcements: updated.PendingReinforcements,
-			SetsTraded:            updated.SetsTraded,
-			Occupy: func() *wsmsg.GameOccupyRequirement {
-				if updated.Occupy == nil {
-					return nil
-				}
-				return &wsmsg.GameOccupyRequirement{
-					From:    updated.Occupy.From,
-					To:      updated.Occupy.To,
-					MinMove: updated.Occupy.MinMove,
-					MaxMove: updated.Occupy.MaxMove,
-				}
-			}(),
-			Players:     statePlayers,
-			Territories: updated.Territories,
-			Result:      updated.Result,
-			Event: func() *wsmsg.GameEventPayload {
-				if updated.Event == nil {
-					return nil
-				}
-				return &wsmsg.GameEventPayload{
-					ID:          updated.Event.ID,
-					GameID:      updated.Event.GameID,
-					ActorUserID: updated.Event.ActorUserID,
-					EventType:   updated.Event.EventType,
-					Body:        updated.Event.Body,
-					CreatedAt:   updated.Event.CreatedAt.UTC().Format(time.RFC3339Nano),
-				}
-			}(),
-		})
-
 		// Send the actor's current hand privately so they can see their cards.
 		if updated.ActorCards != nil {
 			c.Conn.Send(envelope(string(wsmsg.TypeYourCards), newID("s"), id, gameID, wsmsg.YourCardsPayload{
@@ -465,6 +469,75 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 		// generic ack
 		c.Conn.Send(envelope("ack", newID("s"), id, gameID, nil))
 	}
+}
+
+// commitGameAction runs a game action through the application service,
+// broadcasts the resulting state to the game's chat room, and notifies the
+// bot trigger. It must only be called from within Run(), since it touches
+// s.chatRooms/s.clients via broadcastGameStateUpdate. It is the single
+// choke point both human (TypeGameAction) and bot (GameActionRequest)
+// submissions go through, so both get identical persistence and broadcast
+// behavior.
+func (s *Server) commitGameAction(in GameActionInput) (GameActionUpdate, error) {
+	if s.actions == nil {
+		return GameActionUpdate{}, fmt.Errorf("game action service is not configured")
+	}
+	updated, err := s.actions.ApplyGameAction(context.Background(), in)
+	if err != nil {
+		return GameActionUpdate{}, err
+	}
+
+	statePlayers := make([]wsmsg.GameStatePlayerPayload, 0, len(updated.Players))
+	for _, p := range updated.Players {
+		statePlayers = append(statePlayers, wsmsg.GameStatePlayerPayload{
+			UserID:      p.UserID,
+			CardCount:   p.CardCount,
+			SetupArmies: p.SetupArmies,
+			Eliminated:  p.Eliminated,
+		})
+	}
+	s.broadcastGameStateUpdate(in.GameID, wsmsg.GameStateUpdatedPayload{
+		GameID:                updated.GameID,
+		Action:                updated.Action,
+		ActorUserID:           updated.ActorUserID,
+		Phase:                 updated.Phase,
+		CurrentPlayer:         updated.CurrentPlayer,
+		PendingReinforcements: updated.PendingReinforcements,
+		SetsTraded:            updated.SetsTraded,
+		Occupy: func() *wsmsg.GameOccupyRequirement {
+			if updated.Occupy == nil {
+				return nil
+			}
+			return &wsmsg.GameOccupyRequirement{
+				From:    updated.Occupy.From,
+				To:      updated.Occupy.To,
+				MinMove: updated.Occupy.MinMove,
+				MaxMove: updated.Occupy.MaxMove,
+			}
+		}(),
+		Players:     statePlayers,
+		Territories: updated.Territories,
+		Result:      updated.Result,
+		Event: func() *wsmsg.GameEventPayload {
+			if updated.Event == nil {
+				return nil
+			}
+			return &wsmsg.GameEventPayload{
+				ID:          updated.Event.ID,
+				GameID:      updated.Event.GameID,
+				ActorUserID: updated.Event.ActorUserID,
+				EventType:   updated.Event.EventType,
+				Body:        updated.Event.Body,
+				CreatedAt:   updated.Event.CreatedAt.UTC().Format(time.RFC3339Nano),
+			}
+		}(),
+	})
+
+	if s.botTrigger != nil {
+		s.botTrigger(in.GameID)
+	}
+
+	return updated, nil
 }
 
 func (s *Server) joinChatRoom(c *Client, roomID string) {

@@ -74,7 +74,8 @@ jobs:
             cd ~/deploy &&
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $REGISTRY &&
             ECR_IMAGE=$FULL_IMAGE docker compose -f docker-compose.prod.yml pull backend &&
-            ECR_IMAGE=$FULL_IMAGE docker compose -f docker-compose.prod.yml up -d
+            ECR_IMAGE=$FULL_IMAGE docker compose -f docker-compose.prod.yml up -d &&
+            docker image prune -af
           "
 
   deploy-frontend:

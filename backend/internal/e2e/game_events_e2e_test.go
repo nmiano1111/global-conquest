@@ -252,7 +252,7 @@ func TestTiedDiceComparisonsStoredCorrectly(t *testing.T) {
 			break
 		}
 		if g.Phase == risk.PhaseOccupy {
-			_ = svc.ApplyGameAction(ctx, service.GameActionInput{
+			_, _ = svc.ApplyGameAction(ctx, service.GameActionInput{
 				GameID: gameID, PlayerUserID: g.Players[g.CurrentPlayer].ID,
 				Action: "occupy", Armies: 1,
 			})
@@ -266,7 +266,7 @@ func TestTiedDiceComparisonsStoredCorrectly(t *testing.T) {
 		if src.Armies <= 1 || dst.Armies < 1 {
 			break
 		}
-		_ = svc.ApplyGameAction(ctx, service.GameActionInput{
+		_, _ = svc.ApplyGameAction(ctx, service.GameActionInput{
 			GameID: gameID, PlayerUserID: g.Players[g.CurrentPlayer].ID,
 			Action: "attack", From: "Alaska", To: "Kamchatka",
 			AttackerDice: 1, DefenderDice: 1,
@@ -315,7 +315,7 @@ func TestEventSequencesStrictlyIncreasing(t *testing.T) {
 			break
 		}
 		if g.Phase == risk.PhaseOccupy {
-			_ = svc.ApplyGameAction(ctx, service.GameActionInput{
+			_, _ = svc.ApplyGameAction(ctx, service.GameActionInput{
 				GameID: gameID, PlayerUserID: g.Players[g.CurrentPlayer].ID,
 				Action: "occupy", Armies: 1,
 			})
@@ -329,7 +329,7 @@ func TestEventSequencesStrictlyIncreasing(t *testing.T) {
 		if src.Armies <= 1 || dst.Armies < 1 {
 			break
 		}
-		_ = svc.ApplyGameAction(ctx, service.GameActionInput{
+		_, _ = svc.ApplyGameAction(ctx, service.GameActionInput{
 			GameID: gameID, PlayerUserID: g.Players[g.CurrentPlayer].ID,
 			Action: "attack", From: "Alaska", To: "Kamchatka",
 			AttackerDice: 1, DefenderDice: 1,
@@ -380,7 +380,7 @@ func TestEventSequencesIndependentAcrossGames(t *testing.T) {
 
 	svc := newSvcWithDomainEvents(pool)
 	doAttack := func(gameID, playerID string) {
-		_ = svc.ApplyGameAction(ctx, service.GameActionInput{
+		_, _ = svc.ApplyGameAction(ctx, service.GameActionInput{
 			GameID: gameID, PlayerUserID: playerID,
 			Action: "attack", From: "Alaska", To: "Kamchatka",
 			AttackerDice: 1, DefenderDice: 1,

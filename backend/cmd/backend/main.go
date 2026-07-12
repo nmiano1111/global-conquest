@@ -8,12 +8,13 @@ import (
 	"sort"
 	"strings"
 
+	"backend/internal/bot"
 	"backend/internal/db"
-	"github.com/joho/godotenv"
 	"backend/internal/game"
 	"backend/internal/httpapi"
 	"backend/internal/service"
 	"backend/internal/store"
+	"github.com/joho/godotenv"
 
 	_ "backend/docs"
 
@@ -76,11 +77,48 @@ func main() {
 	s.SetGameChatLogStore(gameChatSvc)
 	s.SetGameActionService(gameActionSvc)
 
+	// bots
+	botLoader := service.NewBotGameLoader(gamesSvc)
+	strategies := bot.StrategyRegistry{bot.StrategyBasicV1: bot.NewBasicStrategy()}
+	botRunner := bot.NewRunner(botLoader, s, strategies, bot.RealSleeper{}, bot.DefaultLiveDelay)
+	botManager := bot.NewManager(context.Background(), botRunner, bot.ExecutionLive)
+	s.SetBotTrigger(botManager.Trigger)
+	recoverBotGames(ctx, gamesSvc, botManager)
+
 	// http
 	h := httpapi.NewHandler(s, usersSvc, gamesSvc, chatSvc)
 	r := httpapi.NewRouter(h)
 
 	log.Fatal(r.Run(":8080"))
+}
+
+// recoverBotGames restarts a runner for every in_progress game after a
+// backend restart. It triggers unconditionally for every active game
+// rather than pre-filtering by controller: RunTurn's own state load is a
+// cheap no-op (StopNotBotTurn) when the current player isn't bot-controlled,
+// and duplicating that check here would just be the same read twice. No
+// in-memory bot plan is ever persisted — resuming means loading the
+// authoritative JSONB state and continuing from the current phase.
+func recoverBotGames(ctx context.Context, gamesSvc *service.GamesService, botManager *bot.Manager) {
+	const pageSize = 200
+	offset := 0
+	total := 0
+	for {
+		games, err := gamesSvc.ListGames(ctx, "", "in_progress", pageSize, offset)
+		if err != nil {
+			log.Printf("bot: startup recovery: list in_progress games: %v", err)
+			return
+		}
+		for _, g := range games {
+			botManager.Trigger(g.ID)
+			total++
+		}
+		if len(games) < pageSize {
+			break
+		}
+		offset += pageSize
+	}
+	log.Printf("bot: startup recovery: checked %d in_progress game(s)", total)
 }
 
 // runMigrations applies any unapplied SQL migration files from the migrations/
