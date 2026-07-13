@@ -12,15 +12,20 @@ import (
 // project-docs/bot_player/phase_2_first_playable_bot/heuristic_framework.md:
 // every legal action (including "end this phase") is scored by named,
 // weighted features and the highest score wins, rather than hand-rolled
-// if/else thresholds. setup_reinforce, reinforce, and attack are migrated
-// so far — occupy and fortify still fall back to basic-v1's existing logic
-// until they get their own candidate-scoring treatment in later work, per
-// the doc's own recommended incremental order.
+// if/else thresholds. Every phase (setup_reinforce, reinforce, attack,
+// occupy, fortify) is now migrated onto this pipeline — only card-timing
+// strategy, continent valuation beyond attack/reinforce/fortify's simple
+// forms, elimination-chasing, difficulty weights, and personalities remain
+// as later doc work.
 const StrategyScoredV1 = "scored-v1"
 
 // ScoredStrategy implements StrategyScoredV1.
 type ScoredStrategy struct {
-	weights  Weights
+	weights Weights
+	// fallback only matters for risk.PhaseSetupClaim, which every real
+	// game path skips (see CLAUDE.md — engine-only, unused in practice)
+	// — kept as a defensive default rather than assuming every phase the
+	// engine could theoretically report is enumerated above.
 	fallback *BasicStrategy
 }
 
@@ -36,6 +41,10 @@ func (s *ScoredStrategy) NextCommand(ctx context.Context, g *risk.Game, playerID
 		return s.reinforce(g, playerID)
 	case risk.PhaseAttack:
 		return s.attack(g, playerID)
+	case risk.PhaseOccupy:
+		return s.occupy(g, playerID)
+	case risk.PhaseFortify:
+		return s.fortify(g, playerID)
 	default:
 		return s.fallback.NextCommand(ctx, g, playerID)
 	}

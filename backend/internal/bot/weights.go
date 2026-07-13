@@ -58,6 +58,41 @@ type Weights struct {
 	// negative — discourages repeatedly stacking one spot turn after turn
 	// once it's already strong.
 	ReinforceConcentrationPenalty float64
+
+	// --- occupy ---
+
+	// OccupyDefenseCoverage scales min(armies left at the source,
+	// enemy threat still facing the source) — rewards leaving enough
+	// behind to cover the source's remaining exposure, no more.
+	OccupyDefenseCoverage float64
+	// OccupyMomentum scales min(armies moved forward, enemy threat facing
+	// the newly conquered destination) — rewards moving enough forward to
+	// matter for whatever comes next there, no more.
+	OccupyMomentum float64
+	// OccupyMomentumSurplus scales armies moved forward directly and
+	// unconditionally, at a small weight — breaks ties in favor of
+	// pushing more forward once both coverage terms above are already
+	// satisfied (matching "maintain offensive momentum" when there's no
+	// defensive cost left to weigh against it).
+	OccupyMomentumSurplus float64
+
+	// --- fortify ---
+
+	// FortifyDestinationThreat scales the enemy armies already adjacent
+	// to a candidate fortification's destination.
+	FortifyDestinationThreat float64
+	// FortifyContinentValue scales continentReinforceValue for the
+	// destination (same helper reinforce uses): defending a continent pi
+	// already fully owns, or pushing toward one pi is close to completing.
+	FortifyContinentValue float64
+	// FortifySourceExposureCost scales the enemy armies already adjacent
+	// to a candidate fortification's source; applied as a cost, so it
+	// should stay negative — penalizes weakening a source that's itself
+	// under threat.
+	FortifySourceExposureCost float64
+	// FortifyEndTurnBias is added only to the synthetic "end turn without
+	// fortifying" candidate — the lever aggression/difficulty tunes later.
+	FortifyEndTurnBias float64
 }
 
 // DefaultWeights are starting values, not derived from any formal tuning
@@ -80,4 +115,13 @@ var DefaultWeights = Weights{
 	ReinforceWeakness:             1.0,
 	ReinforceContinentValue:       2.0,
 	ReinforceConcentrationPenalty: -0.3,
+
+	OccupyDefenseCoverage: 1.5,
+	OccupyMomentum:        1.5,
+	OccupyMomentumSurplus: 0.05,
+
+	FortifyDestinationThreat:  1.0,
+	FortifyContinentValue:     2.0,
+	FortifySourceExposureCost: -1.0,
+	FortifyEndTurnBias:        0.0,
 }
