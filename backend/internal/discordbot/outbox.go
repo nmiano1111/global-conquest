@@ -208,7 +208,7 @@ func renderMessage(entry store.DiscordOutboxEntry, frontendBaseURL string) (stri
 			p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
 			return fmt.Sprintf("🎯 <@%s> ended their turn. <@%s> is up.%s", *p.PreviousPlayerDiscordName, *p.PlayerDiscordName, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone 🎯 <@%s> ended their turn. <@%s> is up.%s", p.PreviousPlayerDisplayName, p.PlayerDisplayName, gameSuffix), embeds, nil
+		return fmt.Sprintf("🎯 **%s** ended their turn. **%s** is up.%s", p.PreviousPlayerDisplayName, p.PlayerDisplayName, gameSuffix), embeds, nil
 	case store.NotificationTypeCardsTrade:
 		var p store.CardsTradePayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
@@ -220,7 +220,7 @@ func renderMessage(entry store.DiscordOutboxEntry, frontendBaseURL string) (stri
 		if p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
 			return fmt.Sprintf("🃏 <@%s> traded in cards for %d armies.%s", *p.PlayerDiscordName, p.Armies, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone 🃏 **%s** traded in cards for %d armies.%s", p.PlayerDisplayName, p.Armies, gameSuffix), embeds, nil
+		return fmt.Sprintf("🃏 **%s** traded in cards for %d armies.%s", p.PlayerDisplayName, p.Armies, gameSuffix), embeds, nil
 	case store.NotificationTypePlayerEliminated:
 		var p store.PlayerEliminatedPayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
@@ -233,7 +233,7 @@ func renderMessage(entry store.DiscordOutboxEntry, frontendBaseURL string) (stri
 			p.EliminatedPlayerDiscordName != nil && *p.EliminatedPlayerDiscordName != "" {
 			return fmt.Sprintf("⚔️ <@%s> eliminated <@%s>!%s", *p.AttackerDiscordName, *p.EliminatedPlayerDiscordName, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone ⚔️ **%s** eliminated **%s**!%s", p.AttackerDisplayName, p.EliminatedPlayerDisplayName, gameSuffix), embeds, nil
+		return fmt.Sprintf("⚔️ **%s** eliminated **%s**!%s", p.AttackerDisplayName, p.EliminatedPlayerDisplayName, gameSuffix), embeds, nil
 	case store.NotificationTypeGameOver:
 		var p store.GameOverPayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
@@ -245,7 +245,7 @@ func renderMessage(entry store.DiscordOutboxEntry, frontendBaseURL string) (stri
 		if p.WinnerDiscordName != nil && *p.WinnerDiscordName != "" {
 			return fmt.Sprintf("🏆 <@%s> has won the game!%s", *p.WinnerDiscordName, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone 🏆 **%s** has won the game!%s", p.WinnerDisplayName, gameSuffix), embeds, nil
+		return fmt.Sprintf("🏆 **%s** has won the game!%s", p.WinnerDisplayName, gameSuffix), embeds, nil
 	case store.NotificationTypeGameStarted:
 		var p store.GameStartedPayload
 		if err := json.Unmarshal(entry.Payload, &p); err != nil {
@@ -257,7 +257,7 @@ func renderMessage(entry store.DiscordOutboxEntry, frontendBaseURL string) (stri
 		if p.PlayerDiscordName != nil && *p.PlayerDiscordName != "" {
 			return fmt.Sprintf("🚦 The game has begun! <@%s> goes first.%s", *p.PlayerDiscordName, gameSuffix), embeds, nil
 		}
-		return fmt.Sprintf("@everyone 🚦 The game has begun! **%s** goes first.%s", p.PlayerDisplayName, gameSuffix), embeds, nil
+		return fmt.Sprintf("🚦 The game has begun! **%s** goes first.%s", p.PlayerDisplayName, gameSuffix), embeds, nil
 	default:
 		return "", nil, fmt.Errorf("unknown notification type %q (id=%s)", entry.NotificationType, entry.ID)
 	}

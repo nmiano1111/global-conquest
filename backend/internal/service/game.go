@@ -323,7 +323,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 				return store.Game{}, err
 			}
 		}
-		if s.discordOutbox != nil {
+		if s.discordOutbox != nil && anyHuman(startedEngine.Players, firstPlayerID) {
 			discordNames, err := s.discordNamesByIDsQ(ctx, s.db.Queryer(), []string{firstPlayerID})
 			if err != nil {
 				return store.Game{}, err
@@ -378,6 +378,26 @@ func humanGamePlayers(gameID string, players []risk.PlayerState) []store.NewGame
 		out = append(out, store.NewGamePlayer{GameID: gameID, UserID: p.ID, PlayerIndex: i})
 	}
 	return out
+}
+
+// anyHuman reports whether at least one of the given player IDs belongs to
+// a human. Discord notifications name one or more specific players (e.g.
+// "X ended their turn, Y is up"); a Discord channel only cares about a
+// notification if a human is actually one of the players it names — a
+// bot-vs-bot handoff or trade is pure noise for anyone watching.
+func anyHuman(players []risk.PlayerState, ids ...string) bool {
+	idSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			idSet[id] = struct{}{}
+		}
+	}
+	for _, p := range players {
+		if _, ok := idSet[p.ID]; ok && !p.IsBot() {
+			return true
+		}
+	}
+	return false
 }
 
 // newBotPlayerID mints a synthetic player ID for a bot in the same
@@ -467,8 +487,8 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 					return err
 				}
 			}
-			if s.discordOutbox != nil {
-				firstPlayerID := startedEngine.Players[startedEngine.CurrentPlayer].ID
+			firstPlayerID := startedEngine.Players[startedEngine.CurrentPlayer].ID
+			if s.discordOutbox != nil && anyHuman(startedEngine.Players, firstPlayerID) {
 				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{firstPlayerID})
 				if err != nil {
 					return err
@@ -760,7 +780,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			if ar.Eliminated != "" {
 				eventBody += fmt.Sprintf(" %s was eliminated.", displayName(names, ar.Eliminated))
-				if s.discordOutbox != nil {
+				if s.discordOutbox != nil && anyHuman(engine.Players, in.PlayerUserID, ar.Eliminated) {
 					discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID, ar.Eliminated})
 					if err != nil {
 						return err
@@ -793,7 +813,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			// Winning the game is only detected here: checkWinner() runs inside
 			// OccupyTerritory (and EndTurn, defensively), never inside Attack —
 			// a conquering attack always transitions to PhaseOccupy first.
-			if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.discordOutbox != nil {
+			if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.discordOutbox != nil && anyHuman(engine.Players, engine.Winner) {
 				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{engine.Winner})
 				if err != nil {
 					return err
@@ -831,7 +851,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			eventType = "turn_ended"
 			eventBody = fmt.Sprintf("%s ended their turn. %s is up next.", displayName(names, in.PlayerUserID), displayName(names, nextPlayer))
-			if s.discordOutbox != nil && nextPlayer != "" && engine.Phase != risk.PhaseGameOver {
+			if s.discordOutbox != nil && nextPlayer != "" && engine.Phase != risk.PhaseGameOver && anyHuman(engine.Players, in.PlayerUserID, nextPlayer) {
 				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID, nextPlayer})
 				if err != nil {
 					return err
@@ -850,7 +870,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			result = map[string]int{"armies": armies}
 			eventType = "cards_traded"
 			eventBody = fmt.Sprintf("%s traded cards for %d armies.", displayName(names, in.PlayerUserID), armies)
-			if s.discordOutbox != nil {
+			if s.discordOutbox != nil && anyHuman(engine.Players, in.PlayerUserID) {
 				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID})
 				if err != nil {
 					return err

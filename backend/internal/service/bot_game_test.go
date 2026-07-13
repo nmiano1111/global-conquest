@@ -577,6 +577,10 @@ func TestApplyGameActionReinforcementSetsActionTerritory(t *testing.T) {
 // which turn_started never covers (it only fires when a turn *ends"). ---
 
 func TestCreateClassicGameEnqueuesGameStartedWhenFullAtCreation(t *testing.T) {
+	// Which player the engine shuffles to go first isn't controllable here
+	// (CreateClassicGame doesn't expose an injectable RNG), and per the
+	// human-gating rule, whether a notification fires now legitimately
+	// depends on that: expect one iff the resulting first player is human.
 	var captured store.NewGame
 	svc := createServiceCapturingGame(t, &captured)
 	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart"))
@@ -586,8 +590,17 @@ func TestCreateClassicGameEnqueuesGameStartedWhenFullAtCreation(t *testing.T) {
 	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
-	if outboxStore.gameStartedCalls != 1 {
-		t.Fatalf("expected exactly 1 game_started notification, got %d", outboxStore.gameStartedCalls)
+	var engine risk.Game
+	if err := json.Unmarshal(captured.State, &engine); err != nil {
+		t.Fatalf("decode engine state: %v", err)
+	}
+	firstIsHuman := !engine.Players[engine.CurrentPlayer].IsBot()
+	wantCalls := 0
+	if firstIsHuman {
+		wantCalls = 1
+	}
+	if outboxStore.gameStartedCalls != wantCalls {
+		t.Fatalf("expected %d game_started notification(s) (first player human=%v), got %d", wantCalls, firstIsHuman, outboxStore.gameStartedCalls)
 	}
 }
 
@@ -698,5 +711,125 @@ func TestDeleteGameNotFound(t *testing.T) {
 
 	if err := svc.DeleteGame(context.Background(), "missing"); !errors.Is(err, ErrGameNotFound) {
 		t.Fatalf("expected ErrGameNotFound, got %v", err)
+	}
+}
+
+// --- Discord notifications only publish when a human is one of the
+// specific players a notification names — a pure bot-vs-bot handoff, trade,
+// or elimination is noise nobody watching Discord cares about. ---
+
+// allBotGameState builds a 3-player game, in attack phase, with every
+// player marked bot-controlled — so any end_turn/trade/elimination
+// necessarily involves only bots, regardless of shuffle order.
+func allBotGameState(t *testing.T) (json.RawMessage, string) {
+	t.Helper()
+	g, err := risk.NewClassicAutoStartGame([]string{"uid-p1", "uid-p2", "uid-p3"}, nil)
+	if err != nil {
+		t.Fatalf("new game: %v", err)
+	}
+	for i := range g.Players {
+		g.Players[i].Controller = risk.ControllerBot
+		g.Players[i].Strategy = "basic-v1"
+	}
+	g.Phase = risk.PhaseAttack
+	actorID := g.Players[g.CurrentPlayer].ID
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return raw, actorID
+}
+
+func TestEndTurnDoesNotEnqueueWhenBothPlayersAreBots(t *testing.T) {
+	gameState, actorID := allBotGameState(t)
+	outboxStore := &fakeDiscordOutboxStore{}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: gameState}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	if _, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID: "g1", PlayerUserID: actorID, Action: "end_turn",
+	}); err != nil {
+		t.Fatalf("ApplyGameAction end_turn: %v", err)
+	}
+	if outboxStore.calls != 0 {
+		t.Fatalf("expected no turn_started notification for an all-bot handoff, got %d", outboxStore.calls)
+	}
+}
+
+func TestTradeCardsDoesNotEnqueueForBotActor(t *testing.T) {
+	gameState, actorID := allBotGameState(t)
+	var g risk.Game
+	if err := json.Unmarshal(gameState, &g); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Give the current (bot) player a valid set to trade.
+	pi := g.CurrentPlayer
+	g.Players[pi].Cards = []risk.Card{
+		{Territory: "Alaska", Symbol: risk.Infantry},
+		{Territory: "Peru", Symbol: risk.Cavalry},
+		{Territory: "Egypt", Symbol: risk.Artillery},
+	}
+	g.Phase = risk.PhaseReinforce
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	outboxStore := &fakeDiscordOutboxStore{}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	if _, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID: "g1", PlayerUserID: actorID, Action: "trade_cards", CardIndices: [3]int{0, 1, 2},
+	}); err != nil {
+		t.Fatalf("ApplyGameAction trade_cards: %v", err)
+	}
+	if outboxStore.calls != 0 {
+		t.Fatalf("expected no cards_trade notification for a bot actor, got %d", outboxStore.calls)
+	}
+}
+
+// anyHuman itself is exercised directly here rather than through a full
+// attack-to-elimination flow: forcing a deterministic combat outcome
+// through ApplyGameAction would require controlling the engine's internal
+// RNG, which isn't exposed once a game round-trips through JSON (the same
+// gate is used identically for player_eliminated, game_over, turn_started,
+// and cards_trade — see anyHuman's call sites in game.go).
+func TestAnyHuman(t *testing.T) {
+	players := []risk.PlayerState{
+		{ID: "human-1"},
+		{ID: "bot-1", Controller: risk.ControllerBot},
+		{ID: "bot-2", Controller: risk.ControllerBot},
+	}
+	if anyHuman(players, "bot-1", "bot-2") {
+		t.Fatal("expected false when every named player is a bot")
+	}
+	if !anyHuman(players, "human-1", "bot-1") {
+		t.Fatal("expected true when at least one named player is human")
+	}
+	if !anyHuman(players, "human-1") {
+		t.Fatal("expected true for a single human ID")
+	}
+	if anyHuman(players) {
+		t.Fatal("expected false when no IDs are given")
+	}
+	if anyHuman(players, "", "bot-1") {
+		t.Fatal("expected empty-string IDs to be ignored, not matched")
 	}
 }

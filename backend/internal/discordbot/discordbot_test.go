@@ -229,7 +229,7 @@ func TestRenderTurnStarted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone 🎯 <@Bob> ended their turn. <@Alice> is up. (game `game-1`)" {
+	if msg != "🎯 **Bob** ended their turn. **Alice** is up. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -266,7 +266,7 @@ func TestRenderTurnStartedOneDiscordNameMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone 🎯 <@Bob> ended their turn. <@Alice> is up. (game `game-1`)" {
+	if msg != "🎯 **Bob** ended their turn. **Alice** is up. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -294,7 +294,7 @@ func TestRenderCardsTrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone 🃏 **Alice** traded in cards for 8 armies. (game `game-1`)" {
+	if msg != "🃏 **Alice** traded in cards for 8 armies. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -341,7 +341,7 @@ func TestRenderPlayerEliminated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone ⚔️ **Alice** eliminated **Bob**! (game `game-1`)" {
+	if msg != "⚔️ **Alice** eliminated **Bob**! (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -378,7 +378,7 @@ func TestRenderPlayerEliminatedOneDiscordNameMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone ⚔️ **Alice** eliminated **Bob**! (game `game-1`)" {
+	if msg != "⚔️ **Alice** eliminated **Bob**! (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -393,7 +393,7 @@ func TestRenderGameOver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone 🏆 **Alice** has won the game! (game `game-1`)" {
+	if msg != "🏆 **Alice** has won the game! (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -427,7 +427,7 @@ func TestRenderGameOverWithFrontendURL_KeepsGameNameAndAddsLinkEmbed(t *testing.
 	// The "(game `name`)" text suffix stays exactly as it was before links
 	// existed; the link is a separate embed (Discord content does not render
 	// [text](url) markdown, so a clickable link requires an embed either way).
-	if msg != "@everyone 🏆 **Alice** has won the game! (game `game-1`)" {
+	if msg != "🏆 **Alice** has won the game! (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 	if len(embeds) != 1 {
@@ -451,7 +451,7 @@ func TestRenderGameStarted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "@everyone 🚦 The game has begun! **Alice** goes first. (game `game-1`)" {
+	if msg != "🚦 The game has begun! **Alice** goes first. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -606,7 +606,7 @@ func TestWorkerDeliverSuccess(t *testing.T) {
 	w := NewWorker(claimer, sender, "channel-id", "")
 	w.deliver(context.Background(), entry)
 
-	if sentContent != "@everyone 🎯 <@Alice> ended their turn. <@Bob> is up. (game `game-1`)" {
+	if sentContent != "🎯 **Alice** ended their turn. **Bob** is up. (game `game-1`)" {
 		t.Fatalf("unexpected message content: %q", sentContent)
 	}
 	if markedDelivered != "outbox-1" {
