@@ -6,10 +6,15 @@ import (
 	"strings"
 )
 
+// Config holds the environment-derived settings needed to run the Discord bot.
 type Config struct {
-	BotToken        string
-	ApplicationID   string
-	GuildID         string
+	// BotToken is the Discord bot token used to authenticate the gateway session.
+	BotToken string
+	// ApplicationID is the Discord application ID slash commands are registered under.
+	ApplicationID string
+	// GuildID is the Discord guild (server) slash commands are registered to.
+	GuildID string
+	// EventsChannelID is the channel game-event notifications are posted to.
 	EventsChannelID string
 	// FrontendBaseURL is optional. When set, notifications link the game name
 	// to <FrontendBaseURL>/app/game/<id>. When unset, notifications fall back
@@ -18,13 +23,20 @@ type Config struct {
 
 	// Trello credentials for the /bug and /feature commands. A single
 	// account-level API key + token pair — no per-user OAuth. Never logged.
-	TrelloAPIKey         string
-	TrelloToken          string
-	TrelloTriageListID   string
-	TrelloBugLabelID     string
+	TrelloAPIKey string
+	// TrelloToken is the Trello API token paired with TrelloAPIKey.
+	TrelloToken string
+	// TrelloTriageListID is the Trello list new /bug and /feature cards are created in.
+	TrelloTriageListID string
+	// TrelloBugLabelID is the Trello label applied to cards created via /bug.
+	TrelloBugLabelID string
+	// TrelloFeatureLabelID is the Trello label applied to cards created via /feature.
 	TrelloFeatureLabelID string
 }
 
+// ConfigFromEnv builds a Config from environment variables, returning an
+// error listing the names of any required variable (every field except
+// FrontendBaseURL) that is unset.
 func ConfigFromEnv() (Config, error) {
 	cfg := Config{
 		BotToken:        strings.TrimSpace(os.Getenv("DISCORD_BOT_TOKEN")),

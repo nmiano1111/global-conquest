@@ -6,14 +6,26 @@ import (
 	"context"
 )
 
+// GameActionService is a thin adapter between the game package's
+// WebSocket-facing action/update types and GamesService's own
+// GameActionInput/GameActionUpdate types, used by the game hub
+// (internal/game/server.go) to apply an in-game action without depending
+// directly on the store or risk-engine packages.
 type GameActionService struct {
 	games *GamesService
 }
 
+// NewGameActionService constructs a GameActionService backed by the given
+// GamesService.
 func NewGameActionService(games *GamesService) *GameActionService {
 	return &GameActionService{games: games}
 }
 
+// ApplyGameAction translates in into a GamesService.GameActionInput,
+// applies it via GamesService.ApplyGameAction (the authoritative,
+// transactional action handler), and translates the result back into a
+// game.GameActionUpdate for the hub to broadcast. It returns any error
+// GamesService.ApplyGameAction returns, unchanged.
 func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameActionInput) (game.GameActionUpdate, error) {
 	out, err := s.games.ApplyGameAction(ctx, GameActionInput{
 		GameID:       in.GameID,

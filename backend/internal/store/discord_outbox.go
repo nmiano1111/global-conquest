@@ -9,80 +9,141 @@ import (
 	"backend/internal/db"
 )
 
+// NotificationTypeTurnStarted identifies a turn_started notification row,
+// enqueued whenever a player's turn ends and the next player's turn begins.
 const NotificationTypeTurnStarted = "turn_started"
+
+// PayloadSchemaVersionTurnStarted is the schema version stamped into
+// TurnStartedPayload.SchemaVersion for turn_started notifications.
 const PayloadSchemaVersionTurnStarted = 1
 
+// NotificationTypeCardsTrade identifies a cards_trade notification row,
+// enqueued whenever a player trades in a set of cards for reinforcements.
 const NotificationTypeCardsTrade = "cards_trade"
+
+// PayloadSchemaVersionCardsTrade is the schema version stamped into
+// CardsTradePayload.SchemaVersion for cards_trade notifications.
 const PayloadSchemaVersionCardsTrade = 1
 
+// NotificationTypePlayerEliminated identifies a player_eliminated
+// notification row, enqueued whenever an attack eliminates a player.
 const NotificationTypePlayerEliminated = "player_eliminated"
+
+// PayloadSchemaVersionPlayerEliminated is the schema version stamped into
+// PlayerEliminatedPayload.SchemaVersion for player_eliminated notifications.
 const PayloadSchemaVersionPlayerEliminated = 1
 
+// NotificationTypeGameOver identifies a game_over notification row, enqueued
+// when a game ends with a single remaining player.
 const NotificationTypeGameOver = "game_over"
+
+// PayloadSchemaVersionGameOver is the schema version stamped into
+// GameOverPayload.SchemaVersion for game_over notifications.
 const PayloadSchemaVersionGameOver = 1
 
+// NotificationTypeGameStarted identifies a game_started notification row,
+// enqueued once for the very first turn of a game.
 const NotificationTypeGameStarted = "game_started"
+
+// PayloadSchemaVersionGameStarted is the schema version stamped into
+// GameStartedPayload.SchemaVersion for game_started notifications.
 const PayloadSchemaVersionGameStarted = 1
 
 // TurnStartedPayload is the structured payload for a turn_started notification.
 type TurnStartedPayload struct {
-	SchemaVersion             int     `json:"schema_version"`
-	PreviousPlayerDisplayName string  `json:"previous_player_display_name"`
+	// SchemaVersion is the payload schema version, PayloadSchemaVersionTurnStarted.
+	SchemaVersion int `json:"schema_version"`
+	// PreviousPlayerDisplayName is the display name of the player whose turn just ended.
+	PreviousPlayerDisplayName string `json:"previous_player_display_name"`
+	// PreviousPlayerDiscordName is the Discord mention name of the player whose turn just ended, if linked.
 	PreviousPlayerDiscordName *string `json:"previous_player_discord_name,omitempty"`
-	PlayerID                  string  `json:"player_id"`
-	PlayerDisplayName         string  `json:"player_display_name"`
-	PlayerDiscordName         *string `json:"player_discord_name,omitempty"`
-	TurnNumber                int     `json:"turn_number"`
+	// PlayerID is the ID of the player whose turn is starting.
+	PlayerID string `json:"player_id"`
+	// PlayerDisplayName is the display name of the player whose turn is starting.
+	PlayerDisplayName string `json:"player_display_name"`
+	// PlayerDiscordName is the Discord mention name of the player whose turn is starting, if linked.
+	PlayerDiscordName *string `json:"player_discord_name,omitempty"`
+	// TurnNumber is the 1-based number of the turn that is starting.
+	TurnNumber int `json:"turn_number"`
 }
 
 // CardsTradePayload is the structured payload for a cards_trade notification.
 type CardsTradePayload struct {
-	SchemaVersion      int     `json:"schema_version"`
-	PlayerID           string  `json:"player_id"`
-	PlayerDisplayName  string  `json:"player_display_name"`
-	PlayerDiscordName  *string `json:"player_discord_name,omitempty"`
-	Armies             int     `json:"armies"`
+	// SchemaVersion is the payload schema version, PayloadSchemaVersionCardsTrade.
+	SchemaVersion int `json:"schema_version"`
+	// PlayerID is the ID of the player who traded in a set of cards.
+	PlayerID string `json:"player_id"`
+	// PlayerDisplayName is the display name of the player who traded in the cards.
+	PlayerDisplayName string `json:"player_display_name"`
+	// PlayerDiscordName is the Discord mention name of the trading player, if linked.
+	PlayerDiscordName *string `json:"player_discord_name,omitempty"`
+	// Armies is the number of reinforcement armies awarded for the trade.
+	Armies int `json:"armies"`
 }
 
 // PlayerEliminatedPayload is the structured payload for a player_eliminated notification.
 type PlayerEliminatedPayload struct {
-	SchemaVersion              int     `json:"schema_version"`
-	AttackerID                 string  `json:"attacker_id"`
-	AttackerDisplayName        string  `json:"attacker_display_name"`
-	AttackerDiscordName        *string `json:"attacker_discord_name,omitempty"`
-	EliminatedPlayerID         string  `json:"eliminated_player_id"`
-	EliminatedPlayerDisplayName string  `json:"eliminated_player_display_name"`
+	// SchemaVersion is the payload schema version, PayloadSchemaVersionPlayerEliminated.
+	SchemaVersion int `json:"schema_version"`
+	// AttackerID is the ID of the player whose attack eliminated another player.
+	AttackerID string `json:"attacker_id"`
+	// AttackerDisplayName is the display name of the eliminating player.
+	AttackerDisplayName string `json:"attacker_display_name"`
+	// AttackerDiscordName is the Discord mention name of the eliminating player, if linked.
+	AttackerDiscordName *string `json:"attacker_discord_name,omitempty"`
+	// EliminatedPlayerID is the ID of the player who was eliminated.
+	EliminatedPlayerID string `json:"eliminated_player_id"`
+	// EliminatedPlayerDisplayName is the display name of the eliminated player.
+	EliminatedPlayerDisplayName string `json:"eliminated_player_display_name"`
+	// EliminatedPlayerDiscordName is the Discord mention name of the eliminated player, if linked.
 	EliminatedPlayerDiscordName *string `json:"eliminated_player_discord_name,omitempty"`
 }
 
 // GameOverPayload is the structured payload for a game_over notification.
 type GameOverPayload struct {
-	SchemaVersion      int     `json:"schema_version"`
-	WinnerID           string  `json:"winner_id"`
-	WinnerDisplayName  string  `json:"winner_display_name"`
-	WinnerDiscordName  *string `json:"winner_discord_name,omitempty"`
+	// SchemaVersion is the payload schema version, PayloadSchemaVersionGameOver.
+	SchemaVersion int `json:"schema_version"`
+	// WinnerID is the ID of the player who won the game.
+	WinnerID string `json:"winner_id"`
+	// WinnerDisplayName is the display name of the winning player.
+	WinnerDisplayName string `json:"winner_display_name"`
+	// WinnerDiscordName is the Discord mention name of the winning player, if linked.
+	WinnerDiscordName *string `json:"winner_discord_name,omitempty"`
 }
 
 // GameStartedPayload is the structured payload for a game_started
 // notification — the very first turn of a game, which turn_started never
 // covers since it only fires when a player's turn ends (see EnqueueTurnStarted).
 type GameStartedPayload struct {
-	SchemaVersion     int     `json:"schema_version"`
-	PlayerID          string  `json:"player_id"`
-	PlayerDisplayName string  `json:"player_display_name"`
+	// SchemaVersion is the payload schema version, PayloadSchemaVersionGameStarted.
+	SchemaVersion int `json:"schema_version"`
+	// PlayerID is the ID of the player whose turn is first in the game.
+	PlayerID string `json:"player_id"`
+	// PlayerDisplayName is the display name of the first player.
+	PlayerDisplayName string `json:"player_display_name"`
+	// PlayerDiscordName is the Discord mention name of the first player, if linked.
 	PlayerDiscordName *string `json:"player_discord_name,omitempty"`
 }
 
 // DiscordOutboxEntry is a row returned from discord_outbox.
 type DiscordOutboxEntry struct {
-	ID               string
-	GameID           string
-	GameName         string
-	GameSequence     int64
+	// ID is the outbox row's UUID.
+	ID string
+	// GameID is the ID of the game this notification belongs to.
+	GameID string
+	// GameName is the display name of the game at enqueue time.
+	GameName string
+	// GameSequence is the per-game monotonic event sequence number, used for
+	// ordering and deduplication of notifications.
+	GameSequence int64
+	// NotificationType identifies the kind of notification, e.g. NotificationTypeTurnStarted.
 	NotificationType string
-	Payload          json.RawMessage
-	AttemptCount     int
-	CreatedAt        time.Time
+	// Payload is the JSON-encoded notification payload, whose shape depends on NotificationType.
+	Payload json.RawMessage
+	// AttemptCount is the number of delivery attempts made so far.
+	AttemptCount int
+	// CreatedAt is when the outbox row was inserted.
+	CreatedAt time.Time
 }
 
 // DiscordOutboxTransactor wraps a DB that can run transactions.
@@ -92,8 +153,11 @@ type DiscordOutboxTransactor interface {
 	Queryer() db.Querier
 }
 
+// PostgresDiscordOutboxStore is the Postgres-backed implementation of the
+// discord_outbox enqueue and claim/delivery operations.
 type PostgresDiscordOutboxStore struct{}
 
+// NewPostgresDiscordOutboxStore constructs a PostgresDiscordOutboxStore.
 func NewPostgresDiscordOutboxStore() *PostgresDiscordOutboxStore {
 	return &PostgresDiscordOutboxStore{}
 }

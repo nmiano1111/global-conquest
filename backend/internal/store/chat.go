@@ -6,30 +6,47 @@ import (
 	"time"
 )
 
+// ChatMessage is a single chat message row, joined with the sender's username.
 type ChatMessage struct {
-	ID        string
-	Room      string
-	UserID    string
-	UserName  string
-	Body      string
+	// ID is the message's UUID.
+	ID string
+	// Room is the chat room the message belongs to (e.g. a lobby or game room key).
+	Room string
+	// UserID is the UUID of the user who sent the message.
+	UserID string
+	// UserName is the username of the sender, joined from the users table.
+	UserName string
+	// Body is the message text.
+	Body string
+	// CreatedAt is when the message was inserted.
 	CreatedAt time.Time
 }
 
+// NewChatMessage is the input for creating a chat message via CreateMessage.
 type NewChatMessage struct {
-	Room   string
+	// Room is the chat room the message should be posted to.
+	Room string
+	// UserID is the UUID of the sending user.
 	UserID string
-	Body   string
+	// Body is the message text.
+	Body string
 }
 
+// ChatStore defines the persistence operations for chat messages.
 type ChatStore interface {
 	CreateMessage(ctx context.Context, q db.Querier, in NewChatMessage) (ChatMessage, error)
 	ListMessages(ctx context.Context, q db.Querier, room string, limit int) ([]ChatMessage, error)
 }
 
+// PostgresChatStore is the Postgres-backed implementation of ChatStore.
 type PostgresChatStore struct{}
 
+// NewPostgresChatStore constructs a PostgresChatStore.
 func NewPostgresChatStore() *PostgresChatStore { return &PostgresChatStore{} }
 
+// CreateMessage inserts a new chat message row and returns it joined with the
+// sender's username. Returns an error if the insert or the users join fails
+// (e.g. the user does not exist).
 func (s *PostgresChatStore) CreateMessage(ctx context.Context, exec db.Querier, in NewChatMessage) (ChatMessage, error) {
 	const stmt = `
 		WITH inserted AS (
@@ -48,6 +65,10 @@ func (s *PostgresChatStore) CreateMessage(ctx context.Context, exec db.Querier, 
 	return out, err
 }
 
+// ListMessages returns up to limit messages for room, oldest-first. limit is
+// clamped to a default of 50 when <= 0 and a maximum of 200. Internally the
+// query fetches newest-first for efficient index usage, then reverses the
+// slice before returning it for UI display.
 func (s *PostgresChatStore) ListMessages(ctx context.Context, exec db.Querier, room string, limit int) ([]ChatMessage, error) {
 	if limit <= 0 {
 		limit = 50

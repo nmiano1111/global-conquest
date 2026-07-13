@@ -1,3 +1,7 @@
+// Package wsconn implements the low-level websocket transport: connection
+// accept/upgrade, a background keepalive ping loop, a single writer
+// goroutine draining a buffered send channel (delivery is at-most-once — a
+// full buffer silently drops the message), and a blocking JSON read loop.
 package wsconn
 
 import (
@@ -12,6 +16,9 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
+// Conn is an accepted websocket connection with a background ping loop, a
+// single writer goroutine serializing outbound sends from a buffered send
+// channel, and a blocking read loop. Use Accept to create one.
 type Conn struct {
 	ws        *websocket.Conn
 	send      chan wsmsg.Envelope
@@ -20,17 +27,30 @@ type Conn struct {
 	label     string
 }
 
+// Options configures Accept.
 type Options struct {
+	// OriginPatterns lists allowed WebSocket origins, matched against the
+	// request's Origin header.
 	OriginPatterns []string
-	PingInterval   time.Duration
-	SendBuffer     int
+	// PingInterval is how often the keepalive ping loop pings the peer. If
+	// <= 0, DefaultPingInterval is used.
+	PingInterval time.Duration
+	// SendBuffer is the capacity of the outbound send channel. If <= 0, a
+	// default of 16 is used. Because delivery is at-most-once, a full
+	// buffer causes Send to silently drop the message.
+	SendBuffer int
 	// Label identifies this connection in log output (e.g. the hub-assigned
 	// client ID). Optional; logs fall back to "?" when unset.
 	Label string
 }
 
+// DefaultPingInterval is the keepalive ping interval used when
+// Options.PingInterval is unset or non-positive.
 const DefaultPingInterval = 20 * time.Second
 
+// Accept upgrades r into a websocket connection and returns a Conn with its
+// background ping loop and single writer goroutine already running. Both
+// goroutines exit when r's request context is done or the Conn is closed.
 func Accept(w http.ResponseWriter, r *http.Request, opts Options) (*Conn, error) {
 	if opts.PingInterval <= 0 {
 		opts.PingInterval = DefaultPingInterval

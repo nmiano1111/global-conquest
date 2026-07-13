@@ -9,10 +9,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -43,6 +43,9 @@ type chatService interface {
 	PostLobbyMessage(ctx context.Context, userID, body string) (store.ChatMessage, error)
 }
 
+// Handler implements the REST API endpoints, dispatching to the injected
+// userService, gameService, and chatService, and publishing chat messages
+// onto the game.Server's inbox for websocket broadcast.
 type Handler struct {
 	gameServer *game.Server
 	users      userService
@@ -50,6 +53,8 @@ type Handler struct {
 	chats      chatService
 }
 
+// NewHandler constructs a Handler backed by the given game server and
+// service dependencies.
 func NewHandler(gameServer *game.Server, users userService, games gameService, chats chatService) *Handler {
 	return &Handler{gameServer: gameServer, users: users, games: games, chats: chats}
 }
@@ -568,6 +573,8 @@ func (h *Handler) PostLobbyMessage(c *gin.Context) {
 	c.JSON(http.StatusCreated, msg)
 }
 
+// ListAdminUsers returns all users with admin-facing fields (access status,
+// role, etc.) for the admin console. Admin only.
 func (h *Handler) ListAdminUsers(c *gin.Context) {
 	users, err := h.users.ListAdminUsers(c.Request.Context())
 	if err != nil {
@@ -577,6 +584,7 @@ func (h *Handler) ListAdminUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, users)
 }
 
+// UpdateUserAccess sets a user's access status (active or blocked). Admin only.
 func (h *Handler) UpdateUserAccess(c *gin.Context) {
 	userID := c.Param("id")
 	if userID == "" {
@@ -602,6 +610,8 @@ func (h *Handler) UpdateUserAccess(c *gin.Context) {
 	c.JSON(http.StatusOK, u)
 }
 
+// RevokeUserSessions invalidates all active sessions for a user, returning
+// the number of sessions revoked. Admin only.
 func (h *Handler) RevokeUserSessions(c *gin.Context) {
 	userID := c.Param("id")
 	if userID == "" {
@@ -617,6 +627,7 @@ func (h *Handler) RevokeUserSessions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"revoked": revoked})
 }
 
+// GetLeaderboard returns the top 50 leaderboard entries.
 func (h *Handler) GetLeaderboard(c *gin.Context) {
 	entries, err := h.games.GetLeaderboard(c.Request.Context(), 50)
 	if err != nil {

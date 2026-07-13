@@ -12,6 +12,11 @@ import (
 
 const authUserContextKey = "auth_user"
 
+// RequireAuth returns a gin middleware that authenticates the request via a
+// Bearer session token in the Authorization header, aborting with 401 if the
+// header is missing/malformed or the token is invalid or expired. On success
+// it stores the resolved store.User on the gin context, retrievable via
+// getAuthUser by downstream handlers.
 func (h *Handler) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, ok := parseBearerToken(c.GetHeader("Authorization"))
@@ -38,6 +43,9 @@ func (h *Handler) RequireAuth() gin.HandlerFunc {
 	}
 }
 
+// RequireAdmin returns a gin middleware that aborts with 401 if no
+// authenticated user is present (RequireAuth must run first in the chain)
+// or 403 if the authenticated user's role is not "admin".
 func (h *Handler) RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		u, ok := getAuthUser(c)

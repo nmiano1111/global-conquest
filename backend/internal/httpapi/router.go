@@ -1,3 +1,7 @@
+// Package httpapi implements the REST API (/api/*): request routing,
+// session-based authentication middleware, and the Handler methods backing
+// each route. It also wires up the /ws WebSocket upgrade endpoint (see
+// internal/wsapi) alongside the REST routes.
 package httpapi
 
 import (
@@ -13,6 +17,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// NewRouter builds the gin.Engine for the backend: CORS handling, the /api
+// route tree (users, auth, games, leaderboard, chat, admin), the /ws
+// WebSocket upgrade endpoint, and the /swagger UI.
 func NewRouter(h *Handler) *gin.Engine {
 	r := gin.Default()
 

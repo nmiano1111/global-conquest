@@ -35,14 +35,28 @@ type ActionSubmitter interface {
 type StopReason string
 
 const (
-	StopTurnEnded          StopReason = "turn_ended"   // a bot completed its turn; control passed to someone else
-	StopNotBotTurn         StopReason = "not_bot_turn" // current player was never bot-controlled; nothing to do
-	StopGameOver           StopReason = "game_over"
-	StopGameInactive       StopReason = "game_inactive" // status isn't in_progress, or state is otherwise unusable
-	StopLoadError          StopReason = "load_error"
-	StopStrategyError      StopReason = "strategy_error"
+	// StopTurnEnded means a bot completed its turn; control passed to
+	// someone else.
+	StopTurnEnded StopReason = "turn_ended" // a bot completed its turn; control passed to someone else
+	// StopNotBotTurn means the current player was never bot-controlled;
+	// there was nothing for RunTurn to do.
+	StopNotBotTurn StopReason = "not_bot_turn" // current player was never bot-controlled; nothing to do
+	// StopGameOver means the game reached PhaseGameOver.
+	StopGameOver StopReason = "game_over"
+	// StopGameInactive means the game's status isn't in_progress, or its
+	// state is otherwise unusable.
+	StopGameInactive StopReason = "game_inactive" // status isn't in_progress, or state is otherwise unusable
+	// StopLoadError means loading the authoritative game state failed.
+	StopLoadError StopReason = "load_error"
+	// StopStrategyError means the bot's strategy was unknown or returned an
+	// error.
+	StopStrategyError StopReason = "strategy_error"
+	// StopMaxRetriesExceeded means the engine repeatedly rejected the bot's
+	// command, indicating a likely bug rather than a transient condition.
 	StopMaxRetriesExceeded StopReason = "max_retries_exceeded" // repeated engine rejection; likely a bug
-	StopCanceled           StopReason = "canceled"
+	// StopCanceled means the run was stopped because its context was
+	// canceled.
+	StopCanceled StopReason = "canceled"
 )
 
 // TurnRunner drives one bot-controlled player's turn to completion, one
@@ -63,6 +77,9 @@ type Runner struct {
 	pacing     PacingConfig
 }
 
+// NewRunner creates a Runner that loads state via loader, submits commands
+// via submitter, resolves strategies from strategies, and paces committed
+// actions using sleeper and pacing (in ExecutionLive mode).
 func NewRunner(loader GameLoader, submitter ActionSubmitter, strategies StrategyRegistry, sleeper Sleeper, pacing PacingConfig) *Runner {
 	return &Runner{
 		loader:     loader,
@@ -84,6 +101,10 @@ func (r *Runner) pace(ctx context.Context, mode ExecutionMode, min, max time.Dur
 	return r.sleeper.Sleep(ctx, randomDuration(min, max))
 }
 
+// RunTurn drives one bot-controlled player's turn to completion, one
+// committed command at a time, always against freshly reloaded
+// authoritative state. It stops as soon as the current player is no longer
+// the bot it started with, returning a StopReason explaining why.
 func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode) (reason StopReason, err error) {
 	var botPlayerID string
 	first := true

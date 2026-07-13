@@ -44,16 +44,23 @@ func NewClient(apiKey, token string) *Client {
 
 // CreateCardInput describes a card to create.
 type CreateCardInput struct {
-	ListID      string
-	Name        string
+	// ListID is the Trello list to create the card in.
+	ListID string
+	// Name is the card's title.
+	Name string
+	// Description is the card's body text (Trello's "desc" field).
 	Description string
-	LabelIDs    []string
+	// LabelIDs are the Trello label IDs to attach to the card, if any.
+	LabelIDs []string
 }
 
 // CreatedCard is the subset of Trello's card-creation response this project uses.
 type CreatedCard struct {
-	ID       string
-	URL      string
+	// ID is the created card's Trello ID.
+	ID string
+	// URL is the created card's full Trello URL.
+	URL string
+	// ShortURL is the created card's short Trello URL.
 	ShortURL string
 }
 

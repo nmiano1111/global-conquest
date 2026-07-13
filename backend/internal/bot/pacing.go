@@ -16,10 +16,18 @@ import (
 type PaceCategory string
 
 const (
-	PaceMinor       PaceCategory = "minor"
-	PaceNormal      PaceCategory = "normal"
+	// PaceMinor labels a low-significance action such as placing
+	// reinforcements or occupying after a conquest.
+	PaceMinor PaceCategory = "minor"
+	// PaceNormal labels an ordinary action such as an attack that doesn't
+	// conquer, or a fortify.
+	PaceNormal PaceCategory = "normal"
+	// PaceSignificant labels a noteworthy action such as a card trade-in or
+	// a successful conquest.
 	PaceSignificant PaceCategory = "significant"
-	PaceDramatic    PaceCategory = "dramatic"
+	// PaceDramatic labels a high-stakes action such as a player elimination
+	// or the game ending.
+	PaceDramatic PaceCategory = "dramatic"
 )
 
 // PacingConfig holds the bounded random delay range applied after each
@@ -27,16 +35,35 @@ const (
 // uniformly rather than using an identical fixed pause, so turns don't feel
 // mechanical.
 type PacingConfig struct {
-	TurnStartMin, TurnStartMax         time.Duration
-	CardTurnInMin, CardTurnInMax       time.Duration
+	// TurnStartMin and TurnStartMax bound the delay before a bot's first
+	// action of its turn.
+	TurnStartMin, TurnStartMax time.Duration
+	// CardTurnInMin and CardTurnInMax bound the delay after trading in a
+	// card set.
+	CardTurnInMin, CardTurnInMax time.Duration
+	// ReinforcementMin and ReinforcementMax bound the delay after placing
+	// reinforcements.
 	ReinforcementMin, ReinforcementMax time.Duration
-	FirstAttackMin, FirstAttackMax     time.Duration
-	RepeatAttackMin, RepeatAttackMax   time.Duration
-	CaptureMin, CaptureMax             time.Duration
-	OccupationMin, OccupationMax       time.Duration
-	FortifyMin, FortifyMax             time.Duration
-	EndAttackMin, EndAttackMax         time.Duration
-	DramaticMin, DramaticMax           time.Duration
+	// FirstAttackMin and FirstAttackMax bound the delay after attacking a
+	// target for the first time this turn.
+	FirstAttackMin, FirstAttackMax time.Duration
+	// RepeatAttackMin and RepeatAttackMax bound the delay after attacking
+	// the same target again.
+	RepeatAttackMin, RepeatAttackMax time.Duration
+	// CaptureMin and CaptureMax bound the delay after an attack conquers a
+	// territory.
+	CaptureMin, CaptureMax time.Duration
+	// OccupationMin and OccupationMax bound the delay after the occupy
+	// move following a conquest.
+	OccupationMin, OccupationMax time.Duration
+	// FortifyMin and FortifyMax bound the delay after a fortify action.
+	FortifyMin, FortifyMax time.Duration
+	// EndAttackMin and EndAttackMax bound the delay after ending the attack
+	// phase.
+	EndAttackMin, EndAttackMax time.Duration
+	// DramaticMin and DramaticMax bound the delay after a high-stakes event
+	// such as a player elimination or the game ending.
+	DramaticMin, DramaticMax time.Duration
 }
 
 // DefaultPacingConfig returns the live pacing ranges. Roughly 1.5x the

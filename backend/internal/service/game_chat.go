@@ -16,15 +16,22 @@ type gameChatStore interface {
 	ListGameMessages(ctx context.Context, q db.Querier, gameID string, limit int) ([]store.GameChatMessage, error)
 }
 
+// GameChatService persists and retrieves per-game chat messages, backed by
+// a gameChatStore.
 type GameChatService struct {
 	db    gameChatDB
 	store gameChatStore
 }
 
+// NewGameChatService constructs a GameChatService backed by the given
+// database and game chat store.
 func NewGameChatService(db gameChatDB, store gameChatStore) *GameChatService {
 	return &GameChatService{db: db, store: store}
 }
 
+// SaveGameMessage persists a chat message for the given gameID from a
+// client identified by senderClientID and displayed as senderName, and
+// returns it projected into a game.GameChatLogMessage.
 func (s *GameChatService) SaveGameMessage(ctx context.Context, gameID, senderClientID, senderName, body string) (game.GameChatLogMessage, error) {
 	out, err := s.store.SaveGameMessage(ctx, s.db.Queryer(), gameID, senderClientID, senderName, body)
 	if err != nil {
@@ -38,6 +45,9 @@ func (s *GameChatService) SaveGameMessage(ctx context.Context, gameID, senderCli
 	}, nil
 }
 
+// ListGameMessages returns up to limit of the given game's chat messages,
+// projected into game.GameChatLogMessage, in the order returned by the
+// underlying store.
 func (s *GameChatService) ListGameMessages(ctx context.Context, gameID string, limit int) ([]game.GameChatLogMessage, error) {
 	out, err := s.store.ListGameMessages(ctx, s.db.Queryer(), gameID, limit)
 	if err != nil {

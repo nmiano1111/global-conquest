@@ -12,14 +12,24 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
+// PasswordParams tunes the Argon2id key-derivation parameters used to hash
+// and verify passwords.
 type PasswordParams struct {
-	Memory      uint32 // KiB
-	Iterations  uint32
+	Memory uint32 // KiB
+	// Iterations is the number of Argon2id passes over memory.
+	Iterations uint32
+	// Parallelism is the number of parallel Argon2id lanes (threads).
 	Parallelism uint8
-	SaltLen     uint32
-	KeyLen      uint32
+	// SaltLen is the length, in bytes, of the random salt generated for each hash.
+	SaltLen uint32
+	// KeyLen is the length, in bytes, of the derived key (hash output).
+	KeyLen uint32
 }
 
+// DefaultPasswordParams returns a baseline set of Argon2id parameters
+// (64 MiB memory, 3 iterations, parallelism 2, 16-byte salt, 32-byte key)
+// suitable for a hobby-scale server. Callers wanting stronger guarantees
+// should tune Memory upward.
 func DefaultPasswordParams() PasswordParams {
 	// Good baseline for a hobby app on a typical server.
 	// Tune later if you want (memory is the big lever).
@@ -32,6 +42,10 @@ func DefaultPasswordParams() PasswordParams {
 	}
 }
 
+// HashPassword hashes plaintext using Argon2id with the given parameters and
+// a freshly generated random salt, returning the result encoded as
+// "$argon2id$v=<version>$m=<memory>,t=<iterations>,p=<parallelism>$<salt>$<hash>".
+// It returns ErrPasswordTooShort if the trimmed plaintext is under 8 characters.
 func HashPassword(plaintext string, p PasswordParams) (string, error) {
 	plaintext = strings.TrimSpace(plaintext)
 	if len(plaintext) < 8 {
@@ -54,6 +68,11 @@ func HashPassword(plaintext string, p PasswordParams) (string, error) {
 	return encoded, nil
 }
 
+// VerifyPassword reports whether plaintext matches the Argon2id hash encoded
+// in encodedHash, using the parameters embedded in encodedHash and a
+// constant-time comparison. It returns (false, nil) rather than an error for
+// empty inputs, to avoid leaking which side was invalid, and returns a
+// non-nil error only when encodedHash is malformed.
 func VerifyPassword(plaintext, encodedHash string) (bool, error) {
 	plaintext = strings.TrimSpace(plaintext)
 	encodedHash = strings.TrimSpace(encodedHash)
@@ -77,6 +96,9 @@ func VerifyPassword(plaintext, encodedHash string) (bool, error) {
 	return false, nil
 }
 
+// ValidateUsername trims username and validates that it is between 3 and 24
+// characters and contains only letters, digits, underscores, and hyphens,
+// returning ErrUsernameInvalid otherwise.
 func ValidateUsername(username string) (string, error) {
 	u := strings.TrimSpace(username)
 	if len(u) < 3 || len(u) > 24 {

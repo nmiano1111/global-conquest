@@ -1,3 +1,8 @@
+// Package wsapi wires the wsconn websocket transport to the game hub
+// (game.Server): it upgrades incoming HTTP connections, authenticates them
+// via an injected session-token callback, registers/unregisters the
+// resulting client with the hub, and pumps inbound envelopes into the hub's
+// inbox.
 package wsapi
 
 import (
@@ -15,15 +20,31 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Options configures GinHandler's websocket upgrade and authentication behavior.
 type Options struct {
+	// OriginPatterns lists allowed WebSocket origins, passed through to wsconn.Accept.
 	OriginPatterns []string
-	PingInterval   time.Duration
-	SendBuffer     int
-	Authenticate   func(ctx context.Context, token string) (AuthUser, error)
+	// PingInterval is the keepalive ping interval, passed through to wsconn.Accept.
+	PingInterval time.Duration
+	// SendBuffer is the capacity of each connection's outbound send channel,
+	// passed through to wsconn.Accept. Delivery is at-most-once, so a full
+	// buffer silently drops messages.
+	SendBuffer int
+	// Authenticate resolves a session token (read from the "token" query
+	// parameter) to an AuthUser. A nil Authenticate, an empty token, or an
+	// invalid/expired token all result in the connection being treated as
+	// anonymous rather than rejected; only a transient resolution error
+	// rejects the upgrade.
+	Authenticate func(ctx context.Context, token string) (AuthUser, error)
 }
 
+// AuthUser is the authenticated identity attached to a websocket connection,
+// or the zero value for an anonymous connection.
 type AuthUser struct {
-	ID       string
+	// ID is the authenticated user's ID, or empty for an anonymous connection.
+	ID string
+	// UserName is the authenticated user's display name, or empty for an
+	// anonymous connection.
 	UserName string
 }
 

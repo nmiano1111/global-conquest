@@ -1,3 +1,7 @@
+// Package discordbot implements the Discord bot integration: slash commands
+// for game reports and bug/feature ticket creation (via internal/trello),
+// and an outbox worker (see outbox.go) that reliably delivers game-event
+// notifications to a Discord channel.
 package discordbot
 
 import (
@@ -34,6 +38,8 @@ type trelloCardCreator interface {
 	CreateCard(ctx context.Context, input trello.CreateCardInput) (*trello.CreatedCard, error)
 }
 
+// Bot wires a Discord gateway session to slash-command handlers backed by a
+// reportingService and a trelloCardCreator.
 type Bot struct {
 	session   *discordgo.Session
 	cfg       Config
@@ -41,6 +47,9 @@ type Bot struct {
 	trello    trelloCardCreator
 }
 
+// New creates a Bot from cfg, using svc to answer report queries and
+// trelloClient to create Trello cards for /bug and /feature. It does not
+// open the gateway connection; call Start for that.
 func New(cfg Config, svc reportingService, trelloClient trelloCardCreator) (*Bot, error) {
 	s, err := discordgo.New("Bot " + cfg.BotToken)
 	if err != nil {
@@ -50,6 +59,9 @@ func New(cfg Config, svc reportingService, trelloClient trelloCardCreator) (*Bot
 	return &Bot{session: s, cfg: cfg, reporting: svc, trello: trelloClient}, nil
 }
 
+// Start opens the Discord gateway connection, registers the interaction
+// handler, ensures the bot's guild slash commands are registered, and posts
+// a startup message to the configured events channel.
 func (b *Bot) Start() error {
 	b.session.AddHandler(b.handleInteraction)
 
@@ -72,6 +84,7 @@ func (b *Bot) Start() error {
 	return nil
 }
 
+// Close closes the underlying Discord gateway session.
 func (b *Bot) Close() error {
 	if err := b.session.Close(); err != nil {
 		return fmt.Errorf("close discord session: %w", err)
@@ -88,6 +101,9 @@ type discordMessageSender struct {
 	session *discordgo.Session
 }
 
+// SendMessage sends content (and any embeds) to channelID via the bot's
+// Discord session. It satisfies the MessageSender interface used by the
+// outbox worker.
 func (s *discordMessageSender) SendMessage(_ context.Context, channelID, content string, embeds ...*discordgo.MessageEmbed) error {
 	if len(embeds) == 0 {
 		_, err := s.session.ChannelMessageSend(channelID, content)

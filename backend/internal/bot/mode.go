@@ -7,6 +7,10 @@ package bot
 type ExecutionMode string
 
 const (
-	ExecutionLive       ExecutionMode = "live"
+	// ExecutionLive paces bot actions with bounded random delays so a game
+	// is watchable by human spectators/opponents.
+	ExecutionLive ExecutionMode = "live"
+	// ExecutionSimulation runs bot actions back-to-back with no artificial
+	// delays.
 	ExecutionSimulation ExecutionMode = "simulation"
 )

@@ -5,32 +5,48 @@ import (
 	"context"
 )
 
+// NewGamePlayer is the input for registering a human player's seat in a game's game_players rows.
+// Bot players never get a NewGamePlayer / game_players row (see humanGamePlayers in service/game.go).
 type NewGamePlayer struct {
-	GameID      string
-	UserID      string
+	// GameID is the identifier of the game the player is seated in.
+	GameID string
+	// UserID is the identifier of the human user occupying the seat.
+	UserID string
+	// PlayerIndex is the player's position within risk.Game.Players.
 	PlayerIndex int
 }
 
+// LeaderboardEntry is one user's aggregated win/loss record across completed, human-only games.
 type LeaderboardEntry struct {
-	UserID      string `json:"user_id"`
-	UserName    string `json:"username"`
-	Wins        int    `json:"wins"`
-	Losses      int    `json:"losses"`
-	GamesPlayed int    `json:"games_played"`
+	// UserID is the identifier of the user this entry summarizes.
+	UserID string `json:"user_id"`
+	// UserName is the display name of the user this entry summarizes.
+	UserName string `json:"username"`
+	// Wins is the number of completed games the user won.
+	Wins int `json:"wins"`
+	// Losses is the number of completed games the user did not win.
+	Losses int `json:"losses"`
+	// GamesPlayed is the total number of completed games the user participated in.
+	GamesPlayed int `json:"games_played"`
 }
 
+// GamePlayersStore defines persistence operations for the game_players join table, which records
+// which human users occupy which seats in a game and tracks per-game win/loss outcomes.
 type GamePlayersStore interface {
 	InsertGamePlayers(ctx context.Context, q db.Querier, players []NewGamePlayer) error
 	SetGameWinner(ctx context.Context, q db.Querier, gameID, winnerUserID string) error
 	GetLeaderboard(ctx context.Context, q db.Querier, limit int) ([]LeaderboardEntry, error)
 }
 
+// PostgresGamePlayersStore is a Postgres-backed implementation of GamePlayersStore.
 type PostgresGamePlayersStore struct{}
 
+// NewPostgresGamePlayersStore constructs a PostgresGamePlayersStore.
 func NewPostgresGamePlayersStore() *PostgresGamePlayersStore {
 	return &PostgresGamePlayersStore{}
 }
 
+// InsertGamePlayers inserts one game_players row per entry in players, one INSERT statement per player. It returns the first error encountered, leaving any already-inserted rows in place (the caller is expected to run this inside a transaction that will be rolled back on error).
 func (s *PostgresGamePlayersStore) InsertGamePlayers(ctx context.Context, exec db.Querier, players []NewGamePlayer) error {
 	const stmt = `
 		INSERT INTO game_players (game_id, user_id, player_index)
@@ -49,6 +65,7 @@ func (s *PostgresGamePlayersStore) InsertGamePlayers(ctx context.Context, exec d
 	return nil
 }
 
+// SetGameWinner marks the game_players row for gameID and winnerUserID as won. It does not verify that gameID and winnerUserID correspond to an existing row; if no row matches, it succeeds without updating anything.
 func (s *PostgresGamePlayersStore) SetGameWinner(ctx context.Context, exec db.Querier, gameID, winnerUserID string) error {
 	const stmt = `
 		UPDATE game_players
@@ -63,6 +80,7 @@ func (s *PostgresGamePlayersStore) SetGameWinner(ctx context.Context, exec db.Qu
 	return rows.Err()
 }
 
+// GetLeaderboard returns up to limit users' win/loss records across completed games, ordered by wins descending then losses ascending. Games involving any bot player are excluded entirely (detected by inspecting the game's JSONB state for a player with controller = "bot", since bots never have a game_players row); only pure human-vs-human completed games count. Users with zero completed games are omitted.
 func (s *PostgresGamePlayersStore) GetLeaderboard(ctx context.Context, exec db.Querier, limit int) ([]LeaderboardEntry, error) {
 	// Games with any bot player don't count toward the leaderboard at all —
 	// only pure human-vs-human games do. Bots never get a game_players row

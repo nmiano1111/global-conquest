@@ -62,6 +62,8 @@ type NameRNG interface {
 
 type cryptoNameRNG struct{}
 
+// IntN returns a cryptographically random integer in [0, n), or 0 if n is
+// not positive.
 func (cryptoNameRNG) IntN(n int) int {
 	if n <= 0 {
 		return 0

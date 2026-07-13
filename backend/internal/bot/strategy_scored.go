@@ -29,10 +29,17 @@ type ScoredStrategy struct {
 	fallback *BasicStrategy
 }
 
+// NewScoredStrategy creates a ScoredStrategy that scores candidates using
+// the given Weights, falling back to a BasicStrategy for any phase this
+// strategy doesn't itself handle.
 func NewScoredStrategy(w Weights) *ScoredStrategy {
 	return &ScoredStrategy{weights: w, fallback: NewBasicStrategy()}
 }
 
+// NextCommand picks the next command for playerID by scoring every legal
+// candidate for the game's current phase and returning the highest-scoring
+// one, along with an Explanation of why it won. Phases not yet migrated
+// onto the scoring pipeline fall back to BasicStrategy.
 func (s *ScoredStrategy) NextCommand(ctx context.Context, g *risk.Game, playerID string) (Command, Explanation, error) {
 	switch g.Phase {
 	case risk.PhaseSetupReinforce:

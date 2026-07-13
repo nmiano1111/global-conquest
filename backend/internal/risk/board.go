@@ -2,33 +2,60 @@ package risk
 
 import "fmt"
 
+// Territory is the unique name of a single territory on the board, e.g. "Alaska".
 type Territory string
+
+// Continent is the unique name of a continent grouping of territories, e.g. "north_america".
 type Continent string
+
+// Symbol is a Risk card's icon: Infantry, Cavalry, Artillery, or Wild.
 type Symbol string
 
 const (
-	Infantry  Symbol = "infantry"
-	Cavalry   Symbol = "cavalry"
+	// Infantry is one of the three basic Risk card symbols used when forming a tradeable set of three cards.
+	Infantry Symbol = "infantry"
+	// Cavalry is one of the three basic Risk card symbols used when forming a tradeable set of three cards.
+	Cavalry Symbol = "cavalry"
+	// Artillery is one of the three basic Risk card symbols used when forming a tradeable set of three cards.
 	Artillery Symbol = "artillery"
-	Wild      Symbol = "wild"
+	// Wild is a card symbol that satisfies any requirement when forming a tradeable set of three cards.
+	Wild Symbol = "wild"
 )
 
+// Card represents a single Risk card: a territory paired with a symbol, or a
+// Wild card whose Territory is left as the zero value.
 type Card struct {
+	// Territory is the territory depicted on the card; empty for Wild cards.
 	Territory Territory `json:"territory"`
-	Symbol    Symbol    `json:"symbol"`
+	// Symbol is the card's icon, one of Infantry, Cavalry, Artillery, or Wild.
+	Symbol Symbol `json:"symbol"`
 }
 
+// ContinentInfo describes a continent's reinforcement bonus and the
+// territories that make it up.
 type ContinentInfo struct {
-	Bonus       int         `json:"bonus"`
+	// Bonus is the number of extra reinforcement armies awarded to a player
+	// who owns every territory in this continent.
+	Bonus int `json:"bonus"`
+	// Territories lists every territory belonging to this continent.
 	Territories []Territory `json:"territories"`
 }
 
+// Board holds the static map data for a game: continents, territory
+// adjacency, and canonical iteration order.
 type Board struct {
-	Continents map[Continent]ContinentInfo          `json:"continents"`
-	Adjacent   map[Territory]map[Territory]struct{} `json:"adjacent"`
-	Order      []Territory                          `json:"order"`
+	// Continents maps each continent name to its bonus and member territories.
+	Continents map[Continent]ContinentInfo `json:"continents"`
+	// Adjacent maps each territory to the set of territories directly
+	// connected to it; adjacency is symmetric (see Validate).
+	Adjacent map[Territory]map[Territory]struct{} `json:"adjacent"`
+	// Order lists every territory in a fixed, deterministic order used for
+	// stable iteration (e.g. by LegalAttacks and LegalReinforcements).
+	Order []Territory `json:"order"`
 }
 
+// ClassicBoard returns the standard 42-territory, six-continent Risk board
+// with its adjacency graph and canonical iteration order.
 func ClassicBoard() Board {
 	continents := map[Continent]ContinentInfo{
 		"north_america": {
@@ -143,11 +170,15 @@ func ClassicBoard() Board {
 	}
 }
 
+// IsAdjacent reports whether a and c are directly connected territories.
 func (b Board) IsAdjacent(a, c Territory) bool {
 	_, ok := b.Adjacent[a][c]
 	return ok
 }
 
+// Validate checks that every territory in Order has an adjacency entry and
+// that adjacency is symmetric (if a is adjacent to c, c must be adjacent to
+// a), returning an error describing the first inconsistency found.
 func (b Board) Validate() error {
 	for _, t := range b.Order {
 		if _, ok := b.Adjacent[t]; !ok {
@@ -164,6 +195,9 @@ func (b Board) Validate() error {
 	return nil
 }
 
+// ClassicDeck builds the standard Risk card deck for the given territory
+// order: one card per territory cycling through Infantry, Cavalry, and
+// Artillery symbols, plus two Wild cards.
 func ClassicDeck(order []Territory) []Card {
 	syms := []Symbol{Infantry, Cavalry, Artillery}
 	out := make([]Card, 0, len(order)+2)

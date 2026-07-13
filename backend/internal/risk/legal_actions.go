@@ -10,6 +10,7 @@ package risk
 // setup_reinforce: the engine's PlaceInitialArmy always places exactly one
 // army per call.
 type SetupReinforcementAction struct {
+	// Territory is the owned territory an initial army may be placed on.
 	Territory Territory
 }
 
@@ -35,8 +36,11 @@ func LegalSetupReinforcements(g *Game, playerID string) []SetupReinforcementActi
 // CardTurnInAction is a candidate set of three cards forming a valid trade,
 // identified by their index into the player's current hand.
 type CardTurnInAction struct {
+	// Indices are the three hand-index positions of the cards forming this
+	// candidate set.
 	Indices [3]int
-	Cards   [3]Card
+	// Cards are the three cards at Indices, in the same order.
+	Cards [3]Card
 }
 
 // LegalCardTurnIns enumerates every combination of three cards in the
@@ -75,6 +79,7 @@ func CardTurnInRequired(g *Game, playerID string) bool {
 // ReinforcementAction is a legal destination for placing reinforcement
 // armies during the reinforce phase.
 type ReinforcementAction struct {
+	// Territory is the owned territory reinforcement armies may be placed on.
 	Territory Territory
 }
 
@@ -101,9 +106,15 @@ func LegalReinforcements(g *Game, playerID string) []ReinforcementAction {
 // AttackAction is a legal attack: an owned source territory with more than
 // one army against an adjacent enemy-owned territory.
 type AttackAction struct {
-	From, To        Territory
-	SourceArmies    int
-	TargetArmies    int
+	// From is the owned source territory the attack would be launched from.
+	From Territory
+	// To is the adjacent enemy-owned target territory.
+	To Territory
+	// SourceArmies is the source territory's current army count.
+	SourceArmies int
+	// TargetArmies is the target territory's current army count.
+	TargetArmies int
+	// MaxAttackerDice is the largest number of attacker dice legal for this attack.
 	MaxAttackerDice int
 }
 
@@ -147,6 +158,7 @@ func LegalAttacks(g *Game, playerID string) []AttackAction {
 // OccupationAction is a legal army count to move into a just-conquered
 // territory, bounded by the engine's OccupyState.
 type OccupationAction struct {
+	// Armies is a legal number of armies to move into the conquered territory.
 	Armies int
 }
 
@@ -175,7 +187,12 @@ func LegalOccupations(g *Game, playerID string) []OccupationAction {
 // FortificationAction is a legal single fortification move: both
 // territories owned by the player and connected through owned territory.
 type FortificationAction struct {
-	From, To  Territory
+	// From is the owned source territory armies would move out of.
+	From Territory
+	// To is the owned, connected destination territory armies would move into.
+	To Territory
+	// MaxArmies is the largest number of armies that may be moved, leaving
+	// at least one behind in From.
 	MaxArmies int
 }
 

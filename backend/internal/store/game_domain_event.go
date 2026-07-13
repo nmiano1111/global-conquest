@@ -8,19 +8,34 @@ import (
 	"time"
 )
 
+// GameDomainEvent is a persisted, ordered domain event recorded against a game — the
+// append-only audit/event-sourcing log distinct from the free-text GameEvent feed.
 type GameDomainEvent struct {
-	ID            string
-	GameID        string
-	GameSequence  int64
-	EventType     string
-	EventVersion  int16
+	// ID is the event's unique identifier.
+	ID string
+	// GameID is the identifier of the game the event belongs to.
+	GameID string
+	// GameSequence is the monotonically increasing per-game sequence number assigned via
+	// games.event_sequence, establishing a total order of domain events within the game.
+	GameSequence int64
+	// EventType names the kind of domain event (e.g. an engine action or phase transition).
+	EventType string
+	// EventVersion is the schema version of Payload, letting consumers deserialize older
+	// event payload shapes correctly as the schema evolves.
+	EventVersion int16
+	// ActorPlayerID is the player who caused the event, or empty if the event has no
+	// attributable actor (e.g. a system-generated event).
 	ActorPlayerID string
-	OccurredAt    time.Time
-	Payload       json.RawMessage
+	// OccurredAt is when the event was recorded.
+	OccurredAt time.Time
+	// Payload is the event's type-specific data, stored and returned as raw JSON.
+	Payload json.RawMessage
 }
 
+// PostgresGameDomainEventStore is a Postgres-backed store for the append-only game domain event log.
 type PostgresGameDomainEventStore struct{}
 
+// NewPostgresGameDomainEventStore constructs a PostgresGameDomainEventStore.
 func NewPostgresGameDomainEventStore() *PostgresGameDomainEventStore {
 	return &PostgresGameDomainEventStore{}
 }

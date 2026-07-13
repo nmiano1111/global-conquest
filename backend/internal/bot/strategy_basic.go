@@ -17,8 +17,12 @@ const StrategyBasicV1 = "basic-v1"
 // BasicStrategy implements StrategyBasicV1.
 type BasicStrategy struct{}
 
+// NewBasicStrategy creates a BasicStrategy.
 func NewBasicStrategy() *BasicStrategy { return &BasicStrategy{} }
 
+// NextCommand picks the next legal command for playerID using basic-v1's
+// rule-based dispatch. It always returns a zero-value Explanation, since
+// basic-v1 has no scoring model to report.
 func (b *BasicStrategy) NextCommand(_ context.Context, g *risk.Game, playerID string) (Command, Explanation, error) {
 	cmd, err := b.nextCommand(g, playerID)
 	return cmd, Explanation{}, err

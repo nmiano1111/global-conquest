@@ -24,6 +24,9 @@ type Manager struct {
 	mode    ExecutionMode
 }
 
+// NewManager creates a Manager that runs bot turns via runner in the given
+// mode. parent bounds the lifetime of every runner started by the returned
+// Manager; canceling parent or calling Shutdown stops them all.
 func NewManager(parent context.Context, runner TurnRunner, mode ExecutionMode) *Manager {
 	ctx, cancel := context.WithCancel(parent)
 	return &Manager{

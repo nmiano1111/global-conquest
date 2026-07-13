@@ -9,36 +9,60 @@ import (
 	"time"
 )
 
+// Game is a row from the games table, including its JSONB-serialized
+// risk.Game state.
 type Game struct {
-	ID          string          `json:"id"`
-	OwnerUserID string          `json:"owner_user_id"`
-	Name        string          `json:"name"`
-	Status      string          `json:"status"`
-	State       json.RawMessage `swaggertype:"object" json:"state,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	// ID is the game's UUID.
+	ID string `json:"id"`
+	// OwnerUserID is the UUID of the user who created the game.
+	OwnerUserID string `json:"owner_user_id"`
+	// Name is the game's display name.
+	Name string `json:"name"`
+	// Status is the game's lifecycle status (e.g. lobby, in_progress, finished).
+	Status string `json:"status"`
+	// State is the JSONB-serialized risk.Game engine state.
+	State json.RawMessage `swaggertype:"object" json:"state,omitempty"`
+	// CreatedAt is when the game row was inserted.
+	CreatedAt time.Time `json:"created_at"`
+	// UpdatedAt is when the game row was last updated.
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// NewGame is the input for creating a new game row via Create.
 type NewGame struct {
+	// OwnerUserID is the UUID of the user creating the game.
 	OwnerUserID string
-	Name        string
-	Status      string
-	State       json.RawMessage
-}
-
-type UpdateGameState struct {
-	GameID string
+	// Name is the game's display name.
+	Name string
+	// Status is the initial lifecycle status of the game.
 	Status string
-	State  json.RawMessage
+	// State is the initial JSONB-serialized risk.Game engine state.
+	State json.RawMessage
 }
 
+// UpdateGameState is the input for updating a game's status and state via UpdateState.
+type UpdateGameState struct {
+	// GameID is the UUID of the game to update.
+	GameID string
+	// Status is the new lifecycle status to set.
+	Status string
+	// State is the new JSONB-serialized risk.Game engine state to set.
+	State json.RawMessage
+}
+
+// GameListFilter narrows and paginates the results of List.
 type GameListFilter struct {
+	// OwnerUserID, if non-empty, restricts results to games owned by this user.
 	OwnerUserID string
-	Status      string
-	Limit       int
-	Offset      int
+	// Status, if non-empty, restricts results to games with this status.
+	Status string
+	// Limit caps the number of rows returned; see List for defaulting/clamping behavior.
+	Limit int
+	// Offset skips this many rows before returning results.
+	Offset int
 }
 
+// GamesStore defines the persistence operations for games.
 type GamesStore interface {
 	Create(ctx context.Context, q db.Querier, in NewGame) (Game, error)
 	GetByID(ctx context.Context, q db.Querier, gameID string) (Game, error)
@@ -48,10 +72,13 @@ type GamesStore interface {
 	Delete(ctx context.Context, q db.Querier, gameID string) error
 }
 
+// PostgresGamesStore is the Postgres-backed implementation of GamesStore.
 type PostgresGamesStore struct{}
 
+// NewPostgresGamesStore constructs a PostgresGamesStore.
 func NewPostgresGamesStore() *PostgresGamesStore { return &PostgresGamesStore{} }
 
+// Create inserts a new game row and returns it as stored.
 func (s *PostgresGamesStore) Create(ctx context.Context, exec db.Querier, in NewGame) (Game, error) {
 	const stmt = `
 		INSERT INTO games (owner_user_id, name, status, state)
@@ -65,6 +92,8 @@ func (s *PostgresGamesStore) Create(ctx context.Context, exec db.Querier, in New
 	return g, err
 }
 
+// GetByID fetches a game by ID without locking the row. Callers that intend
+// to mutate the game within a transaction must use GetByIDForUpdate instead.
 func (s *PostgresGamesStore) GetByID(ctx context.Context, exec db.Querier, gameID string) (Game, error) {
 	const stmt = `
 		SELECT id::text, owner_user_id::text, name, status, state, created_at, updated_at
@@ -78,6 +107,10 @@ func (s *PostgresGamesStore) GetByID(ctx context.Context, exec db.Querier, gameI
 	return g, err
 }
 
+// GetByIDForUpdate fetches a game by ID with a row-level SELECT ... FOR
+// UPDATE lock, blocking concurrent updates until the enclosing transaction
+// commits or rolls back. It must be called within a transaction (e.g. via
+// WithTxQ) before any read-modify-write mutation of game state.
 func (s *PostgresGamesStore) GetByIDForUpdate(ctx context.Context, exec db.Querier, gameID string) (Game, error) {
 	const stmt = `
 		SELECT id::text, owner_user_id::text, name, status, state, created_at, updated_at
@@ -92,6 +125,10 @@ func (s *PostgresGamesStore) GetByIDForUpdate(ctx context.Context, exec db.Queri
 	return g, err
 }
 
+// List returns games matching filter, most recently created first.
+// filter.Limit is clamped to a default of 50 when <= 0 and a maximum of 200;
+// filter.Offset is clamped to 0 when negative. OwnerUserID and Status filter
+// conditions are applied only when non-empty.
 func (s *PostgresGamesStore) List(ctx context.Context, exec db.Querier, filter GameListFilter) ([]Game, error) {
 	limit := filter.Limit
 	if limit <= 0 {
@@ -145,6 +182,10 @@ func (s *PostgresGamesStore) List(ctx context.Context, exec db.Querier, filter G
 	return out, nil
 }
 
+// UpdateState updates a game's status, state, and updated_at timestamp, and
+// returns the row as stored. Callers mutating state read via
+// GetByIDForUpdate should call this within the same transaction to avoid
+// lost updates.
 func (s *PostgresGamesStore) UpdateState(ctx context.Context, exec db.Querier, in UpdateGameState) (Game, error) {
 	const stmt = `
 		UPDATE games

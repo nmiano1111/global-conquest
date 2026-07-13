@@ -1,3 +1,11 @@
+// Package service implements the transactional business-logic layer that
+// sits between the httpapi/wsapi request handlers and the store/risk-engine
+// layers. Services in this package own request validation, orchestrate
+// store reads/writes (wrapping mutations in WithTxQ transactions with
+// row-level locking where needed), and translate between the persisted
+// JSONB game state and the DTOs the handler layers expect — they never
+// duplicate risk-engine rules, and the risk engine remains the sole
+// authority for game legality.
 package service
 
 import (
@@ -40,6 +48,13 @@ type discordOutboxStore interface {
 	EnqueueGameStarted(ctx context.Context, q db.Querier, gameID, gameName, playerID, playerDisplayName string, playerDiscordName *string) error
 }
 
+// GamesService is the transactional business-logic layer for game
+// lifecycle operations — lobby creation and joining, applying in-game
+// actions, listing/bootstrapping games, and the leaderboard — sitting
+// between the httpapi/wsapi handlers and the games/game-players stores. It
+// wraps every mutation that reads then writes the persisted risk.Game
+// state in a WithTxQ transaction using GetByIDForUpdate to avoid races
+// between concurrent actions on the same game.
 type GamesService struct {
 	db               gameDB
 	games            store.GamesStore
@@ -52,16 +67,42 @@ type GamesService struct {
 }
 
 var (
-	ErrGameNotFound        = errors.New("game not found")
-	ErrInvalidGameInput    = errors.New("invalid game input")
-	ErrUnknownPlayerIDs    = errors.New("one or more player_ids do not exist")
-	ErrGameNotJoinable     = errors.New("game is not joinable")
-	ErrGameAlreadyJoined   = errors.New("player already joined this game")
+	// ErrGameNotFound is returned when a lookup or update targets a game ID
+	// that does not exist.
+	ErrGameNotFound = errors.New("game not found")
+	// ErrInvalidGameInput is returned when caller-supplied input fails
+	// validation, such as an empty ID, an out-of-range player count, or a
+	// game whose persisted state or status cannot be decoded.
+	ErrInvalidGameInput = errors.New("invalid game input")
+	// ErrUnknownPlayerIDs is returned when a referenced player ID (e.g. a
+	// game's owner) does not correspond to a row in the users table.
+	ErrUnknownPlayerIDs = errors.New("one or more player_ids do not exist")
+	// ErrGameNotJoinable is returned when an action targets a game that is
+	// not in the expected status for that action, such as joining a game
+	// that has already started or acting on a game that is not in_progress.
+	ErrGameNotJoinable = errors.New("game is not joinable")
+	// ErrGameAlreadyJoined is returned when a player attempts to join a
+	// lobby they are already a member of. It is currently unused by
+	// JoinClassicGame, which instead treats a repeat join as a no-op.
+	ErrGameAlreadyJoined = errors.New("player already joined this game")
+	// ErrGamePlayerCountFull is returned when a player tries to join a
+	// lobby that has already reached its configured player count.
 	ErrGamePlayerCountFull = errors.New("game is already full")
-	ErrGameForbidden       = errors.New("game access forbidden")
-	ErrInvalidGameAction   = errors.New("invalid game action")
+	// ErrGameForbidden is returned when the acting player is not one of the
+	// players in the targeted game.
+	ErrGameForbidden = errors.New("game access forbidden")
+	// ErrInvalidGameAction is returned when a requested game action is
+	// unrecognized, is missing required fields, or is rejected by the risk
+	// engine as illegal for the current game state.
+	ErrInvalidGameAction = errors.New("invalid game action")
 )
 
+// NewGamesService constructs a GamesService backed by the given database
+// and games store. The optional stores (game events, game players, domain
+// events, Discord outbox) and hooks are wired in separately via the
+// SetGameEventStore/SetGamePlayersStore/SetGameDomainEventStore/
+// SetDiscordOutboxStore/SetBotNameAssigner/SetGameStartedHook setters, and
+// every one of them is nil-safe when unset.
 func NewGamesService(db gameDB, games store.GamesStore) *GamesService {
 	return &GamesService{
 		db:    db,
@@ -101,18 +142,34 @@ type gameEventStore interface {
 	ListGameEvents(ctx context.Context, q db.Querier, gameID string, limit int) ([]store.GameEvent, error)
 }
 
+// SetGameEventStore wires in the store used to persist and list
+// human-readable game event log entries (e.g. "X placed 3 armies on Y").
+// It is nil-safe: until set, methods that would otherwise record an event
+// simply skip that step.
 func (s *GamesService) SetGameEventStore(gameEvent gameEventStore) {
 	s.gameEvent = gameEvent
 }
 
+// SetGamePlayersStore wires in the store used to record game_players rows
+// (for the leaderboard) and set a game's winner. It is nil-safe: until set,
+// GetLeaderboard returns an empty result and player-row bookkeeping is
+// skipped.
 func (s *GamesService) SetGamePlayersStore(gp gamePlayersStore) {
 	s.gamePlayers = gp
 }
 
+// SetGameDomainEventStore wires in the store used to persist typed
+// risk.DomainEvent rows emitted by engine actions (currently only Attack).
+// It is nil-safe: until set, domain events are computed by the engine but
+// never persisted.
 func (s *GamesService) SetGameDomainEventStore(ds gameDomainEventStore) {
 	s.gameDomainEvents = ds
 }
 
+// SetDiscordOutboxStore wires in the store used to enqueue Discord
+// notifications (turn started, cards traded, player eliminated, game
+// over, game started). It is nil-safe: until set, no Discord notifications
+// are enqueued.
 func (s *GamesService) SetDiscordOutboxStore(store discordOutboxStore) {
 	s.discordOutbox = store
 }
@@ -131,97 +188,245 @@ type lobbyState struct {
 	BotNames map[string]string `json:"bot_names,omitempty"`
 }
 
+// GameBootstrapPlayer is one player's public-facing snapshot within a
+// GameBootstrap response, covering both lobby players (only UserID/
+// UserName/Color/IsBot are meaningful) and in-progress/completed players.
 type GameBootstrapPlayer struct {
-	UserID      string      `json:"user_id"`
-	UserName    string      `json:"user_name"`
-	Color       string      `json:"color"`
-	CardCount   int         `json:"card_count"`
-	Cards       []risk.Card `json:"cards,omitempty"`
-	SetupArmies int         `json:"setup_armies"`
-	Eliminated  bool        `json:"eliminated"`
-	IsBot       bool        `json:"is_bot"`
+	// UserID is the player's user ID, or a synthetic bot player ID for
+	// bot-controlled players.
+	UserID string `json:"user_id"`
+	// UserName is the player's display name: their username for humans, or
+	// their assigned wrestler name for bots.
+	UserName string `json:"user_name"`
+	// Color is the player's assigned UI color, derived deterministically
+	// from their seat index via bootstrapColor.
+	Color string `json:"color"`
+	// CardCount is the number of Risk cards the player currently holds.
+	CardCount int `json:"card_count"`
+	// Cards holds the requesting player's own card hand; it is only
+	// populated for the requester (never for other players, to avoid
+	// leaking hidden information) and omitted otherwise.
+	Cards []risk.Card `json:"cards,omitempty"`
+	// SetupArmies is the number of reinforcement armies this player still
+	// has to place during the setup phase.
+	SetupArmies int `json:"setup_armies"`
+	// Eliminated reports whether this player has been eliminated from the
+	// game.
+	Eliminated bool `json:"eliminated"`
+	// IsBot reports whether this player is bot-controlled.
+	IsBot bool `json:"is_bot"`
 }
 
+// GameBootstrap is the full initial-load snapshot of a game returned by
+// GetGameBootstrap — everything a client needs to render a game (lobby,
+// in-progress, or completed) on first load, mirroring the fields sent in
+// subsequent game_state_updated broadcasts.
 type GameBootstrap struct {
-	ID                    string                 `json:"id"`
-	OwnerUserID           string                 `json:"owner_user_id"`
-	Name                  string                 `json:"name"`
-	Status                string                 `json:"status"`
-	Phase                 string                 `json:"phase"`
-	Winner                string                 `json:"winner,omitempty"`
-	PlayerCount           int                    `json:"player_count"`
-	CurrentPlayer         int                    `json:"current_player"`
-	PendingReinforcements int                    `json:"pending_reinforcements"`
-	SetsTraded            int                    `json:"sets_traded"`
-	Occupy                *GameOccupyRequirement `json:"occupy,omitempty"`
-	Players               []GameBootstrapPlayer  `json:"players"`
-	Territories           json.RawMessage        `json:"territories"`
-	Events                []GameEventEntry       `json:"events"`
-	CreatedAt             time.Time              `json:"created_at"`
-	UpdatedAt             time.Time              `json:"updated_at"`
+	// ID is the game's unique ID.
+	ID string `json:"id"`
+	// OwnerUserID is the user ID of the player who created the game.
+	OwnerUserID string `json:"owner_user_id"`
+	// Name is the game's generated display name.
+	Name string `json:"name"`
+	// Status is the game's persistence-layer status: "lobby",
+	// "in_progress", or "completed".
+	Status string `json:"status"`
+	// Phase is the current risk.Phase as a string, or "lobby" when Status
+	// is "lobby".
+	Phase string `json:"phase"`
+	// Winner is the winning player's user ID, set once the game has
+	// reached PhaseGameOver.
+	Winner string `json:"winner,omitempty"`
+	// PlayerCount is the configured number of players for this game.
+	PlayerCount int `json:"player_count"`
+	// CurrentPlayer is the index into Players of whose turn it is, or -1
+	// while the game is still in its lobby.
+	CurrentPlayer int `json:"current_player"`
+	// PendingReinforcements is the number of reinforcement armies the
+	// current player still has to place before acting further.
+	PendingReinforcements int `json:"pending_reinforcements"`
+	// SetsTraded is the running count of Risk card sets traded in so far,
+	// which determines the army value of the next set traded.
+	SetsTraded int `json:"sets_traded"`
+	// Occupy describes the pending post-conquest occupy move, if the game
+	// is currently in the occupy phase; nil otherwise.
+	Occupy *GameOccupyRequirement `json:"occupy,omitempty"`
+	// Players lists every player in the game, in seat order.
+	Players []GameBootstrapPlayer `json:"players"`
+	// Territories is the raw JSON-encoded risk.Territories map, or `{}`
+	// while the game is still in its lobby.
+	Territories json.RawMessage `json:"territories"`
+	// Events is the game's event log (up to the most recent 250 entries),
+	// oldest to newest.
+	Events []GameEventEntry `json:"events"`
+	// CreatedAt is when the game row was created.
+	CreatedAt time.Time `json:"created_at"`
+	// UpdatedAt is when the game row was last updated.
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// GameActionInput is the input to GamesService.ApplyGameAction, carrying
+// every field any of the supported action kinds might need; unused fields
+// for a given Action are ignored.
 type GameActionInput struct {
-	GameID       string
+	// GameID identifies the game to act on.
+	GameID string
+	// PlayerUserID is the acting player's user ID (or synthetic bot player
+	// ID). The action is rejected with ErrGameForbidden if this ID does not
+	// belong to a player in the game.
 	PlayerUserID string
-	Action       string
-	Territory    string
-	From         string
-	To           string
-	Armies       int
+	// Action names the action to perform: one of "place_reinforcement",
+	// "attack", "occupy", "end_attack", "fortify", "end_turn",
+	// "trade_cards", or "place_initial_army".
+	Action string
+	// Territory is the target territory for "place_reinforcement" and
+	// "place_initial_army".
+	Territory string
+	// From is the origin territory for "attack" and "fortify".
+	From string
+	// To is the destination territory for "attack" and "fortify".
+	To string
+	// Armies is the army count for "place_reinforcement", "occupy", and
+	// "fortify".
+	Armies int
+	// AttackerDice is the requested number of attacker dice for "attack";
+	// it is clamped to the legal range given the attacking territory's
+	// army count.
 	AttackerDice int
+	// DefenderDice is currently unused: the defender's dice count is always
+	// computed automatically from the defending territory's army count.
 	DefenderDice int
-	CardIndices  [3]int
+	// CardIndices are the three hand indices to trade in for "trade_cards".
+	CardIndices [3]int
 }
 
+// GameActionPlayer is one player's post-action projection returned as part
+// of GameActionUpdate.
 type GameActionPlayer struct {
-	UserID      string `json:"user_id"`
-	CardCount   int    `json:"card_count"`
-	SetupArmies int    `json:"setup_armies"`
-	Eliminated  bool   `json:"eliminated"`
+	// UserID is the player's user ID or synthetic bot player ID.
+	UserID string `json:"user_id"`
+	// CardCount is the number of Risk cards the player currently holds.
+	CardCount int `json:"card_count"`
+	// SetupArmies is the number of reinforcement armies this player still
+	// has to place during the setup phase.
+	SetupArmies int `json:"setup_armies"`
+	// Eliminated reports whether this player has been eliminated from the
+	// game.
+	Eliminated bool `json:"eliminated"`
 }
 
+// GameActionUpdate is the result of a successfully applied game action,
+// returned by GamesService.ApplyGameAction and broadcast to clients as the
+// game_state_updated payload.
 type GameActionUpdate struct {
-	GameID                string                 `json:"game_id"`
-	Action                string                 `json:"action"`
-	ActorUserID           string                 `json:"actor_user_id"`
-	Phase                 string                 `json:"phase"`
-	Winner                string                 `json:"winner,omitempty"`
-	CurrentPlayer         int                    `json:"current_player"`
-	PendingReinforcements int                    `json:"pending_reinforcements"`
-	SetsTraded            int                    `json:"sets_traded"`
-	Occupy                *GameOccupyRequirement `json:"occupy,omitempty"`
-	Players               []GameActionPlayer     `json:"players"`
-	Territories           json.RawMessage        `json:"territories"`
-	Result                any                    `json:"result,omitempty"`
-	Event                 *GameEventEntry        `json:"event,omitempty"`
-	ActorCards            []risk.Card            `json:"-"`
+	// GameID identifies the game that was acted on.
+	GameID string `json:"game_id"`
+	// Action is the action kind that was applied, echoing
+	// GameActionInput.Action.
+	Action string `json:"action"`
+	// ActorUserID is the user ID of the player who performed the action.
+	ActorUserID string `json:"actor_user_id"`
+	// Phase is the resulting risk.Phase as a string.
+	Phase string `json:"phase"`
+	// Winner is the winning player's user ID, set once the game has
+	// reached PhaseGameOver.
+	Winner string `json:"winner,omitempty"`
+	// CurrentPlayer is the index into Players of whose turn it is next.
+	CurrentPlayer int `json:"current_player"`
+	// PendingReinforcements is the number of reinforcement armies the
+	// current player still has to place before acting further.
+	PendingReinforcements int `json:"pending_reinforcements"`
+	// SetsTraded is the running count of Risk card sets traded in so far,
+	// which determines the army value of the next set traded.
+	SetsTraded int `json:"sets_traded"`
+	// Occupy describes the pending post-conquest occupy move, if the game
+	// is now in the occupy phase; nil otherwise.
+	Occupy *GameOccupyRequirement `json:"occupy,omitempty"`
+	// Players lists every player's post-action projection, in seat order.
+	Players []GameActionPlayer `json:"players"`
+	// Territories is the raw JSON-encoded risk.Territories map after the
+	// action was applied.
+	Territories json.RawMessage `json:"territories"`
+	// Result carries an action-specific payload: a *risk.AttackResult for
+	// "attack", or a map with an "armies" key for "trade_cards"; nil for
+	// actions with no extra result data.
+	Result any `json:"result,omitempty"`
+	// Event is the game event log entry recorded for this action, if any
+	// event store is configured and the action produced a non-empty event
+	// body.
+	Event *GameEventEntry `json:"event,omitempty"`
+	// ActorCards is the acting player's current card hand. It is excluded
+	// from JSON serialization (`json:"-"`) since GameActionService
+	// re-projects it into a wire-specific payload type before sending.
+	ActorCards []risk.Card `json:"-"`
 
 	// ActionTerritory/ActionFrom/ActionTo tell the frontend which
 	// territory (or territory pair) this action touched, so it can
 	// highlight them the same way a human's own click would — this is
 	// the only signal for bot-driven actions, which have no click at all.
 	ActionTerritory string `json:"action_territory,omitempty"`
-	ActionFrom      string `json:"action_from,omitempty"`
-	ActionTo        string `json:"action_to,omitempty"`
+	// ActionFrom is the origin territory this action touched, mirroring
+	// ActionTerritory for actions with a from/to pair (attack, occupy,
+	// fortify).
+	ActionFrom string `json:"action_from,omitempty"`
+	// ActionTo is the destination territory this action touched, mirroring
+	// ActionTerritory for actions with a from/to pair (attack, occupy,
+	// fortify).
+	ActionTo string `json:"action_to,omitempty"`
 }
 
+// GameEventEntry is one human-readable entry in a game's event log (e.g.
+// "Alice placed 3 armies on Alaska."), persisted via gameEventStore and
+// returned in GameBootstrap.Events and GameActionUpdate.Event.
 type GameEventEntry struct {
-	ID          string    `json:"id"`
-	GameID      string    `json:"game_id"`
-	ActorUserID string    `json:"actor_user_id,omitempty"`
-	EventType   string    `json:"event_type"`
-	Body        string    `json:"body"`
-	CreatedAt   time.Time `json:"created_at"`
+	// ID is the event's unique ID.
+	ID string `json:"id"`
+	// GameID identifies the game this event belongs to.
+	GameID string `json:"game_id"`
+	// ActorUserID is the user ID of the player who triggered the event, if
+	// any.
+	ActorUserID string `json:"actor_user_id,omitempty"`
+	// EventType categorizes the event, e.g. "reinforcement_placed",
+	// "attack_resolved", "turn_ended".
+	EventType string `json:"event_type"`
+	// Body is the human-readable event description.
+	Body string `json:"body"`
+	// CreatedAt is when the event was recorded.
+	CreatedAt time.Time `json:"created_at"`
 }
 
+// GameOccupyRequirement describes the pending post-conquest occupy move a
+// player must make after winning a territory in combat, projected from
+// risk.OccupyState.
 type GameOccupyRequirement struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	MinMove int    `json:"min_move"`
-	MaxMove int    `json:"max_move"`
+	// From is the attacking territory the occupying armies must move from.
+	From string `json:"from"`
+	// To is the newly conquered territory the occupying armies must move
+	// to.
+	To string `json:"to"`
+	// MinMove is the minimum number of armies that must be moved (equal to
+	// the number of attacker dice used in the conquering roll).
+	MinMove int `json:"min_move"`
+	// MaxMove is the maximum number of armies that may be moved (limited by
+	// the attacking territory's remaining army count).
+	MaxMove int `json:"max_move"`
 }
 
+// CreateClassicGame creates a new classic-mode game lobby owned by
+// ownerUserID with room for playerCount players (3-6), of which up to
+// botCount may be bot-controlled (the creator always occupies one human
+// slot, so botCount must be between 0 and playerCount-1). setupMode selects
+// how territories are assigned once the lobby fills ("manual" for random
+// territory claims via risk.NewClassicRandomTerritoryGame, anything else
+// for auto-distributed armies via risk.NewClassicAutoStartGame). Bot
+// players are assigned synthetic UUIDs and curated wrestler display names
+// immediately and occupy lobby slots right away — they are never inserted
+// into the users or game_players tables. If bots fill every non-creator
+// slot, the game is started immediately instead of waiting for
+// JoinClassicGame, and SetGameStartedHook's callback (if configured) is
+// invoked. It returns ErrInvalidGameInput for invalid ownerUserID,
+// playerCount, or botCount, and ErrUnknownPlayerIDs if ownerUserID does not
+// correspond to an existing user.
 func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error) {
 	if ownerUserID == "" {
 		return store.Game{}, ErrInvalidGameInput
@@ -417,6 +622,20 @@ func newBotPlayerID() (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
+// JoinClassicGame adds playerID to the lobby of the game identified by
+// gameID, locking the game row for the duration of the transaction. If
+// playerID is already in the lobby, this is a no-op that returns the
+// current game unchanged. If the join fills the lobby to its configured
+// player count, the classic engine is started via startEngineForFullLobby,
+// the game's status transitions to "in_progress", game_players rows are
+// inserted for human players, game-start/player-joined events are recorded
+// (if an event store is configured), a Discord "game started" notification
+// is enqueued (if a Discord outbox is configured and a human is involved),
+// and SetGameStartedHook's callback (if configured) is invoked after the
+// transaction commits. It returns ErrInvalidGameInput for an empty gameID
+// or playerID, ErrGameNotFound if the game does not exist,
+// ErrGameNotJoinable if the game is not in "lobby" status, and
+// ErrGamePlayerCountFull if the lobby has already reached its player count.
 func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error) {
 	if gameID == "" || playerID == "" {
 		return store.Game{}, ErrInvalidGameInput
@@ -539,6 +758,10 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 	return out, err
 }
 
+// GetLeaderboard returns up to limit leaderboard entries ordered by the
+// underlying store's ranking. A limit of 0 or less defaults to 20. If no
+// game-players store has been configured via SetGamePlayersStore, it
+// returns an empty slice rather than an error.
 func (s *GamesService) GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error) {
 	if limit <= 0 {
 		limit = 20
@@ -549,6 +772,8 @@ func (s *GamesService) GetLeaderboard(ctx context.Context, limit int) ([]store.L
 	return s.gamePlayers.GetLeaderboard(ctx, s.db.Queryer(), limit)
 }
 
+// GetGame fetches the game identified by gameID without locking the row.
+// It returns ErrGameNotFound if no such game exists.
 func (s *GamesService) GetGame(ctx context.Context, gameID string) (store.Game, error) {
 	g, err := s.games.GetByID(ctx, s.db.Queryer(), gameID)
 	if err != nil {
@@ -581,10 +806,22 @@ func (s *GamesService) DeleteGame(ctx context.Context, gameID string) error {
 // since only the raw user ID lives in the persisted engine state.
 type GameSummary struct {
 	store.Game
-	Phase             string `json:"phase,omitempty"`
+	// Phase is the current risk.Phase as a string, populated only for
+	// games with status "in_progress" whose state decodes successfully.
+	Phase string `json:"phase,omitempty"`
+	// CurrentPlayerName is the display name of whoever's turn it currently
+	// is, resolved server-side (username lookup for humans, assigned name
+	// for bots), populated only for games with status "in_progress".
 	CurrentPlayerName string `json:"current_player_name,omitempty"`
 }
 
+// ListGames returns a page of GameSummary projections matching the given
+// filters (ownerUserID and status may be empty to mean "any"), ordered and
+// paginated by the underlying store using limit and offset. For each
+// in_progress game whose state decodes successfully, it also resolves and
+// attaches the current player's phase and display name via batched
+// username lookups. It returns ErrInvalidGameInput if limit or offset is
+// negative.
 func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]GameSummary, error) {
 	if limit < 0 || offset < 0 {
 		return nil, ErrInvalidGameInput
@@ -646,6 +883,10 @@ func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string
 	return out, nil
 }
 
+// UpdateGameState overwrites the given game's status and persisted JSONB
+// state directly, without going through a risk-engine action. It returns
+// ErrInvalidGameInput if gameID, status, or state is empty, and
+// ErrGameNotFound if the game does not exist.
 func (s *GamesService) UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error) {
 	if gameID == "" || status == "" || len(state) == 0 {
 		return store.Game{}, ErrInvalidGameInput
@@ -664,6 +905,24 @@ func (s *GamesService) UpdateGameState(ctx context.Context, gameID, status strin
 	return g, nil
 }
 
+// ApplyGameAction is the authoritative entry point for every in-game move.
+// It locks the game row for update inside a transaction, decodes the
+// persisted risk.Game state, verifies in.PlayerUserID is a player in the
+// game, dispatches on in.Action to the corresponding risk-engine method
+// (place_reinforcement, attack, occupy, end_attack, fortify, end_turn,
+// trade_cards, or place_initial_army), re-encodes and persists the updated
+// state (transitioning the game's status to "completed" if the engine
+// reached PhaseGameOver), records a human-readable game event and any
+// risk.DomainEvent the action produced (if the corresponding stores are
+// configured), and enqueues Discord notifications for player elimination,
+// game over, cards traded, and turn started (if a Discord outbox is
+// configured and a human is involved). It returns ErrInvalidGameInput if
+// GameID, PlayerUserID, or Action is empty or the persisted state cannot be
+// decoded, ErrGameNotFound if the game does not exist, ErrGameNotJoinable
+// if the game is not in_progress, ErrGameForbidden if PlayerUserID is not a
+// player in the game, ErrInvalidGameAction if Action is unrecognized or
+// missing required fields, and a wrapped ErrInvalidGameAction (via
+// mapGameActionErr) if the risk engine rejects the move as illegal.
 func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) (GameActionUpdate, error) {
 	if in.GameID == "" || in.PlayerUserID == "" || in.Action == "" {
 		return GameActionUpdate{}, ErrInvalidGameInput
@@ -983,6 +1242,17 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 	return out, nil
 }
 
+// GetGameBootstrap returns the full initial-load snapshot for gameID, as
+// consumed by the frontend's GET /games/:id/bootstrap on mount. For a
+// lobby-status game it projects the lobby's player list and event log. For
+// an in_progress or completed game it decodes the persisted risk.Game
+// state (transparently migrating any legacy game still stuck in
+// PhaseSetupClaim to an auto-started game first), resolves player display
+// names, includes the requester's own card hand only (never other
+// players'), and includes the event log. It returns ErrInvalidGameInput if
+// gameID or requesterUserID is empty, the game's status is unrecognized,
+// or its persisted state cannot be decoded, and propagates ErrGameNotFound
+// from the underlying GetGame call.
 func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (GameBootstrap, error) {
 	if gameID == "" || requesterUserID == "" {
 		return GameBootstrap{}, ErrInvalidGameInput

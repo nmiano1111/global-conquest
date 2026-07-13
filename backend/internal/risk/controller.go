@@ -6,8 +6,12 @@ package risk
 type ControllerType string
 
 const (
+	// ControllerHuman identifies a player controlled by a human via the
+	// normal WebSocket session flow.
 	ControllerHuman ControllerType = "human"
-	ControllerBot   ControllerType = "bot"
+	// ControllerBot identifies a player controlled by the bot engine (see
+	// internal/bot).
+	ControllerBot ControllerType = "bot"
 )
 
 // IsBot reports whether the player is bot-controlled. Games serialized

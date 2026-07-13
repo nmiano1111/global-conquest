@@ -1,3 +1,9 @@
+// Package game implements the real-time multiplayer hub for Global Conquest.
+// Server is a single-goroutine event loop that owns all connected WebSocket
+// clients, lobby and game chat room membership, and the authoritative
+// dispatch of game actions and the broadcasts they produce. All state
+// mutations, whether triggered by a human client or a bot runner, flow
+// through the hub's inbox channel and are processed serially inside Run.
 package game
 
 import (
@@ -12,6 +18,10 @@ import (
 	"time"
 )
 
+// Server is the single-goroutine hub that owns all WebSocket client state,
+// chat room membership, and game dispatch. Its unexported fields must only
+// be read or written from inside Run(); everything else communicates with
+// it by sending messages on the inbox channel.
 type Server struct {
 	inbox chan any
 
@@ -34,26 +44,43 @@ type Server struct {
 // enqueue/dedupe a background runner start.
 type BotTrigger func(gameID string)
 
+// Client represents one connected WebSocket connection registered with the
+// hub.
 type Client struct {
-	ID       string
-	UserID   string
-	Name     string
+	// ID is the hub-assigned identifier for this connection.
+	ID string
+	// UserID is the authenticated user's ID, or "" for an anonymous client.
+	UserID string
+	// Name is the display name associated with this client.
+	Name string
+	// ChatRoom is the game ID of the chat room this client has joined, or ""
+	// if it has not joined one.
 	ChatRoom string
 
 	Conn Outbound // interface so game package doesn't depend on wsconn directly
 	Game string   // current game id, "" if none
 }
 
+// Outbound abstracts sending a message to a connected client so the game
+// package does not need to depend on the wsconn package directly.
 type Outbound interface {
 	Send(env wsmsg.Envelope) bool
 }
 
+// Game is the hub's in-memory record of a lobby/game and its connected
+// players.
 type Game struct {
-	ID         string
-	OwnerID    string
+	// ID is the game's unique identifier.
+	ID string
+	// OwnerID is the client ID of the player who created the game.
+	OwnerID string
+	// MaxPlayers is the maximum number of players allowed to join.
 	MaxPlayers int
-	Players    map[string]*Client
-	CreatedAt  time.Time
+	// Players maps client ID to the connected Client for each player in the
+	// game.
+	Players map[string]*Client
+	// CreatedAt is when the game was created.
+	CreatedAt time.Time
 }
 
 type typingPresence struct {
@@ -61,86 +88,179 @@ type typingPresence struct {
 	LastSeen time.Time
 }
 
+// GameChatLogMessage is a persisted chat message belonging to a game's chat
+// room.
 type GameChatLogMessage struct {
-	GameID    string
-	UserName  string
-	Body      string
+	// GameID identifies the game chat room the message belongs to.
+	GameID string
+	// UserName is the display name of the message's sender.
+	UserName string
+	// Body is the message text.
+	Body string
+	// CreatedAt is when the message was saved.
 	CreatedAt time.Time
 }
 
+// GameChatLogStore persists and retrieves per-game chat history.
 type GameChatLogStore interface {
 	SaveGameMessage(ctx context.Context, gameID, senderClientID, senderName, body string) (GameChatLogMessage, error)
 	ListGameMessages(ctx context.Context, gameID string, limit int) ([]GameChatLogMessage, error)
 }
 
+// GameActionInput describes a single game action to apply, whether it
+// originates from a human WebSocket client or a bot runner.
 type GameActionInput struct {
-	GameID       string
+	// GameID identifies the game the action applies to.
+	GameID string
+	// PlayerUserID is the acting player's user ID.
 	PlayerUserID string
-	Action       string
-	Territory    string
-	From         string
-	To           string
-	Armies       int
+	// Action names the action to perform (e.g. "attack", "fortify").
+	Action string
+	// Territory is the single territory targeted by the action, when
+	// applicable.
+	Territory string
+	// From is the source territory for actions that move armies.
+	From string
+	// To is the destination territory for actions that move armies.
+	To string
+	// Armies is the number of armies involved in the action.
+	Armies int
+	// AttackerDice is the number of dice the attacker rolls.
 	AttackerDice int
+	// DefenderDice is the number of dice the defender rolls.
 	DefenderDice int
-	CardIndices  [3]int
+	// CardIndices identifies the up-to-three cards selected from the
+	// player's hand, for card-trading actions.
+	CardIndices [3]int
 }
 
+// GameActionPlayer is the per-player state included in a GameActionUpdate.
 type GameActionPlayer struct {
-	UserID      string
-	CardCount   int
+	// UserID identifies the player.
+	UserID string
+	// CardCount is the number of cards currently in the player's hand.
+	CardCount int
+	// SetupArmies is the number of armies the player has left to place
+	// during setup.
 	SetupArmies int
-	Eliminated  bool
+	// Eliminated is true if the player has been eliminated from the game.
+	Eliminated bool
 }
 
+// GameActionUpdate is the resulting state and outcome of a successfully
+// applied game action, as returned by GameActionService and broadcast to
+// the game's chat room.
 type GameActionUpdate struct {
-	GameID                string
-	Action                string
-	ActorUserID           string
-	Phase                 string
-	CurrentPlayer         int
+	// GameID identifies the game that was updated.
+	GameID string
+	// Action names the action that was applied.
+	Action string
+	// ActorUserID is the user ID of the player who performed the action.
+	ActorUserID string
+	// Phase is the game's phase after the action was applied.
+	Phase string
+	// CurrentPlayer is the index of the player whose turn it is after the
+	// action was applied.
+	CurrentPlayer int
+	// PendingReinforcements is the number of reinforcement armies the
+	// current player still has to place.
 	PendingReinforcements int
-	SetsTraded            int
-	Occupy                *GameOccupyRequirement
-	Players               []GameActionPlayer
-	Territories           json.RawMessage
-	Result                any
-	Event                 *GameEventMessage
-	ActorCards            []wsmsg.CardPayload
+	// SetsTraded is the running count of card sets traded in for armies.
+	SetsTraded int
+	// Occupy describes the pending post-conquest occupy move, or nil if the
+	// game is not awaiting one.
+	Occupy *GameOccupyRequirement
+	// Players is the updated per-player state for all players in the game.
+	Players []GameActionPlayer
+	// Territories is the updated territory state, serialized as raw JSON.
+	Territories json.RawMessage
+	// Result carries action-specific outcome data (e.g. combat results).
+	Result any
+	// Event is the game event record generated by this action, or nil if
+	// none was generated.
+	Event *GameEventMessage
+	// ActorCards is the acting player's current hand, sent privately back
+	// to the actor.
+	ActorCards []wsmsg.CardPayload
 
+	// ActionTerritory is the territory the action targeted, echoed back for
+	// client display.
 	ActionTerritory string
-	ActionFrom      string
-	ActionTo        string
+	// ActionFrom is the source territory the action used, echoed back for
+	// client display.
+	ActionFrom string
+	// ActionTo is the destination territory the action used, echoed back
+	// for client display.
+	ActionTo string
 }
 
+// GameOccupyRequirement describes the post-conquest occupy move a player
+// must make, including the legal range of armies that can be moved.
 type GameOccupyRequirement struct {
-	From    string
-	To      string
+	// From is the attacking territory armies are moved out of.
+	From string
+	// To is the newly conquered territory armies are moved into.
+	To string
+	// MinMove is the minimum number of armies that must be moved.
 	MinMove int
+	// MaxMove is the maximum number of armies that may be moved.
 	MaxMove int
 }
 
+// GameEventMessage is a persisted, narratable event generated by a game
+// action (e.g. a conquest or elimination).
 type GameEventMessage struct {
-	ID          string
-	GameID      string
+	// ID is the event's unique identifier.
+	ID string
+	// GameID identifies the game the event belongs to.
+	GameID string
+	// ActorUserID is the user ID of the player whose action produced the
+	// event.
 	ActorUserID string
-	EventType   string
-	Body        string
-	CreatedAt   time.Time
+	// EventType names the kind of event.
+	EventType string
+	// Body is the human-readable event text.
+	Body string
+	// CreatedAt is when the event was recorded.
+	CreatedAt time.Time
 }
 
+// GameActionService applies a game action against authoritative game state
+// and returns the resulting update. Implementations own all game-rule
+// enforcement; the hub only dispatches to it and broadcasts the result.
 type GameActionService interface {
 	ApplyGameAction(ctx context.Context, in GameActionInput) (GameActionUpdate, error)
 }
 
 // --- inbox messages ---
-type Register struct{ C *Client }
-type Unregister struct{ ClientID string }
-type Incoming struct {
-	ClientID string
-	Env      wsmsg.Envelope
+
+// Register is an inbox message that registers a newly connected Client with
+// the hub.
+type Register struct {
+	// C is the newly connected client to register.
+	C *Client
 }
+
+// Unregister is an inbox message that removes a disconnected client from
+// the hub, cleaning up its game, chat room, and typing state.
+type Unregister struct {
+	// ClientID identifies the client to remove.
+	ClientID string
+}
+
+// Incoming is an inbox message carrying a decoded envelope received from a
+// connected client.
+type Incoming struct {
+	// ClientID identifies the client the message was received from.
+	ClientID string
+	// Env is the received message envelope.
+	Env wsmsg.Envelope
+}
+
+// PublishLobbyChat is an inbox message that broadcasts a lobby chat message
+// to every connected client.
 type PublishLobbyChat struct {
+	// Message is the raw lobby chat payload to broadcast.
 	Message map[string]any
 }
 
@@ -148,15 +268,25 @@ type PublishLobbyChat struct {
 // without a connected websocket client (used by bot runners). Result must
 // be buffered (capacity >= 1) so Run() never blocks sending the reply.
 type GameActionRequest struct {
-	Input  GameActionInput
+	// Input is the game action to apply.
+	Input GameActionInput
+	// Result receives the outcome of applying Input. It must be buffered
+	// with capacity >= 1 so Run() never blocks sending the reply.
 	Result chan<- GameActionResult
 }
 
+// GameActionResult is the outcome of applying a GameActionRequest, sent
+// back to the requester.
 type GameActionResult struct {
+	// Update is the resulting game state update, valid only if Err is nil.
 	Update GameActionUpdate
-	Err    error
+	// Err is the error encountered applying the action, if any.
+	Err error
 }
 
+// NewServer creates a Server with its internal state initialized. The
+// returned Server must have Run started (typically in its own goroutine)
+// before it can process inbox messages.
 func NewServer() *Server {
 	return &Server{
 		inbox:     make(chan any, 256),
@@ -167,16 +297,26 @@ func NewServer() *Server {
 	}
 }
 
+// Inbox returns the send-only channel used to deliver messages to the hub.
+// It is safe to call and send on from any goroutine.
 func (s *Server) Inbox() chan<- any { return s.inbox }
 
+// SetGameChatLogStore configures the store used to persist and load game
+// chat history. It must be called before Run starts processing messages
+// that depend on chat history.
 func (s *Server) SetGameChatLogStore(chatLog GameChatLogStore) {
 	s.chatLog = chatLog
 }
 
+// SetGameActionService configures the service used to apply game actions.
+// It must be called before Run starts processing game actions.
 func (s *Server) SetGameActionService(actions GameActionService) {
 	s.actions = actions
 }
 
+// SetBotTrigger configures the callback invoked after every committed game
+// action, allowing a bot manager to check whether the next player needs a
+// bot runner started.
 func (s *Server) SetBotTrigger(trigger BotTrigger) {
 	s.botTrigger = trigger
 }
@@ -200,6 +340,9 @@ func (s *Server) SubmitGameAction(ctx context.Context, in GameActionInput) (Game
 	}
 }
 
+// Run processes inbox messages one at a time until the inbox channel is
+// closed. It is the only place s.clients and s.chatRooms are read or
+// written, and must be run from a single, dedicated goroutine.
 func (s *Server) Run() {
 	for msg := range s.inbox {
 		switch m := msg.(type) {

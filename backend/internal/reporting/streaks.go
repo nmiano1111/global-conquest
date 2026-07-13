@@ -10,8 +10,11 @@ import (
 type RollResult int
 
 const (
+	// RollAttackerWin indicates the attacker inflicted more losses on the defender than it took itself.
 	RollAttackerWin RollResult = iota
+	// RollAttackerLoss indicates the attacker took more losses than it inflicted on the defender.
 	RollAttackerLoss
+	// RollSplit indicates the attacker and defender took an equal number of losses.
 	RollSplit
 )
 
@@ -19,17 +22,23 @@ const (
 type StreakType string
 
 const (
+	// StreakAttackingLoss identifies a run of consecutive rolls in which the attacker lost more armies than it inflicted.
 	StreakAttackingLoss StreakType = "attacking_loss"
-	StreakAttackingWin  StreakType = "attacking_win"
+	// StreakAttackingWin identifies a run of consecutive rolls in which the attacker inflicted more losses than it took.
+	StreakAttackingWin StreakType = "attacking_win"
+	// StreakAttackDrought identifies a run of consecutive rolls in which the attacker failed to win outright (losses or splits).
 	StreakAttackDrought StreakType = "attack_drought"
 )
 
 // StreakThresholds configures the minimum length required for a run of rolls
 // to be reported as a streak of each type.
 type StreakThresholds struct {
+	// MinLossStreakLength is the minimum number of consecutive attacker-loss rolls required to report a loss streak.
 	MinLossStreakLength int
-	MinWinStreakLength  int
-	MinDroughtLength    int
+	// MinWinStreakLength is the minimum number of consecutive attacker-win rolls required to report a win streak.
+	MinWinStreakLength int
+	// MinDroughtLength is the minimum number of consecutive non-win rolls required to report an attack drought.
+	MinDroughtLength int
 }
 
 // DefaultStreakThresholds returns the report's default thresholds:
@@ -66,89 +75,148 @@ func matchesStreakType(result RollResult, t StreakType) bool {
 
 // StreakRoll is a single roll's display-relevant detail within a Streak.
 type StreakRoll struct {
-	GameSequence        int64  `json:"event_seq"`
-	OccurredAt          string `json:"created_at"`
-	DefenderPlayerID    string `json:"defender_id"`
+	// GameSequence is the game-relative sequence number of the roll.
+	GameSequence int64 `json:"event_seq"`
+	// OccurredAt is the RFC3339 timestamp at which the roll was resolved.
+	OccurredAt string `json:"created_at"`
+	// DefenderPlayerID is the ID of the defending player.
+	DefenderPlayerID string `json:"defender_id"`
+	// DefenderDisplayName is the defending player's display name.
 	DefenderDisplayName string `json:"defender_name"`
+	// AttackerTerritoryID is the ID of the territory the attack was launched from.
 	AttackerTerritoryID string `json:"attacker_territory"`
+	// DefenderTerritoryID is the ID of the territory being attacked.
 	DefenderTerritoryID string `json:"defender_territory"`
-	AttackerDice        []int  `json:"attack_dice"`
-	DefenderDice        []int  `json:"defend_dice"`
-	AttackerLosses      int    `json:"attacker_losses"`
-	DefenderLosses      int    `json:"defender_losses"`
-	Captured            bool   `json:"captured"`
+	// AttackerDice holds the face values rolled by the attacker.
+	AttackerDice []int `json:"attack_dice"`
+	// DefenderDice holds the face values rolled by the defender.
+	DefenderDice []int `json:"defend_dice"`
+	// AttackerLosses is the number of armies the attacker lost in this roll.
+	AttackerLosses int `json:"attacker_losses"`
+	// DefenderLosses is the number of armies the defender lost in this roll.
+	DefenderLosses int `json:"defender_losses"`
+	// Captured reports whether this roll resulted in the target territory being captured.
+	Captured bool `json:"captured"`
 }
 
 // Streak is one qualifying run of consecutive matching rolls by a single
 // attacker within a single game.
 type Streak struct {
-	ID           string     `json:"streak_id"`
-	GameID       string     `json:"game_id"`
-	GameName     string     `json:"game_name"`
-	AttackerID   string     `json:"attacker_id"`
-	AttackerName string     `json:"attacker_name"`
-	Type         StreakType `json:"streak_type"`
-	Length       int        `json:"streak_length"`
-	StartSeq     int64      `json:"start_event_seq"`
-	EndSeq       int64      `json:"end_event_seq"`
-	StartTime    string     `json:"start_time"`
-	EndTime      string     `json:"end_time"`
+	// ID uniquely identifies this streak, derived from the game, attacker, type, and sequence range.
+	ID string `json:"streak_id"`
+	// GameID identifies the game this streak occurred in.
+	GameID string `json:"game_id"`
+	// GameName is the display name of the game this streak occurred in.
+	GameName string `json:"game_name"`
+	// AttackerID is the ID of the player who accumulated this streak.
+	AttackerID string `json:"attacker_id"`
+	// AttackerName is the display name of the player who accumulated this streak.
+	AttackerName string `json:"attacker_name"`
+	// Type identifies which streak definition this run satisfies.
+	Type StreakType `json:"streak_type"`
+	// Length is the number of consecutive matching rolls in this streak.
+	Length int `json:"streak_length"`
+	// StartSeq is the game sequence number of the streak's first roll.
+	StartSeq int64 `json:"start_event_seq"`
+	// EndSeq is the game sequence number of the streak's last roll.
+	EndSeq int64 `json:"end_event_seq"`
+	// StartTime is the RFC3339 timestamp of the streak's first roll.
+	StartTime string `json:"start_time"`
+	// EndTime is the RFC3339 timestamp of the streak's last roll.
+	EndTime string `json:"end_time"`
 
-	DefendersInvolved   []string `json:"defenders_involved"`
+	// DefendersInvolved lists the display names of every distinct defender faced during the streak, in first-seen order.
+	DefendersInvolved []string `json:"defenders_involved"`
+	// AttackerTerritories lists the distinct source territory IDs the attacker attacked from during the streak, in first-seen order.
 	AttackerTerritories []string `json:"attacker_territories"`
+	// DefenderTerritories lists the distinct target territory IDs attacked during the streak, in first-seen order.
 	DefenderTerritories []string `json:"defender_territories"`
 
-	AttackerArmiesLost      int `json:"attacker_armies_lost"`
-	DefenderArmiesLost      int `json:"defender_armies_lost"`
+	// AttackerArmiesLost is the total number of armies the attacker lost across all rolls in the streak.
+	AttackerArmiesLost int `json:"attacker_armies_lost"`
+	// DefenderArmiesLost is the total number of armies defenders lost across all rolls in the streak.
+	DefenderArmiesLost int `json:"defender_armies_lost"`
+	// NetArmyDeltaForAttacker is DefenderArmiesLost minus AttackerArmiesLost for the streak.
 	NetArmyDeltaForAttacker int `json:"net_army_delta_for_attacker"`
-	CapturesDuringStreak    int `json:"captures_during_streak"`
+	// CapturesDuringStreak is the number of territory captures that occurred during the streak.
+	CapturesDuringStreak int `json:"captures_during_streak"`
 
-	RollTrace string       `json:"roll_trace"`
-	Rolls     []StreakRoll `json:"rolls"`
+	// RollTrace is a human-readable, comma-separated "attackerLosses-defenderLosses" summary of each roll in the streak.
+	RollTrace string `json:"roll_trace"`
+	// Rolls holds the display detail for each individual roll in the streak, in chronological order.
+	Rolls []StreakRoll `json:"rolls"`
 }
 
 // PlayerStreakSummary aggregates one attacker's roll and streak statistics
 // for a single game.
 type PlayerStreakSummary struct {
-	PlayerID            string `json:"player_id"`
-	PlayerName          string `json:"player_name"`
-	GameID              string `json:"game_id"`
-	GameName            string `json:"game_name"`
-	AttackRollsCaptured int    `json:"attack_rolls_captured"`
+	// PlayerID is the ID of the attacking player this summary covers.
+	PlayerID string `json:"player_id"`
+	// PlayerName is the attacking player's display name.
+	PlayerName string `json:"player_name"`
+	// GameID identifies the game this summary covers.
+	GameID string `json:"game_id"`
+	// GameName is the display name of the game this summary covers.
+	GameName string `json:"game_name"`
+	// AttackRollsCaptured is the total number of combat rolls this player initiated as attacker.
+	AttackRollsCaptured int `json:"attack_rolls_captured"`
 
-	AttackerWinCount  int `json:"attacker_win_count"`
+	// AttackerWinCount is the number of rolls this player won outright as attacker.
+	AttackerWinCount int `json:"attacker_win_count"`
+	// AttackerLossCount is the number of rolls this player lost outright as attacker.
 	AttackerLossCount int `json:"attacker_loss_count"`
-	SplitCount        int `json:"split_count"`
+	// SplitCount is the number of rolls that ended in an even split of losses.
+	SplitCount int `json:"split_count"`
 
-	LossStreakCount2Plus int    `json:"loss_streak_count_2_plus"`
-	LongestLossStreak    int    `json:"longest_loss_streak"`
-	LongestLossStreakID  string `json:"longest_loss_streak_id"`
+	// LossStreakCount2Plus is the number of qualifying attacker-loss streaks (length >= the configured MinLossStreakLength) this player accumulated.
+	LossStreakCount2Plus int `json:"loss_streak_count_2_plus"`
+	// LongestLossStreak is the length of this player's longest qualifying loss streak.
+	LongestLossStreak int `json:"longest_loss_streak"`
+	// LongestLossStreakID is the Streak.ID of this player's longest loss streak.
+	LongestLossStreakID string `json:"longest_loss_streak_id"`
 
-	WinStreakCount2Plus int    `json:"win_streak_count_2_plus"`
-	LongestWinStreak    int    `json:"longest_win_streak"`
-	LongestWinStreakID  string `json:"longest_win_streak_id"`
+	// WinStreakCount2Plus is the number of qualifying attacker-win streaks (length >= the configured MinWinStreakLength) this player accumulated.
+	WinStreakCount2Plus int `json:"win_streak_count_2_plus"`
+	// LongestWinStreak is the length of this player's longest qualifying win streak.
+	LongestWinStreak int `json:"longest_win_streak"`
+	// LongestWinStreakID is the Streak.ID of this player's longest win streak.
+	LongestWinStreakID string `json:"longest_win_streak_id"`
 
-	AttackDroughtCount3Plus int    `json:"attack_drought_count_3_plus"`
-	LongestAttackDrought    int    `json:"longest_attack_drought"`
-	LongestAttackDroughtID  string `json:"longest_attack_drought_id"`
+	// AttackDroughtCount3Plus is the number of qualifying attack droughts (length >= the configured MinDroughtLength) this player accumulated.
+	AttackDroughtCount3Plus int `json:"attack_drought_count_3_plus"`
+	// LongestAttackDrought is the length of this player's longest qualifying attack drought.
+	LongestAttackDrought int `json:"longest_attack_drought"`
+	// LongestAttackDroughtID is the Streak.ID of this player's longest attack drought.
+	LongestAttackDroughtID string `json:"longest_attack_drought_id"`
 
+	// LossStreaksPer20Attacks is LossStreakCount2Plus normalized to a rate per 20 attack rolls.
 	LossStreaksPer20Attacks float64 `json:"loss_streaks_per_20_attacks"`
-	WinStreaksPer20Attacks  float64 `json:"win_streaks_per_20_attacks"`
-	DroughtsPer20Attacks    float64 `json:"droughts_per_20_attacks"`
+	// WinStreaksPer20Attacks is WinStreakCount2Plus normalized to a rate per 20 attack rolls.
+	WinStreaksPer20Attacks float64 `json:"win_streaks_per_20_attacks"`
+	// DroughtsPer20Attacks is AttackDroughtCount3Plus normalized to a rate per 20 attack rolls.
+	DroughtsPer20Attacks float64 `json:"droughts_per_20_attacks"`
 }
 
 // RollStreakReport is the full output of streak detection for one game.
 type RollStreakReport struct {
-	GameID         string   `json:"game_id"`
-	GameName       string   `json:"game_name"`
-	PartialHistory bool     `json:"partial_history"`
-	Warnings       []string `json:"warnings"`
+	// GameID identifies the game this report covers.
+	GameID string `json:"game_id"`
+	// GameName is the display name of the game this report covers.
+	GameName string `json:"game_name"`
+	// PartialHistory reports whether the game's combat event log begins after the game itself started, meaning streaks may be incomplete.
+	PartialHistory bool `json:"partial_history"`
+	// Warnings lists data-quality issues detected while building the report.
+	Warnings []string `json:"warnings"`
 
+	// SummaryByAttacker holds one aggregated summary per attacking player, sorted by notability.
 	SummaryByAttacker []PlayerStreakSummary `json:"summary_by_attacker"`
 
+	// AttackingLossStreaks holds every qualifying attacker-loss streak across all players, sorted by length descending.
 	AttackingLossStreaks []Streak `json:"-"`
-	AttackingWinStreaks  []Streak `json:"-"`
-	AttackDroughts       []Streak `json:"-"`
+	// AttackingWinStreaks holds every qualifying attacker-win streak across all players, sorted by length descending.
+	AttackingWinStreaks []Streak `json:"-"`
+	// AttackDroughts holds every qualifying attack-drought streak across all players, sorted by length descending.
+	AttackDroughts []Streak `json:"-"`
 }
 
 // rollTimeFormat is used for StreakRoll/Streak time fields (RFC3339, UTC).

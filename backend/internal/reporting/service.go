@@ -1,3 +1,5 @@
+// Package reporting computes post-game and cross-game combat statistics and
+// streaks from decoded domain events, surfaced via a Discord bot and a CLI.
 package reporting
 
 import (

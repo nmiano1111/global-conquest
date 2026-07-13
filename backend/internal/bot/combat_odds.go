@@ -7,8 +7,14 @@ import "sort"
 // toward 1) or the attacker is reduced to a single army and must stop
 // (WinProbability trends toward 0).
 type CombatForecast struct {
-	WinProbability         float64
+	// WinProbability is the probability the attacker eliminates the
+	// defender's armies before being reduced to a single army itself.
+	WinProbability float64
+	// ExpectedAttackerLosses is the expected number of attacker armies lost
+	// fighting to a conclusion.
 	ExpectedAttackerLosses float64
+	// ExpectedDefenderLosses is the expected number of defender armies lost
+	// fighting to a conclusion.
 	ExpectedDefenderLosses float64
 }
 

@@ -31,14 +31,18 @@ type boundOutboxStore struct {
 	d *db.DB
 }
 
+// ClaimPendingBatch claims up to limit pending outbox rows for delivery.
 func (b *boundOutboxStore) ClaimPendingBatch(ctx context.Context, limit int) ([]store.DiscordOutboxEntry, error) {
 	return b.s.ClaimPending(ctx, b.d, limit)
 }
 
+// MarkDelivered marks the outbox row with the given id as successfully delivered.
 func (b *boundOutboxStore) MarkDelivered(ctx context.Context, id string) error {
 	return b.s.MarkDelivered(ctx, b.d.Queryer(), id)
 }
 
+// MarkFailed records a failed delivery attempt for the outbox row with the
+// given id, storing the attempt count and error message for diagnostics.
 func (b *boundOutboxStore) MarkFailed(ctx context.Context, id string, attempt int, errMsg string) error {
 	return b.s.MarkFailed(ctx, b.d.Queryer(), id, attempt, errMsg)
 }
@@ -58,6 +62,9 @@ type Worker struct {
 	stopped         chan struct{}
 }
 
+// NewWorker constructs a Worker that claims pending rows from store and
+// delivers them via sender to channelID, resolving game links against
+// frontendBaseURL.
 func NewWorker(store outboxClaimer, sender MessageSender, channelID, frontendBaseURL string) *Worker {
 	return &Worker{
 		store:           store,
@@ -68,11 +75,14 @@ func NewWorker(store outboxClaimer, sender MessageSender, channelID, frontendBas
 	}
 }
 
+// Start begins polling and delivering outbox entries in a background
+// goroutine, derived from ctx. Call Stop to shut it down.
 func (w *Worker) Start(ctx context.Context) {
 	ctx, w.cancel = context.WithCancel(ctx)
 	go w.run(ctx)
 }
 
+// Stop cancels the worker's context and blocks until its run loop has exited.
 func (w *Worker) Stop() {
 	if w.cancel != nil {
 		w.cancel()

@@ -11,15 +11,19 @@ import (
 // score. Naming every contribution (rather than folding straight into a
 // single float) is what makes a decision explainable after the fact.
 type Feature struct {
-	Name  string
+	// Name identifies the contribution (e.g. "army_advantage").
+	Name string
+	// Value is the weighted contribution to the candidate's total score.
 	Value float64
 }
 
 // ScoredCommand pairs a legal command with the score it received, used to
 // record runner-up candidates in an Explanation.
 type ScoredCommand struct {
+	// Command is the candidate command that was scored.
 	Command Command
-	Score   float64
+	// Score is the total score the command received.
+	Score float64
 }
 
 // Explanation records why a strategy chose the command it did: the winning
@@ -27,8 +31,11 @@ type ScoredCommand struct {
 // candidates. A strategy with no scoring model (basic-v1) returns a
 // zero-value Explanation — Score 0, no Features, no Alternatives.
 type Explanation struct {
-	Score        float64
-	Features     []Feature
+	// Score is the winning command's total score.
+	Score float64
+	// Features breaks the winning score down into its named contributions.
+	Features []Feature
+	// Alternatives lists the top runner-up candidates that were not chosen.
 	Alternatives []ScoredCommand
 }
 

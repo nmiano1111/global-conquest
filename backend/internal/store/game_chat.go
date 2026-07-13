@@ -6,19 +6,29 @@ import (
 	"time"
 )
 
+// GameChatMessage is a single in-game chat message persisted for a game.
 type GameChatMessage struct {
-	ID             string
-	GameID         string
+	// ID is the message's unique identifier.
+	ID string
+	// GameID is the identifier of the game the message was posted in.
+	GameID string
+	// SenderClientID is the WebSocket client identifier of the sender.
 	SenderClientID string
-	SenderName     string
-	Body           string
-	CreatedAt      time.Time
+	// SenderName is the display name of the sender at the time the message was sent.
+	SenderName string
+	// Body is the message text.
+	Body string
+	// CreatedAt is when the message was persisted.
+	CreatedAt time.Time
 }
 
+// PostgresGameChatStore is a Postgres-backed store for in-game chat messages.
 type PostgresGameChatStore struct{}
 
+// NewPostgresGameChatStore constructs a PostgresGameChatStore.
 func NewPostgresGameChatStore() *PostgresGameChatStore { return &PostgresGameChatStore{} }
 
+// SaveGameMessage inserts a new game chat message and returns the persisted row, including its generated ID and creation timestamp.
 func (s *PostgresGameChatStore) SaveGameMessage(ctx context.Context, q db.Querier, gameID, senderClientID, senderName, body string) (GameChatMessage, error) {
 	const stmt = `
 		INSERT INTO game_chat_messages (game_id, sender_client_id, sender_name, body)
@@ -37,6 +47,7 @@ func (s *PostgresGameChatStore) SaveGameMessage(ctx context.Context, q db.Querie
 	return out, err
 }
 
+// ListGameMessages returns up to limit chat messages for the given game in chronological order (oldest first). The underlying query fetches the most recent messages first and this method reverses them before returning.
 func (s *PostgresGameChatStore) ListGameMessages(ctx context.Context, q db.Querier, gameID string, limit int) ([]GameChatMessage, error) {
 	const stmt = `
 		SELECT id::text, game_id::text, sender_client_id, sender_name, body, created_at

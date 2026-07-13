@@ -15,6 +15,8 @@ type Sleeper interface {
 // canceled.
 type RealSleeper struct{}
 
+// Sleep blocks for duration d, or returns ctx.Err() early if ctx is
+// canceled first. A non-positive d returns immediately with a nil error.
 func (RealSleeper) Sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		return nil
