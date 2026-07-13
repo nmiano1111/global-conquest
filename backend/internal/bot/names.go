@@ -12,7 +12,7 @@ import (
 // to bot players. Every entry must be unique.
 var WrestlerNames = []string{
 	"Hulk Hogan",
-	"Randy Savage",
+	"Macho Man Randy Savage",
 	"Bret Hart",
 	"Shawn Michaels",
 	"Ric Flair",
@@ -21,7 +21,7 @@ var WrestlerNames = []string{
 	"Lex Luger",
 	"Ultimate Warrior",
 	"Roddy Piper",
-	"Jake Roberts",
+	"Jake the Snake Roberts",
 	"Ted DiBiase",
 	"Mr. Perfect",
 	"Dusty Rhodes",
