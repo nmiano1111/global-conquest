@@ -25,6 +25,25 @@ function pluralize(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+type FilterTab = "all" | "open" | "in_progress" | "mine";
+
+const FILTER_TABS: { value: FilterTab; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "mine", label: "Mine" },
+];
+
+function gameFlags(g: GameRecord, currentUserID: string) {
+  const currentPlayers = g.playerIds.length;
+  const maxPlayers = g.playerCount ?? 0;
+  const hasJoined = currentUserID !== "" && g.playerIds.includes(currentUserID);
+  const isLobby = g.status === "lobby";
+  const canJoin = isLobby && maxPlayers > 0 && currentPlayers < maxPlayers && !hasJoined;
+  const isFull = isLobby && maxPlayers > 0 && currentPlayers >= maxPlayers;
+  return { currentPlayers, maxPlayers, hasJoined, isLobby, canJoin, isFull };
+}
+
 function statusBadgeClass(label: string): string {
   if (label === "Open") return "border border-gc-success/40 bg-gc-success/10 text-gc-success";
   if (label === "Joined") return "border border-gc-accent/40 bg-gc-accent/10 text-gc-accent";
@@ -55,6 +74,7 @@ export function LobbyPage() {
   const [chatError, setChatError] = useState("");
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const { on, send, status: wsStatus } = useSocket();
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -293,6 +313,13 @@ export function LobbyPage() {
   const hiddenCompletedCount = games.filter((g) => g.status === "completed").length;
   const gamesSorted = [...games]
     .filter((g) => showCompleted || g.status !== "completed")
+    .filter((g) => {
+      if (filterTab === "all") return true;
+      const { hasJoined, canJoin } = gameFlags(g, currentUserID);
+      if (filterTab === "open") return canJoin;
+      if (filterTab === "in_progress") return g.status === "in_progress";
+      return hasJoined; // "mine"
+    })
     .sort((a, b) => {
       const od = statusOrder(a.status) - statusOrder(b.status);
       if (od !== 0) return od;
@@ -404,6 +431,29 @@ export function LobbyPage() {
             </div>
           </div>
 
+          <div
+            role="tablist"
+            aria-label="Filter games"
+            className="mb-3 inline-flex flex-wrap gap-1 rounded-lg border border-gc-border bg-gc-surface-2 p-1"
+          >
+            {FILTER_TABS.map((tab) => (
+              <button
+                key={tab.value}
+                type="button"
+                role="tab"
+                aria-selected={filterTab === tab.value}
+                onClick={() => setFilterTab(tab.value)}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                  filterTab === tab.value
+                    ? "bg-gc-accent text-white"
+                    : "text-gc-muted hover:text-gc-text"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
           {loading ? (
             <p className="text-sm text-gc-muted">Loading…</p>
           ) : null}
@@ -421,18 +471,18 @@ export function LobbyPage() {
             <p className="py-4 text-center text-sm text-gc-muted">
               {games.length === 0
                 ? "No games yet. Create one above."
-                : "No games to show. All games are completed — check “Show completed” to see them."}
+                : filterTab !== "all"
+                  ? "No games match this filter."
+                  : "No games to show. All games are completed — check “Show completed” to see them."}
             </p>
           ) : null}
 
           <ul className="grid gap-2">
             {gamesSorted.map((g) => {
-              const currentPlayers = g.playerIds.length;
-              const maxPlayers = g.playerCount ?? 0;
-              const hasJoined = currentUserID !== "" && g.playerIds.includes(currentUserID);
-              const isLobby = g.status === "lobby";
-              const canJoin = isLobby && maxPlayers > 0 && currentPlayers < maxPlayers && !hasJoined;
-              const isFull = isLobby && maxPlayers > 0 && currentPlayers >= maxPlayers;
+              const { currentPlayers, maxPlayers, hasJoined, isLobby, canJoin, isFull } = gameFlags(
+                g,
+                currentUserID
+              );
               const statusLabel = canJoin
                 ? "Open"
                 : g.status === "completed"
