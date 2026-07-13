@@ -12,10 +12,10 @@ import (
 // project-docs/bot_player/phase_2_first_playable_bot/heuristic_framework.md:
 // every legal action (including "end this phase") is scored by named,
 // weighted features and the highest score wins, rather than hand-rolled
-// if/else thresholds. Only the attack phase is migrated so far — every
-// other phase falls back to basic-v1's existing logic until reinforce,
-// occupy, and fortify get their own candidate-scoring treatment in later
-// work, per the doc's own recommended incremental order.
+// if/else thresholds. setup_reinforce, reinforce, and attack are migrated
+// so far — occupy and fortify still fall back to basic-v1's existing logic
+// until they get their own candidate-scoring treatment in later work, per
+// the doc's own recommended incremental order.
 const StrategyScoredV1 = "scored-v1"
 
 // ScoredStrategy implements StrategyScoredV1.
@@ -29,10 +29,16 @@ func NewScoredStrategy(w Weights) *ScoredStrategy {
 }
 
 func (s *ScoredStrategy) NextCommand(ctx context.Context, g *risk.Game, playerID string) (Command, Explanation, error) {
-	if g.Phase == risk.PhaseAttack {
+	switch g.Phase {
+	case risk.PhaseSetupReinforce:
+		return s.setupReinforce(g, playerID)
+	case risk.PhaseReinforce:
+		return s.reinforce(g, playerID)
+	case risk.PhaseAttack:
 		return s.attack(g, playerID)
+	default:
+		return s.fallback.NextCommand(ctx, g, playerID)
 	}
-	return s.fallback.NextCommand(ctx, g, playerID)
 }
 
 // attack scores every legal attack plus a synthetic "end_attack" candidate
