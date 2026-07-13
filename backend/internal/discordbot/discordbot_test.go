@@ -266,7 +266,7 @@ func TestRenderTurnStartedOneDiscordNameMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "🎯 **Bob** ended their turn. **Alice** is up. (game `game-1`)" {
+	if msg != "🎯 <@bobsmith> ended their turn. **Alice** is up. (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
@@ -378,7 +378,7 @@ func TestRenderPlayerEliminatedOneDiscordNameMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderMessage: %v", err)
 	}
-	if msg != "⚔️ **Alice** eliminated **Bob**! (game `game-1`)" {
+	if msg != "⚔️ <@alicewonder> eliminated **Bob**! (game `game-1`)" {
 		t.Fatalf("unexpected message: %q", msg)
 	}
 }
