@@ -6,8 +6,7 @@ import (
 	"backend/internal/risk"
 )
 
-// reinforce trades in cards whenever a legal set exists (same placeholder
-// policy as basic-v1 — card-timing strategy is a later doc step), then
+// reinforce decides card timing first (see strategy_scored_cards.go), then
 // scores every legal reinforcement territory and places a capped batch —
 // max(1, pending/3) — at the top scorer rather than dumping the whole pool
 // at once. Since every call re-scores from scratch against the freshly
@@ -17,8 +16,8 @@ import (
 // first stops being the clear top pick — see ReinforceConcentrationPenalty
 // and ReinforceWeakness.
 func (s *ScoredStrategy) reinforce(g *risk.Game, playerID string) (Command, Explanation, error) {
-	if cmd, ok := reinforceCardTurnIn(g, playerID); ok {
-		return cmd, Explanation{}, nil
+	if cmd, expl, ok := s.scoredCardTurnIn(g, playerID); ok {
+		return cmd, expl, nil
 	}
 
 	actions := risk.LegalReinforcements(g, playerID)
@@ -74,28 +73,6 @@ func (s *ScoredStrategy) reinforceFeatures(g *risk.Game, pi int, t risk.Territor
 		{Name: "continent_value", Value: w.ReinforceContinentValue * continentReinforceValue(g, pi, t)},
 		{Name: "concentration_penalty", Value: w.ReinforceConcentrationPenalty * float64(ownArmies)},
 	}
-}
-
-// reinforceCardTurnIn duplicates BasicStrategy's private card-turn-in
-// policy (trade in a legal set whenever one exists, ties broken by
-// ascending card index) rather than exporting/reusing it — the same
-// deliberate choice already made for heuristicCardTurnIn earlier this
-// session. Card-timing strategy is explicitly later doc work; this is just
-// the same placeholder policy every strategy uses today.
-func reinforceCardTurnIn(g *risk.Game, playerID string) (Command, bool) {
-	sets := risk.LegalCardTurnIns(g, playerID)
-	if len(sets) == 0 {
-		return Command{}, false
-	}
-	best := sets[0]
-	for _, s := range sets[1:] {
-		if s.Indices[0] < best.Indices[0] ||
-			(s.Indices[0] == best.Indices[0] && s.Indices[1] < best.Indices[1]) ||
-			(s.Indices[0] == best.Indices[0] && s.Indices[1] == best.Indices[1] && s.Indices[2] < best.Indices[2]) {
-			best = s
-		}
-	}
-	return Command{Action: ActionTradeCards, CardIndices: best.Indices}, true
 }
 
 // adjacentEnemyTerritoryCount counts the distinct territories adjacent to t

@@ -71,27 +71,6 @@ func TestScoredStrategyReinforceCardTurnInMandatory(t *testing.T) {
 	}
 }
 
-func TestScoredStrategyReinforceCardTurnInOptional(t *testing.T) {
-	g, p0 := newTestGame(t)
-	g.Phase = risk.PhaseReinforce
-	g.PendingReinforcements = 3
-	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 3}
-	g.Players[0].Cards = []risk.Card{
-		{Territory: "Alaska", Symbol: risk.Infantry},
-		{Territory: "Peru", Symbol: risk.Cavalry},
-		{Territory: "Egypt", Symbol: risk.Artillery},
-	}
-
-	strat := NewScoredStrategy(DefaultWeights)
-	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
-	if err != nil {
-		t.Fatalf("NextCommand: %v", err)
-	}
-	if cmd.Action != ActionTradeCards {
-		t.Fatalf("expected an optional legal set to be turned in immediately, got %s", cmd.Action)
-	}
-}
-
 // TestScoredStrategyReinforceBatchesRatherThanDumping: with 9 pending
 // reinforcements and a single legal candidate, this call should place
 // max(1, 9/3) = 3, not all 9.
