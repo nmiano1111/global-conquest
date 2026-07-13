@@ -40,7 +40,7 @@ func TestBasicStrategySetupReinforcePrefersThreatenedBorder(t *testing.T) {
 	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 5} // heavily defended neighbor
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestBasicStrategyCardTurnInMandatory(t *testing.T) {
 	}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestBasicStrategyCardTurnInOptional(t *testing.T) {
 	}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestBasicStrategyNoLegalSetPlacesReinforcementInstead(t *testing.T) {
 	} // fewer than 3 cards: no possible set
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestBasicStrategyCardTurnInDeterministicAmongMultipleSets(t *testing.T) {
 	}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestBasicStrategyReinforcePrefersBorderWeakestRelativeToThreat(t *testing.T
 	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 4}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestBasicStrategyAttackThresholdEnforced(t *testing.T) {
 	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 2}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestBasicStrategyAttackPrefersWeakestTargetAndMaxDice(t *testing.T) {
 	g.Territories["Alberta"] = risk.TerritoryState{Owner: 1, Armies: 1}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestBasicStrategyOccupyUsesMinimum(t *testing.T) {
 	g.Occupy = &risk.OccupyState{From: "Alaska", To: "Kamchatka", MinMove: 2, MaxMove: 4}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestBasicStrategyFortifyMovesTowardBorder(t *testing.T) {
 	g.Territories["East Africa"] = risk.TerritoryState{Owner: 0, Armies: 2}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestBasicStrategyNoUsefulFortificationEndsTurn(t *testing.T) {
 	}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestBasicStrategyAlreadyFortifiedEndsTurn(t *testing.T) {
 	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 0, Armies: 1}
 
 	strat := NewBasicStrategy()
-	cmd, err := strat.NextCommand(context.Background(), g, p0)
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
 	if err != nil {
 		t.Fatalf("NextCommand: %v", err)
 	}

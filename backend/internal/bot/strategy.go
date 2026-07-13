@@ -10,9 +10,11 @@ import (
 // must not mutate game, write to Postgres, send WebSocket messages, or call
 // Discord — it only inspects the authoritative state it is given and
 // returns the same kind of command a human would submit. The engine
-// remains solely responsible for legality.
+// remains solely responsible for legality. The returned Explanation records
+// why that command won over its legal alternatives; a strategy with no
+// scoring model (basic-v1) may return a zero-value Explanation.
 type Strategy interface {
-	NextCommand(ctx context.Context, game *risk.Game, playerID string) (Command, error)
+	NextCommand(ctx context.Context, game *risk.Game, playerID string) (Command, Explanation, error)
 }
 
 // StrategyRegistry looks strategies up by their PlayerState.Strategy

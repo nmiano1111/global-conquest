@@ -160,7 +160,7 @@ func TestCreateClassicGameRejectsBotCountAtOrAbovePlayerCount(t *testing.T) {
 
 // --- 7-9: creator stays human; bots get the right controller/strategy ---
 
-func TestCreateClassicGameCreatorRemainsHumanAndBotsUseBasicV1(t *testing.T) {
+func TestCreateClassicGameCreatorRemainsHumanAndBotsUseScoredV1(t *testing.T) {
 	var captured store.NewGame
 	svc := createServiceCapturingGame(t, &captured)
 	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart"))
@@ -188,8 +188,8 @@ func TestCreateClassicGameCreatorRemainsHumanAndBotsUseBasicV1(t *testing.T) {
 		if !p.IsBot() {
 			continue
 		}
-		if p.Strategy != "basic-v1" {
-			t.Fatalf("expected bot strategy basic-v1, got %q", p.Strategy)
+		if p.Strategy != "scored-v1" {
+			t.Fatalf("expected bot strategy scored-v1, got %q", p.Strategy)
 		}
 	}
 }

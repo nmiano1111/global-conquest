@@ -1239,15 +1239,20 @@ func overlayBotNames(names map[string]string, botNames map[string]string) {
 }
 
 // applyBotMetadata marks each player in g whose ID is a key in botNames as
-// bot-controlled, using the one strategy this milestone supports.
-// NewClassicAutoStartGame/NewClassicRandomTerritoryGame build plain
-// PlayerState{ID: id} entries with no notion of which IDs are bots, so this
-// is applied once, right after the engine starts.
+// bot-controlled. NewClassicAutoStartGame/NewClassicRandomTerritoryGame
+// build plain PlayerState{ID: id} entries with no notion of which IDs are
+// bots, so this is applied once, right after the engine starts.
+//
+// New bots default to scored-v1 (the candidate-scoring strategy): only its
+// attack phase is migrated onto real scoring so far, reinforce/occupy/
+// fortify still fall back to basic-v1's logic under the hood — see
+// bot.ScoredStrategy — but attack is the highest-leverage phase and the
+// fallback keeps every game fully legal in the meantime.
 func applyBotMetadata(g *risk.Game, botNames map[string]string) {
 	for i := range g.Players {
 		if name, ok := botNames[g.Players[i].ID]; ok {
 			g.Players[i].Controller = risk.ControllerBot
-			g.Players[i].Strategy = bot.StrategyBasicV1
+			g.Players[i].Strategy = bot.StrategyScoredV1
 			g.Players[i].Name = name
 		}
 	}

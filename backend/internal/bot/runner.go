@@ -142,7 +142,7 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 			return StopStrategyError, errors.New("bot: unknown strategy " + current.Strategy)
 		}
 
-		cmd, err := strat.NextCommand(ctx, g, botPlayerID)
+		cmd, expl, err := strat.NextCommand(ctx, g, botPlayerID)
 		if err != nil {
 			log.Printf("bot: strategy error game_id=%s player_id=%s phase=%s err=%v", gameID, botPlayerID, g.Phase, err)
 			return StopStrategyError, err
@@ -169,7 +169,7 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 			lastAttackTarget = ""
 		}
 		decision := r.pacing.classifyAction(cmd, update, repeatTarget)
-		log.Printf("bot: command committed game_id=%s player_id=%s action=%s phase=%s pace=%s", gameID, botPlayerID, cmd.Action, update.Phase, decision.category)
+		log.Printf("bot: command committed game_id=%s player_id=%s action=%s phase=%s pace=%s %s", gameID, botPlayerID, cmd.Action, update.Phase, decision.category, expl)
 
 		if err := r.pace(ctx, mode, decision.min, decision.max); err != nil {
 			return StopCanceled, nil

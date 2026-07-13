@@ -83,8 +83,8 @@ type fakeStrategy struct {
 	err error
 }
 
-func (f *fakeStrategy) NextCommand(_ context.Context, _ *risk.Game, _ string) (Command, error) {
-	return f.cmd, f.err
+func (f *fakeStrategy) NextCommand(_ context.Context, _ *risk.Game, _ string) (Command, Explanation, error) {
+	return f.cmd, Explanation{}, f.err
 }
 
 func botGame(currentPlayerID string, controller risk.ControllerType) *risk.Game {

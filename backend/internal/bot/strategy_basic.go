@@ -19,7 +19,16 @@ type BasicStrategy struct{}
 
 func NewBasicStrategy() *BasicStrategy { return &BasicStrategy{} }
 
-func (b *BasicStrategy) NextCommand(_ context.Context, g *risk.Game, playerID string) (Command, error) {
+func (b *BasicStrategy) NextCommand(_ context.Context, g *risk.Game, playerID string) (Command, Explanation, error) {
+	cmd, err := b.nextCommand(g, playerID)
+	return cmd, Explanation{}, err
+}
+
+// nextCommand is basic-v1's original rule-based dispatch, unchanged from
+// before Explanation existed: it has no scoring model to report, so
+// NextCommand wraps this in a zero-value Explanation rather than retrofit
+// one.
+func (b *BasicStrategy) nextCommand(g *risk.Game, playerID string) (Command, error) {
 	switch g.Phase {
 	case risk.PhaseSetupReinforce:
 		return b.setupReinforce(g, playerID)
