@@ -64,6 +64,11 @@ func (s *PostgresGamePlayersStore) SetGameWinner(ctx context.Context, exec db.Qu
 }
 
 func (s *PostgresGamePlayersStore) GetLeaderboard(ctx context.Context, exec db.Querier, limit int) ([]LeaderboardEntry, error) {
+	// Games with any bot player don't count toward the leaderboard at all —
+	// only pure human-vs-human games do. Bots never get a game_players row
+	// (see humanGamePlayers in service/game.go), so this can't be filtered
+	// by joining that table; it has to check the authoritative JSONB state
+	// directly for any player with controller = "bot".
 	const stmt = `
 		SELECT
 			u.id::text,
@@ -74,6 +79,11 @@ func (s *PostgresGamePlayersStore) GetLeaderboard(ctx context.Context, exec db.Q
 		FROM game_players gp
 		JOIN users  u ON u.id = gp.user_id
 		JOIN games  g ON g.id = gp.game_id
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM jsonb_array_elements(g.state -> 'players') AS p
+			WHERE p ->> 'controller' = 'bot'
+		)
 		GROUP BY u.id, u.username
 		HAVING COUNT(*) FILTER (WHERE g.status = 'completed') > 0
 		ORDER BY wins DESC, losses ASC
