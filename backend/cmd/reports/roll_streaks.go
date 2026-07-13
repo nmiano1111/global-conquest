@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"backend/internal/reporting"
+	"github.com/nmiano1111/global-conquest/backend/internal/reporting"
 )
 
 func runRollStreaks(args []string) error {

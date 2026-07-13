@@ -1,8 +1,8 @@
 package store
 
 import (
-	"backend/internal/db"
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"context"
 	"encoding/json"
 	"time"

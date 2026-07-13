@@ -3,7 +3,7 @@ package bot
 import (
 	"context"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // Strategy chooses the next command for a bot-controlled player. A Strategy

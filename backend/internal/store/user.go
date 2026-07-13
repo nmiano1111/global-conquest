@@ -6,7 +6,7 @@
 package store
 
 import (
-	"backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"context"
 	"time"
 )

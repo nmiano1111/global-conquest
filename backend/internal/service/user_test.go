@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"backend/internal/auth"
-	"backend/internal/db"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/auth"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )

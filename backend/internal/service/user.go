@@ -5,13 +5,13 @@ import (
 	"errors"
 	"time"
 
-	"backend/internal/auth"
+	"github.com/nmiano1111/global-conquest/backend/internal/auth"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"backend/internal/db"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 )
 
 type userDB interface {

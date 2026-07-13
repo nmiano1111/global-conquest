@@ -3,11 +3,11 @@
 package e2e
 
 import (
-	"backend/internal/db"
-	"backend/internal/game"
-	"backend/internal/httpapi"
-	"backend/internal/service"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/httpapi"
+	"github.com/nmiano1111/global-conquest/backend/internal/service"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"bytes"
 	"context"
 	"encoding/json"

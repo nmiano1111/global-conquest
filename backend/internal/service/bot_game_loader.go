@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // BotGameLoader adapts GamesService to bot.GameLoader, so the bot runner

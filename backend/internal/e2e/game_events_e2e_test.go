@@ -3,10 +3,10 @@
 package e2e
 
 import (
-	"backend/internal/db"
-	"backend/internal/risk"
-	"backend/internal/service"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/service"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"context"
 	"encoding/json"
 	"errors"

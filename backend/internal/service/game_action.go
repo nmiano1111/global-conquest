@@ -1,8 +1,8 @@
 package service
 
 import (
-	"backend/internal/game"
-	"backend/internal/proto/wsmsg"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/proto/wsmsg"
 	"context"
 )
 

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"backend/internal/reporting"
+	"github.com/nmiano1111/global-conquest/backend/internal/reporting"
 )
 
 // maxCodeBlockBody is a conservative limit for content inside a code block,

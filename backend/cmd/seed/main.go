@@ -7,9 +7,9 @@ import (
 	"log"
 	"time"
 
-	"backend/internal/auth"
-	"backend/internal/db"
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/auth"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"backend/internal/game"
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // fakeLoader serves a queue of (*risk.Game, status) pairs, one per call,

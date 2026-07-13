@@ -7,11 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"backend/internal/db"
-	"backend/internal/discordbot"
-	"backend/internal/reporting"
-	"backend/internal/store"
-	"backend/internal/trello"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/discordbot"
+	"github.com/nmiano1111/global-conquest/backend/internal/reporting"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/trello"
 
 	"github.com/joho/godotenv"
 )

@@ -3,7 +3,7 @@ package bot
 import (
 	"fmt"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // reinforce decides card timing first (see strategy_scored_cards.go), then

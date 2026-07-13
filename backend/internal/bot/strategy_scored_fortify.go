@@ -1,6 +1,6 @@
 package bot
 
-import "backend/internal/risk"
+import "github.com/nmiano1111/global-conquest/backend/internal/risk"
 
 // fortify scores every legal (from, to) fortification move plus a
 // synthetic "end turn without fortifying" candidate — ending the phase is

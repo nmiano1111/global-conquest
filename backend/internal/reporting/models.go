@@ -3,7 +3,7 @@ package reporting
 import (
 	"time"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // CombatEvent is a decoded and validated combat_roll_resolved domain event row.

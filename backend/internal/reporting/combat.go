@@ -3,7 +3,7 @@ package reporting
 import (
 	"encoding/json"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // decodeCombatEvent decodes and validates a single raw combat event row.

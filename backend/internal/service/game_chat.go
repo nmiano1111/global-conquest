@@ -1,9 +1,9 @@
 package service
 
 import (
-	"backend/internal/db"
-	"backend/internal/game"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"context"
 )
 

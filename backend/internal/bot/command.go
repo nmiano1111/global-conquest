@@ -7,7 +7,7 @@
 // ensures at most one runner is active per game at a time.
 package bot
 
-import "backend/internal/game"
+import "github.com/nmiano1111/global-conquest/backend/internal/game"
 
 // Action values mirror the action strings service.GamesService.ApplyGameAction
 // switches on. They are duplicated here (rather than imported) because the

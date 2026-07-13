@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"backend/internal/reporting"
+	"github.com/nmiano1111/global-conquest/backend/internal/reporting"
 )
 
 // writeMarkdownReport renders the full roll streak report to w. top limits

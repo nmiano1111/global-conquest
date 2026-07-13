@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"backend/internal/game"
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // maxRejectedCommandRetries bounds how many times the runner will reload

@@ -4,8 +4,8 @@ import (
 	"math/rand"
 	"time"
 
-	"backend/internal/game"
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // PaceCategory is a coarse, loggable significance label for a committed

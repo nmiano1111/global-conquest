@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // TestScoredStrategyCardTurnInDelaysWithNoUrgency: 3 cards (below the

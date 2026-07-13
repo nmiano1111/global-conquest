@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"backend/internal/reporting"
+	"github.com/nmiano1111/global-conquest/backend/internal/reporting"
 )
 
 func sampleReport() reporting.RollStreakReport {

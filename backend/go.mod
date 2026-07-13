@@ -1,4 +1,4 @@
-module backend
+module github.com/nmiano1111/global-conquest/backend
 
 go 1.24.0
 

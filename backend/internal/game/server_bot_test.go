@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"backend/internal/proto/wsmsg"
+	"github.com/nmiano1111/global-conquest/backend/internal/proto/wsmsg"
 )
 
 var ErrForTest = errors.New("test error")

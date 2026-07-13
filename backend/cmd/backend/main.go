@@ -8,15 +8,15 @@ import (
 	"sort"
 	"strings"
 
-	"backend/internal/bot"
-	"backend/internal/db"
-	"backend/internal/game"
-	"backend/internal/httpapi"
-	"backend/internal/service"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/bot"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/httpapi"
+	"github.com/nmiano1111/global-conquest/backend/internal/service"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"github.com/joho/godotenv"
 
-	_ "backend/docs"
+	_ "github.com/nmiano1111/global-conquest/backend/docs"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

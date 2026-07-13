@@ -11,8 +11,8 @@ import (
 	"log"
 	"time"
 
-	"backend/internal/reporting"
-	"backend/internal/trello"
+	"github.com/nmiano1111/global-conquest/backend/internal/reporting"
+	"github.com/nmiano1111/global-conquest/backend/internal/trello"
 
 	"github.com/bwmarrin/discordgo"
 )

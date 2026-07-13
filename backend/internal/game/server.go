@@ -7,7 +7,7 @@
 package game
 
 import (
-	"backend/internal/proto/wsmsg"
+	"github.com/nmiano1111/global-conquest/backend/internal/proto/wsmsg"
 	"context"
 	"crypto/rand"
 	"encoding/base32"

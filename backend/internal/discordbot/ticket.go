@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"backend/internal/trello"
+	"github.com/nmiano1111/global-conquest/backend/internal/trello"
 
 	"github.com/bwmarrin/discordgo"
 )

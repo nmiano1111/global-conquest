@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // StrategyBasicV1 is the only strategy identifier this milestone supports.

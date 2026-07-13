@@ -3,7 +3,7 @@ package bot
 import (
 	"fmt"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // occupy scores every legal army count to move into the just-conquered

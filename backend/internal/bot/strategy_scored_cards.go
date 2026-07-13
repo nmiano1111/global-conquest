@@ -1,6 +1,6 @@
 package bot
 
-import "backend/internal/risk"
+import "github.com/nmiano1111/global-conquest/backend/internal/risk"
 
 // marginalAttackLow and marginalAttackHigh bound the "worth cashing cards
 // in for" zone of a would-be attack's win probability: below the low bound

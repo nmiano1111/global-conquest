@@ -6,9 +6,9 @@ import (
 	"errors"
 	"testing"
 
-	"backend/internal/db"
-	"backend/internal/risk"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 
 	"github.com/jackc/pgx/v5"
 )

@@ -1,7 +1,7 @@
 package store
 
 import (
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"context"
 	"encoding/json"
 	"strings"

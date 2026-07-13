@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // StrategyScoredV1 is the first strategy built on the candidate-scoring

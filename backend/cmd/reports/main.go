@@ -9,8 +9,8 @@ import (
 	"log"
 	"os"
 
-	"backend/internal/db"
-	"backend/internal/reporting"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/reporting"
 
 	"github.com/joho/godotenv"
 )

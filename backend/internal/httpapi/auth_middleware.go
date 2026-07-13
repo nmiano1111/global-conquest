@@ -1,8 +1,8 @@
 package httpapi
 
 import (
-	"backend/internal/auth"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/auth"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"errors"
 	"net/http"
 	"strings"

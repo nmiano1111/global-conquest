@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // newTestGame builds a 3-player classic game with a fixed shuffle (so

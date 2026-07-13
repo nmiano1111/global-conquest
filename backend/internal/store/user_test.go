@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )

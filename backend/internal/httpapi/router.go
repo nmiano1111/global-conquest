@@ -5,7 +5,7 @@
 package httpapi
 
 import (
-	"backend/internal/wsapi"
+	"github.com/nmiano1111/global-conquest/backend/internal/wsapi"
 	"context"
 	"net/http"
 	"os"

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
 )
 
 // NotificationTypeTurnStarted identifies a turn_started notification row,

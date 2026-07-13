@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"backend/internal/db"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 )
 
 type fakeChatStore struct {

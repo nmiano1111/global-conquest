@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"backend/internal/reporting"
+	"github.com/nmiano1111/global-conquest/backend/internal/reporting"
 )
 
 // jsonReport mirrors reporting.RollStreakReport but nests the three streak

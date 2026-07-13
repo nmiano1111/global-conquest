@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"backend/internal/risk"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // --- helpers ---

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"backend/internal/proto/wsmsg"
+	"github.com/nmiano1111/global-conquest/backend/internal/proto/wsmsg"
 )
 
 func TestTerritorySelectRelaysToOtherClientsInRoom(t *testing.T) {

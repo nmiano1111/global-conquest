@@ -1,11 +1,11 @@
 package httpapi
 
 import (
-	"backend/internal/auth"
-	"backend/internal/game"
-	"backend/internal/proto/wsmsg"
-	"backend/internal/service"
-	"backend/internal/store"
+	"github.com/nmiano1111/global-conquest/backend/internal/auth"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/proto/wsmsg"
+	"github.com/nmiano1111/global-conquest/backend/internal/service"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"context"
 	"encoding/json"
 	"errors"
