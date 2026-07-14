@@ -1,5 +1,5 @@
 import { Circle, Container, Graphics, Text, TextStyle } from "pixi.js";
-import type { TerritoryDisplayState } from "./types";
+import type { TerritoryDisplayState, TerritoryHighlightKind } from "./types";
 
 const TERRITORY_RADIUS = 42;
 
@@ -24,9 +24,29 @@ const nameStyle = new TextStyle({
   dropShadow: { color: "#000000", blur: 3, distance: 1, alpha: 0.4 },
 });
 
+/**
+ * Per-highlight-kind ring styling. Each kind combines a distinct color,
+ * ring width, and fill alpha so states remain distinguishable without
+ * relying on color alone (width and alpha differ too), and stay legible
+ * for color-blind users.
+ */
+const HIGHLIGHT_STYLE: Record<
+  Exclude<TerritoryHighlightKind, "none">,
+  { color: number; ringWidth: number; fillAlpha: number; pulse: boolean; scale: number }
+> = {
+  "selected-source": { color: 0xfbbf24, ringWidth: 4, fillAlpha: 0.24, pulse: false, scale: 1.12 },
+  "selected-target": { color: 0xf43f5e, ringWidth: 4, fillAlpha: 0.22, pulse: false, scale: 1.12 },
+  "legal-target": { color: 0x38bdf8, ringWidth: 2.5, fillAlpha: 0.14, pulse: true, scale: 1.0 },
+  "recent-combat": { color: 0xf97316, ringWidth: 3, fillAlpha: 0.18, pulse: true, scale: 1.0 },
+  "recent-capture": { color: 0x34d399, ringWidth: 3.5, fillAlpha: 0.22, pulse: true, scale: 1.06 },
+  passive: { color: 0x818cf8, ringWidth: 2.5, fillAlpha: 0.14, pulse: false, scale: 1.0 },
+};
+
 export class TerritoryNode extends Container {
   private circleGfx: Graphics;
   private armyLabel: Text;
+  private currentHighlight: TerritoryHighlightKind = "none";
+  private currentFill = "#e2e8f0";
 
   constructor(name: string, x: number, y: number, onClick: (name: string) => void) {
     super();
@@ -53,26 +73,40 @@ export class TerritoryNode extends Container {
     nameLabel.position.set(0, 20);
     this.addChild(nameLabel);
 
-    this.drawCircle("#e2e8f0", false);
+    this.drawCircle("#e2e8f0", "none", 0);
   }
 
   update(state: TerritoryDisplayState, playerColors: string[]) {
     const fill =
       state.owner >= 0 ? (playerColors[state.owner] ?? "#e2e8f0") : "#e2e8f0";
-    this.drawCircle(fill, state.isSelected);
+    this.currentHighlight = state.highlight;
+    this.currentFill = fill;
+    this.drawCircle(fill, state.highlight, 0);
     this.armyLabel.text = String(state.armies);
   }
 
-  private drawCircle(fillColor: string, selected: boolean) {
+  /** Advances the pulse animation for highlight kinds that pulse. No-op (and never called) when reduced-motion is active. */
+  tickPulse(phase: number) {
+    const style = this.currentHighlight === "none" ? null : HIGHLIGHT_STYLE[this.currentHighlight];
+    if (!style?.pulse) return;
+    this.drawCircle(this.currentFill, this.currentHighlight, phase);
+  }
+
+  private drawCircle(fillColor: string, highlight: TerritoryHighlightKind, pulsePhase: number) {
     const g = this.circleGfx.clear();
     const R = TERRITORY_RADIUS;
+    const style = highlight === "none" ? null : HIGHLIGHT_STYLE[highlight];
 
-    // ── 1. Selection halo ──────────────────────────────────────────────
-    // Drawn first so it sits behind everything else. Gold ring + soft fill.
-    if (selected) {
-      g.circle(0, 0, R + 11)
-        .fill({ color: "#fbbf24", alpha: 0.22 })
-        .stroke({ color: "#fbbf24", width: 3, alpha: 0.95 });
+    // ── 1. Highlight halo ──────────────────────────────────────────────
+    // Drawn first so it sits behind everything else. A pulsing kind
+    // oscillates ring alpha/radius gently — restrained, not distracting.
+    if (style) {
+      const pulseT = style.pulse ? (Math.sin(pulsePhase) + 1) / 2 : 1; // 0..1
+      const ringR = R + 9 + (style.pulse ? pulseT * 4 : 2);
+      const ringAlpha = style.pulse ? 0.5 + pulseT * 0.4 : 0.95;
+      g.circle(0, 0, ringR)
+        .fill({ color: style.color, alpha: style.fillAlpha })
+        .stroke({ color: style.color, width: style.ringWidth, alpha: ringAlpha });
     }
 
     // ── 2. Drop shadow ─────────────────────────────────────────────────
@@ -83,8 +117,8 @@ export class TerritoryNode extends Container {
     g.circle(0, 0, R)
       .fill({ color: fillColor, alpha: 0.95 })
       .stroke({
-        color: selected ? "#fbbf24" : "#0f172a",
-        width: selected ? 3.5 : 2.5,
+        color: style ? style.color : 0x0f172a,
+        width: style ? style.ringWidth - 0.5 : 2.5,
       });
 
     // ── 4. Inner bevel rim ─────────────────────────────────────────────
@@ -99,5 +133,10 @@ export class TerritoryNode extends Container {
       color: "#ffffff",
       alpha: 0.22,
     });
+
+    // Selection/target states scale the whole node up slightly — a second,
+    // non-color-dependent signal that this territory is the active focus.
+    const targetScale = style?.scale ?? 1.0;
+    this.scale.set(targetScale);
   }
 }

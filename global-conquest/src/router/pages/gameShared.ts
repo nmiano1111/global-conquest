@@ -30,6 +30,22 @@ export type DiceRollResult = {
   defenderLoss: number;
 };
 
+export const PHASE_LABELS: Record<string, string> = {
+  setup_reinforce: "Setup",
+  reinforce: "Reinforce",
+  attack: "Attack",
+  occupy: "Occupy",
+  fortify: "Fortify",
+};
+
+export const PHASE_BADGE_CLASS: Record<string, string> = {
+  setup_reinforce: "bg-sky-600",
+  reinforce: "bg-emerald-600",
+  attack: "bg-rose-600",
+  occupy: "bg-amber-500",
+  fortify: "bg-violet-600",
+};
+
 type MapTerritoryNode = { x: number; y: number };
 
 export const MAP_PLAYER_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7", "#06b6d4"];

@@ -2,7 +2,13 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type { Card, GameBootstrap } from "../../api/games";
 import { GameMap, type GameMapHandle } from "../../map/GameMap";
-import type { DiceRollResult, GameChatMessage, GameEventMessage } from "./gameShared";
+import {
+  PHASE_BADGE_CLASS,
+  PHASE_LABELS,
+  type DiceRollResult,
+  type GameChatMessage,
+  type GameEventMessage,
+} from "./gameShared";
 
 type OccupyRequirement = NonNullable<GameBootstrap["occupy"]>;
 type Player = GameBootstrap["players"][number];
@@ -40,6 +46,9 @@ export interface MobileGameViewProps {
   activeTo: string;
   /** Passive highlight for bot actions and other players' live territory presses — see GameMap. */
   highlightedTerritories?: ReadonlySet<string>;
+  legalAttackTargets?: ReadonlySet<string>;
+  recentCombatTerritories?: ReadonlySet<string>;
+  recentCaptureTerritories?: ReadonlySet<string>;
   armiesInput: number;
   clampedArmiesInput: number;
   clampedAttackerDice: number;
@@ -67,25 +76,10 @@ export interface MobileGameViewProps {
   setSelectedTerritory: (s: string) => void;
   onRefresh: () => void;
   onToggleDesktop: () => void;
+  onOpenFullscreen: () => void;
 }
 
 type Tab = "actions" | "cards" | "events" | "chat";
-
-const PHASE_LABELS: Record<string, string> = {
-  setup_reinforce: "Setup",
-  reinforce: "Reinforce",
-  attack: "Attack",
-  occupy: "Occupy",
-  fortify: "Fortify",
-};
-
-const PHASE_BADGE: Record<string, string> = {
-  setup_reinforce: "bg-sky-600",
-  reinforce: "bg-emerald-600",
-  attack: "bg-rose-600",
-  occupy: "bg-amber-500",
-  fortify: "bg-violet-600",
-};
 
 function symbolIcon(s: string) {
   if (s === "infantry") return "🪖";
@@ -102,14 +96,14 @@ export function MobileGameView(props: MobileGameViewProps) {
     players, playerColors, territoryState, myCards, selectedCardIndices,
     mySetupArmies, nextTradeBonus, pendingReinforcements, occupyRequirement,
     diceResult, selectedTerritory, activeFrom, activeTo,
-    highlightedTerritories,
+    highlightedTerritories, legalAttackTargets, recentCombatTerritories, recentCaptureTerritories,
     clampedArmiesInput, clampedAttackerDice,
     minArmiesInput, maxArmiesInput, maxAttackDiceAllowed, maxDefendDiceAllowed,
     canAttackSelection, renderEventBody, onMapTerritoryClick,
     commitReinforcement, commitFortify, commitOccupy, commitTradeCards,
     toggleCardSelection, onRollDice, setAttackerDice, setArmiesInput,
     setChatDraft, onSendChat, sendAction, setSelectedFrom, setSelectedTo,
-    setSelectedTerritory, onToggleDesktop,
+    setSelectedTerritory, onToggleDesktop, onOpenFullscreen,
   } = props;
 
   const [activeTab, setActiveTab] = useState<Tab>("actions");
@@ -138,7 +132,7 @@ export function MobileGameView(props: MobileGameViewProps) {
   const currentPlayer = players[currentPlayerIndex];
   const currentPlayerColor = playerColors[currentPlayerIndex] ?? "#94a3b8";
   const phaseLabel = PHASE_LABELS[phase] ?? phase;
-  const phaseBadgeClass = PHASE_BADGE[phase] ?? "bg-slate-600";
+  const phaseBadgeClass = PHASE_BADGE_CLASS[phase] ?? "bg-slate-600";
 
   const getTerritoryInfo = (name: string) => {
     if (!name || !territoryState) return null;
@@ -667,9 +661,21 @@ export function MobileGameView(props: MobileGameViewProps) {
           activeFrom={activeFrom}
           activeTo={activeTo}
           highlightedTerritories={highlightedTerritories}
+          legalTargets={legalAttackTargets}
+          recentCombat={recentCombatTerritories}
+          recentCapture={recentCaptureTerritories}
           playerColors={playerColors}
           onTerritoryClick={onMapTerritoryClick}
+          onBackgroundTap={onOpenFullscreen}
         />
+        <button
+          type="button"
+          onClick={onOpenFullscreen}
+          aria-label="Expand map to fullscreen"
+          className="absolute right-2.5 top-2.5 flex h-9 w-9 items-center justify-center rounded-full bg-slate-800/80 text-base text-slate-200 shadow-lg backdrop-blur active:bg-slate-700"
+        >
+          ⛶
+        </button>
       </div>
 
       {/* ── Players strip ── */}

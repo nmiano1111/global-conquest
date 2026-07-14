@@ -2,7 +2,9 @@ import {
   Application,
   Assets,
   Container,
+  Graphics,
   type FederatedPointerEvent,
+  type FederatedWheelEvent,
   Sprite,
   Texture,
 } from "pixi.js";
@@ -17,10 +19,41 @@ import {
   MAP_VIEWBOX_HEIGHT,
   MAP_VIEWBOX_WIDTH,
 } from "../router/pages/gameShared";
+import {
+  clampCameraPosition,
+  computeMinZoom,
+  distance,
+  exceedsDragThreshold,
+  fitToViewport,
+  isDoubleTap,
+  type TapRecord,
+  zoomToward,
+} from "./cameraMath";
 import { TerritoryNode } from "./TerritoryNode";
-import type { TerritoryDisplayState } from "./types";
+import type { TerritoryDisplayState, TerritoryHighlightKind } from "./types";
 
 const MAX_ZOOM = 4.0;
+const DOUBLE_TAP_ZOOM_FACTOR = 1.8;
+const WHEEL_ZOOM_FACTOR = 1.0015; // per pixel of wheel delta
+
+export interface TerritoryHighlightInput {
+  /** The territory currently selected as the primary source (reinforce target / attack-from / fortify-from). */
+  selectedSource?: string;
+  /** The territory currently selected as a secondary target (attack-to / fortify-to). */
+  selectedTarget?: string;
+  /** Territories that are legal targets for the current selection (e.g. attackable enemy neighbors). */
+  legalTargets?: ReadonlySet<string>;
+  /** Territories involved in the most recently resolved combat. */
+  recentCombat?: ReadonlySet<string>;
+  /** Territory just captured and awaiting occupation. */
+  recentCapture?: ReadonlySet<string>;
+  /**
+   * Passive highlight for territories not covered by the local user's own
+   * selection — the most recently committed bot action, and other players'
+   * live territory presses relayed over the socket.
+   */
+  passive?: ReadonlySet<string>;
+}
 
 export class MapScene {
   private readonly app: Application;
@@ -39,16 +72,38 @@ export class MapScene {
    */
   private readonly overlayContainer: Container;
   private readonly nodes: Map<string, TerritoryNode> = new Map();
+  private readonly connectorGfx: Graphics;
 
   // Camera state — always kept in sync with worldContainer via applyCamera().
   private camScale = 1;
   private camX = 0;
   private camY = 0;
 
-  private constructor(app: Application) {
+  /**
+   * Set true whenever the active gesture has moved past the drag threshold.
+   * TerritoryNode click callbacks are wrapped to no-op while this is true,
+   * so panning/pinching never accidentally selects a territory. Reset at
+   * the start of every fresh (zero-pointer) gesture.
+   */
+  private dragSuppressesClick = false;
+
+  private lastTap: TapRecord | null = null;
+  private onBackgroundTap: (() => void) | null = null;
+
+  private readonly reducedMotion: boolean;
+  private pulsePhase = 0;
+  private readonly initialFit: "contain" | "cover";
+
+  private constructor(app: Application, initialFit: "contain" | "cover") {
     this.app = app;
+    this.initialFit = initialFit;
     this.worldContainer = new Container();
     this.overlayContainer = new Container();
+    this.connectorGfx = new Graphics();
+    this.reducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
   get canvas(): HTMLCanvasElement {
@@ -59,6 +114,7 @@ export class MapScene {
     width: number,
     height: number,
     onTerritoryClick: (name: string) => void,
+    initialFit: "contain" | "cover" = "contain",
   ): Promise<MapScene> {
     const app = new Application();
     await app.init({
@@ -70,7 +126,7 @@ export class MapScene {
       autoDensity: true,
     });
 
-    const scene = new MapScene(app);
+    const scene = new MapScene(app, initialFit);
     await scene.buildScene(onTerritoryClick);
     return scene;
   }
@@ -95,9 +151,15 @@ export class MapScene {
     this.overlayContainer.scale.set(MAP_OVERLAY_SCALE);
     this.worldContainer.addChild(this.overlayContainer);
 
+    // --- Connecting line between selected source/target (drawn beneath nodes) ---
+    this.overlayContainer.addChild(this.connectorGfx);
+
     // --- Territory nodes ---
     for (const [name, pos] of Object.entries(MAP_TERRITORIES)) {
-      const node = new TerritoryNode(name, pos.x, pos.y, onTerritoryClick);
+      const node = new TerritoryNode(name, pos.x, pos.y, (n) => {
+        if (this.dragSuppressesClick) return;
+        onTerritoryClick(n);
+      });
       this.nodes.set(name, node);
       this.overlayContainer.addChild(node);
     }
@@ -107,9 +169,20 @@ export class MapScene {
     // Fit the entire map into the initial viewport.
     this.fitToViewport();
 
-    // Wire up pan and pinch-to-zoom.
+    // Wire up pan, pinch, wheel, double-tap, and background-tap.
     this.setupInteraction();
+
+    if (!this.reducedMotion) {
+      this.app.ticker.add(this.onTick);
+    }
   }
+
+  private readonly onTick = () => {
+    this.pulsePhase += 0.06;
+    for (const node of this.nodes.values()) {
+      node.tickPulse(this.pulsePhase);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // Camera helpers
@@ -117,9 +190,9 @@ export class MapScene {
 
   /** Scale at which the full map exactly fits inside the current viewport. */
   private get minZoom(): number {
-    return Math.min(
-      this.app.screen.width / MAP_VIEWBOX_WIDTH,
-      this.app.screen.height / MAP_VIEWBOX_HEIGHT,
+    return computeMinZoom(
+      { width: this.app.screen.width, height: this.app.screen.height },
+      { width: MAP_VIEWBOX_WIDTH, height: MAP_VIEWBOX_HEIGHT },
     );
   }
 
@@ -128,57 +201,64 @@ export class MapScene {
     this.worldContainer.position.set(this.camX, this.camY);
   }
 
-  /**
-   * Clamp camX/camY so the world never exposes empty space beyond its edges.
-   * When the world fits inside the viewport on an axis, center it instead.
-   */
   private clampCamera() {
-    const vw = this.app.screen.width;
-    const vh = this.app.screen.height;
-    const ww = MAP_VIEWBOX_WIDTH * this.camScale;
-    const wh = MAP_VIEWBOX_HEIGHT * this.camScale;
-
-    if (ww <= vw) {
-      this.camX = (vw - ww) / 2;
-    } else {
-      this.camX = Math.min(0, Math.max(vw - ww, this.camX));
-    }
-
-    if (wh <= vh) {
-      this.camY = (vh - wh) / 2;
-    } else {
-      this.camY = Math.min(0, Math.max(vh - wh, this.camY));
-    }
+    const next = clampCameraPosition(
+      { scale: this.camScale, x: this.camX, y: this.camY },
+      { width: this.app.screen.width, height: this.app.screen.height },
+      { width: MAP_VIEWBOX_WIDTH, height: MAP_VIEWBOX_HEIGHT },
+    );
+    this.camX = next.x;
+    this.camY = next.y;
   }
 
   /**
    * Zoom to newScale while keeping the screen-space point (pivotX, pivotY)
-   * fixed over the same world point — i.e., zoom toward the cursor / pinch midpoint.
+   * fixed over the same world point — i.e., zoom toward the cursor / pinch
+   * midpoint / double-tap point.
    */
   private zoomToward(newScale: number, pivotX: number, pivotY: number) {
-    const clamped = Math.max(this.minZoom, Math.min(MAX_ZOOM, newScale));
-    // World-space point currently under the pivot must stay under it after zoom.
-    const worldX = (pivotX - this.camX) / this.camScale;
-    const worldY = (pivotY - this.camY) / this.camScale;
-    this.camScale = clamped;
-    this.camX = pivotX - worldX * this.camScale;
-    this.camY = pivotY - worldY * this.camScale;
+    const next = zoomToward(
+      { scale: this.camScale, x: this.camX, y: this.camY },
+      newScale,
+      pivotX,
+      pivotY,
+      this.minZoom,
+      MAX_ZOOM,
+      { width: this.app.screen.width, height: this.app.screen.height },
+      { width: MAP_VIEWBOX_WIDTH, height: MAP_VIEWBOX_HEIGHT },
+    );
+    this.camScale = next.scale;
+    this.camX = next.x;
+    this.camY = next.y;
+    this.applyCamera();
+  }
+
+  /**
+   * Scale and center the world to fit the current viewport, per this
+   * scene's initialFit mode ("contain" for the embedded/mobile map, so the
+   * whole board is visible; "cover" for fullscreen, so the map fills the
+   * screen with no letterboxing — cropping is fine there since the user
+   * can always zoom out to minZoom, which is always the "contain" scale
+   * regardless of initialFit, to see the whole board).
+   */
+  private fitToViewport() {
+    const next = fitToViewport(
+      { width: this.app.screen.width, height: this.app.screen.height },
+      { width: MAP_VIEWBOX_WIDTH, height: MAP_VIEWBOX_HEIGHT },
+      this.initialFit,
+    );
+    this.camScale = Math.min(next.scale, MAX_ZOOM);
+    this.camX = next.x;
+    this.camY = next.y;
+    // Only matters in the (practically unreachable) case where the cover
+    // scale needed MAX_ZOOM clamping above — re-centers x/y for the
+    // clamped scale instead of the original unclamped one.
     this.clampCamera();
     this.applyCamera();
   }
 
-  /** Scale and center the world to fit the current viewport. */
-  private fitToViewport() {
-    this.camScale = this.minZoom;
-    const vw = this.app.screen.width;
-    const vh = this.app.screen.height;
-    this.camX = (vw - MAP_VIEWBOX_WIDTH * this.camScale) / 2;
-    this.camY = (vh - MAP_VIEWBOX_HEIGHT * this.camScale) / 2;
-    this.applyCamera();
-  }
-
   // ---------------------------------------------------------------------------
-  // Interaction (pan + pinch-to-zoom)
+  // Interaction (pan, pinch-to-zoom, wheel-zoom, double-tap-zoom, tap detection)
   // ---------------------------------------------------------------------------
 
   private setupInteraction() {
@@ -186,6 +266,7 @@ export class MapScene {
     stage.eventMode = "static";
     // app.screen is the live rectangle that tracks the renderer size.
     stage.hitArea = this.app.screen;
+    this.canvas.style.touchAction = "none";
 
     // Active pointers tracked by pointerId → current screen position.
     const pointers = new Map<number, { x: number; y: number }>();
@@ -209,10 +290,14 @@ export class MapScene {
       panStartY = y;
       camStartX = this.camX;
       camStartY = this.camY;
-      this.app.canvas.style.cursor = "grabbing";
+      this.canvas.style.cursor = "grabbing";
     };
 
     stage.on("pointerdown", (e: FederatedPointerEvent) => {
+      if (pointers.size === 0) {
+        // Fresh gesture: don't let a previous drag suppress this tap.
+        this.dragSuppressesClick = false;
+      }
       pointers.set(e.pointerId, { x: e.globalX, y: e.globalY });
 
       if (pointers.size === 2) {
@@ -221,7 +306,7 @@ export class MapScene {
         const pts = [...pointers.values()];
         pinchMidX = (pts[0].x + pts[1].x) / 2;
         pinchMidY = (pts[0].y + pts[1].y) / 2;
-        pinchStartDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        pinchStartDist = distance(pts[0].x, pts[0].y, pts[1].x, pts[1].y);
         pinchStartScale = this.camScale;
       } else {
         beginPan(e.globalX, e.globalY);
@@ -233,10 +318,14 @@ export class MapScene {
       pointers.set(e.pointerId, { x: e.globalX, y: e.globalY });
 
       if (pointers.size === 2) {
+        this.dragSuppressesClick = true;
         const pts = [...pointers.values()];
-        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        const dist = distance(pts[0].x, pts[0].y, pts[1].x, pts[1].y);
         this.zoomToward(pinchStartScale * (dist / pinchStartDist), pinchMidX, pinchMidY);
       } else if (panActive) {
+        if (exceedsDragThreshold(panStartX, panStartY, e.globalX, e.globalY)) {
+          this.dragSuppressesClick = true;
+        }
         this.camX = camStartX + (e.globalX - panStartX);
         this.camY = camStartY + (e.globalY - panStartY);
         this.clampCamera();
@@ -249,7 +338,21 @@ export class MapScene {
 
       if (pointers.size === 0) {
         panActive = false;
-        this.app.canvas.style.cursor = "grab";
+        this.canvas.style.cursor = "grab";
+
+        // Background-tap / double-tap-to-zoom detection: only for taps that
+        // didn't drag, and whose target is the stage itself (not a territory
+        // node, which handles its own pointertap independently).
+        if (!this.dragSuppressesClick && e.target === stage) {
+          const tap: TapRecord = { x: e.globalX, y: e.globalY, timeMs: Date.now() };
+          if (isDoubleTap(this.lastTap, tap)) {
+            this.zoomToward(this.camScale * DOUBLE_TAP_ZOOM_FACTOR, tap.x, tap.y);
+            this.lastTap = null;
+          } else {
+            this.lastTap = tap;
+            this.onBackgroundTap?.();
+          }
+        }
       } else if (pointers.size === 1) {
         // One finger lifted during pinch — resume single-finger pan from here.
         const [remaining] = [...pointers.values()];
@@ -260,17 +363,50 @@ export class MapScene {
     stage.on("pointerup", onPointerUp);
     stage.on("pointerupoutside", onPointerUp);
 
-    this.app.canvas.style.cursor = "grab";
+    // Desktop wheel-zoom, centered on the cursor.
+    stage.on("wheel", (e: FederatedWheelEvent) => {
+      e.preventDefault();
+      const factor = Math.pow(WHEEL_ZOOM_FACTOR, -e.deltaY);
+      this.zoomToward(this.camScale * factor, e.globalX, e.globalY);
+    });
+
+    this.canvas.style.cursor = "grab";
   }
 
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
 
+  /** Registers a callback fired when the user taps empty map background (not a territory, not a drag). */
+  setOnBackgroundTap(fn: (() => void) | null) {
+    this.onBackgroundTap = fn;
+  }
+
+  /**
+   * Called once, right after scene creation, with the container's actual
+   * current size. MapScene.create() may have been initialized with a
+   * stale/fallback size if the container's true dimensions weren't
+   * resolved yet at mount (e.g. a freshly-portaled fullscreen root that
+   * was still 0×0 when measured, synchronously, before Pixi's async
+   * WebGL/texture init even began). Unlike resize(), this redoes the
+   * initial fitToViewport() (respecting initialFit) against the corrected
+   * size rather than just clamping to a zoom floor — appropriate here
+   * because no user gesture could have happened yet, so there's no
+   * camera position to preserve.
+   */
+  applyInitialSize(width: number, height: number) {
+    this.app.renderer.resize(width, height);
+    this.fitToViewport();
+  }
+
   /**
    * Called by a ResizeObserver when the viewport container changes size.
    * Resizes the renderer, clamps the camera, and ensures zoom never falls
-   * below the new fit scale.
+   * below the new fit scale. Deliberately preserves the current pan/zoom
+   * (only clamping, never re-fitting) since by this point the user may
+   * already have moved the camera — unlike applyInitialSize, a plain
+   * resize (orientation change, mobile browser chrome show/hide) must not
+   * reset it.
    */
   resize(width: number, height: number) {
     this.app.renderer.resize(width, height);
@@ -285,27 +421,46 @@ export class MapScene {
 
   updateTerritories(
     territoryStates: Record<string, unknown> | null,
-    selectedTerritory: string,
-    activeFrom: string,
-    activeTo: string,
     playerColors: string[],
-    highlightedTerritories?: ReadonlySet<string>,
+    highlight: TerritoryHighlightInput = {},
   ) {
+    const { selectedSource, selectedTarget, legalTargets, recentCombat, recentCapture, passive } =
+      highlight;
+
     for (const [name, node] of this.nodes) {
       const raw = territoryStates?.[name];
       const t =
         raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+      const kind = classifyHighlight(
+        name,
+        selectedSource,
+        selectedTarget,
+        legalTargets,
+        recentCombat,
+        recentCapture,
+        passive,
+      );
       const state: TerritoryDisplayState = {
         owner: typeof t?.owner === "number" ? t.owner : -1,
         armies: typeof t?.armies === "number" ? t.armies : 0,
-        isSelected:
-          name === selectedTerritory ||
-          name === activeFrom ||
-          name === activeTo ||
-          (highlightedTerritories?.has(name) ?? false),
+        highlight: kind,
       };
       node.update(state, playerColors);
     }
+
+    this.drawConnector(selectedSource, selectedTarget);
+  }
+
+  private drawConnector(source?: string, target?: string) {
+    this.connectorGfx.clear();
+    if (!source || !target) return;
+    const from = this.nodes.get(source);
+    const to = this.nodes.get(target);
+    if (!from || !to) return;
+    this.connectorGfx
+      .moveTo(from.position.x, from.position.y)
+      .lineTo(to.position.x, to.position.y)
+      .stroke({ color: 0xfbbf24, width: 3, alpha: 0.55 });
   }
 
   zoomIn() {
@@ -325,6 +480,27 @@ export class MapScene {
   }
 
   destroy() {
+    this.app.ticker.remove(this.onTick);
     this.app.destroy(true);
   }
+}
+
+function classifyHighlight(
+  name: string,
+  selectedSource?: string,
+  selectedTarget?: string,
+  legalTargets?: ReadonlySet<string>,
+  recentCombat?: ReadonlySet<string>,
+  recentCapture?: ReadonlySet<string>,
+  passive?: ReadonlySet<string>,
+): TerritoryHighlightKind {
+  // Precedence: the local user's own active selection always wins, then an
+  // authoritative fresh-capture signal, then passive/legal/combat affordances.
+  if (name === selectedSource) return "selected-source";
+  if (name === selectedTarget) return "selected-target";
+  if (recentCapture?.has(name)) return "recent-capture";
+  if (legalTargets?.has(name)) return "legal-target";
+  if (recentCombat?.has(name)) return "recent-combat";
+  if (passive?.has(name)) return "passive";
+  return "none";
 }

@@ -15,6 +15,8 @@ import {
   type GameEventMessage,
 } from "./gameShared";
 import { MobileGameView } from "./MobileGameView";
+import { FullscreenGameMap } from "./FullscreenGameMap";
+import { reconcileSelection } from "./selectionReconciliation";
 
 export function GamePage() {
   const auth = useAuth();
@@ -40,6 +42,11 @@ export function GamePage() {
   const [lastActionTerritory, setLastActionTerritory] = useState("");
   const [lastActionFrom, setLastActionFrom] = useState("");
   const [lastActionTo, setLastActionTo] = useState("");
+  // Which action type produced the lastAction* territories above — used to
+  // scope the "recent combat" map highlight to attacks specifically (a
+  // fortify or reinforcement shouldn't get the combat glow).
+  const [lastActionType, setLastActionType] = useState("");
+  const [mapFullscreenOpen, setMapFullscreenOpen] = useState(false);
   // Other connected players' live territory presses, relayed over the
   // socket (see territory_select/territory_selected) — keyed by user id so
   // multiple players' selections can be shown at once. Purely a passive
@@ -260,6 +267,7 @@ export function GamePage() {
       setLastActionTerritory(typeof payload?.action_territory === "string" ? payload.action_territory : "");
       setLastActionFrom(typeof payload?.action_from === "string" ? payload.action_from : "");
       setLastActionTo(typeof payload?.action_to === "string" ? payload.action_to : "");
+      setLastActionType(action);
     });
     return off;
   }, [gameID, on]);
@@ -519,6 +527,79 @@ export function GamePage() {
     return true;
   }, [areAdjacent, meIndex, selectedFrom, selectedFromArmies, selectedFromOwner, selectedTo, selectedToArmies, selectedToOwner]);
 
+  // Visual-only affordance: enemy territories directly adjacent to the
+  // selected attacker, computed purely from already-public data (map
+  // adjacency + territory ownership/armies) — the same predicate already
+  // used above for canAttackSelection, just applied one territory at a
+  // time. This never gates the actual attack command; the backend still
+  // authoritatively validates it on submit.
+  const legalAttackTargets = useMemo(() => {
+    const set = new Set<string>();
+    if (phaseMode !== "attack" || !isMyTurn || !selectedFrom || selectedFromArmies <= 1) return set;
+    for (const [a, b] of MAP_EDGES) {
+      let neighbor: string | null = null;
+      if (a === selectedFrom) neighbor = b;
+      else if (b === selectedFrom) neighbor = a;
+      if (!neighbor) continue;
+      const raw = territoryState?.[neighbor];
+      const t = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+      const owner = typeof t?.owner === "number" ? t.owner : -1;
+      if (owner >= 0 && owner !== meIndex) set.add(neighbor);
+    }
+    return set;
+  }, [phaseMode, isMyTurn, selectedFrom, selectedFromArmies, territoryState, meIndex]);
+
+  // Territories the most recently resolved attack touched — a transient,
+  // purely visual "something just happened here" cue superseded by the
+  // next action.
+  const recentCombatTerritories = useMemo(() => {
+    const set = new Set<string>();
+    if (lastActionType !== "attack") return set;
+    if (lastActionFrom) set.add(lastActionFrom);
+    if (lastActionTo) set.add(lastActionTo);
+    return set;
+  }, [lastActionType, lastActionFrom, lastActionTo]);
+
+  // The territory just conquered and awaiting an occupation move — derived
+  // directly from the authoritative occupy requirement, never guessed at
+  // by diffing ownership client-side.
+  const recentCaptureTerritories = useMemo(() => {
+    const set = new Set<string>();
+    if (phaseMode === "occupy" && occupyRequirement) set.add(occupyRequirement.to);
+    return set;
+  }, [phaseMode, occupyRequirement]);
+
+  // Selection reconciliation: authoritative state can change after every
+  // command (ours, another player's, or a bot's). Local selection must
+  // never point at a territory role it no longer legally occupies — see
+  // reconcileSelection for the exact rules. Camera position is untouched
+  // by any of this; it lives entirely inside MapScene.
+  //
+  // Applied during render (React's documented pattern for "adjust state
+  // when a prop changes") rather than in an effect, guarded by state (not
+  // a ref — ref reads/writes aren't safe during render) so it only runs
+  // once per distinct `game` object — this avoids an extra render→effect→
+  // re-render cascade for something that fires on every authoritative update.
+  const [previousCurrentPlayer, setPreviousCurrentPlayer] = useState<number | undefined>(undefined);
+  const [lastReconciledGame, setLastReconciledGame] = useState<GameBootstrap | null>(null);
+  if (game && lastReconciledGame !== game) {
+    setLastReconciledGame(game);
+    setPreviousCurrentPlayer(game.currentPlayer);
+    const reconciled = reconcileSelection({
+      currentPlayer: game.currentPlayer,
+      previousCurrentPlayer,
+      territoryState,
+      meIndex,
+      phaseMode,
+      selectedTerritory,
+      selectedFrom,
+      selectedTo,
+    });
+    if (reconciled.selectedTerritory !== selectedTerritory) setSelectedTerritory(reconciled.selectedTerritory);
+    if (reconciled.selectedFrom !== selectedFrom) setSelectedFrom(reconciled.selectedFrom);
+    if (reconciled.selectedTo !== selectedTo) setSelectedTo(reconciled.selectedTo);
+  }
+
   const maxArmiesInput = useMemo(() => {
     if (phaseMode === "reinforce") {
       return Math.max(1, game?.pendingReinforcements ?? 1);
@@ -602,6 +683,7 @@ export function GamePage() {
     setLastActionTerritory("");
     setLastActionFrom("");
     setLastActionTo("");
+    setLastActionType("");
     const tRaw = territoryState?.[name];
     const t = tRaw && typeof tRaw === "object" ? (tRaw as Record<string, unknown>) : null;
     const owner = typeof t?.owner === "number" ? t.owner : -1;
@@ -722,8 +804,55 @@ export function GamePage() {
     setSelectedCardIndices([]);
   };
 
+  const fullscreenMap = mapFullscreenOpen ? (
+    <FullscreenGameMap
+      game={game}
+      onClose={() => setMapFullscreenOpen(false)}
+      phase={phase}
+      phaseMode={phaseMode}
+      isMyTurn={isMyTurn}
+      isGameOver={isGameOver}
+      wsStatus={wsStatus}
+      players={players}
+      playerColors={playerColors}
+      territoryState={territoryState}
+      pendingReinforcements={pendingReinforcements}
+      mySetupArmies={mySetupArmies}
+      occupyRequirement={occupyRequirement}
+      diceResult={diceResult}
+      selectedTerritory={selectedTerritory}
+      selectedFrom={selectedFrom}
+      selectedTo={selectedTo}
+      activeFrom={activeFrom}
+      activeTo={activeTo}
+      legalAttackTargets={legalAttackTargets}
+      recentCombatTerritories={recentCombatTerritories}
+      recentCaptureTerritories={recentCaptureTerritories}
+      highlightedTerritories={highlightedTerritories}
+      clampedArmiesInput={clampedArmiesInput}
+      minArmiesInput={minArmiesInput}
+      maxArmiesInput={maxArmiesInput}
+      clampedAttackerDice={clampedAttackerDice}
+      maxAttackDiceAllowed={maxAttackDiceAllowed}
+      maxDefendDiceAllowed={maxDefendDiceAllowed}
+      canAttackSelection={canAttackSelection}
+      onMapTerritoryClick={onMapTerritoryClick}
+      commitReinforcement={commitReinforcement}
+      commitFortify={commitFortify}
+      commitOccupy={commitOccupy}
+      onRollDice={onRollDice}
+      setArmiesInput={setArmiesInput}
+      setAttackerDice={setAttackerDice}
+      sendAction={sendAction}
+      setSelectedFrom={setSelectedFrom}
+      setSelectedTo={setSelectedTo}
+      setSelectedTerritory={setSelectedTerritory}
+    />
+  ) : null;
+
   if (mobileUI) {
     return (
+      <>
       <MobileGameView
         game={game}
         loading={loading}
@@ -780,11 +909,18 @@ export function GamePage() {
         setSelectedTerritory={setSelectedTerritory}
         onRefresh={() => void loadGame()}
         onToggleDesktop={toggleMobileUI}
+        legalAttackTargets={legalAttackTargets}
+        recentCombatTerritories={recentCombatTerritories}
+        recentCaptureTerritories={recentCaptureTerritories}
+        onOpenFullscreen={() => setMapFullscreenOpen(true)}
       />
+      {fullscreenMap}
+      </>
     );
   }
 
   return (
+    <>
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
       {/* ── Left: map + event log ── */}
       <section className="grid gap-4">
@@ -818,7 +954,18 @@ export function GamePage() {
         <section className="rounded-xl border border-gc-border bg-gc-surface p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-gc-text">Map</h3>
-            <span className="text-xs text-gc-muted capitalize">{game?.status || "—"}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gc-muted capitalize">{game?.status || "—"}</span>
+              <button
+                className={buttonGhostClass}
+                type="button"
+                onClick={() => setMapFullscreenOpen(true)}
+                aria-label="Expand map to fullscreen"
+                title="Expand map to fullscreen"
+              >
+                ⛶ Fullscreen
+              </button>
+            </div>
           </div>
 
           {/* Setup phase banner */}
@@ -932,8 +1079,12 @@ export function GamePage() {
             activeFrom={activeFrom}
             activeTo={activeTo}
             highlightedTerritories={highlightedTerritories}
+            legalTargets={legalAttackTargets}
+            recentCombat={recentCombatTerritories}
+            recentCapture={recentCaptureTerritories}
             playerColors={playerColors}
             onTerritoryClick={onMapTerritoryClick}
+            onBackgroundTap={() => setMapFullscreenOpen(true)}
           />
         </section>
 
@@ -1244,5 +1395,7 @@ export function GamePage() {
         </section>
       </aside>
     </div>
+    {fullscreenMap}
+    </>
   );
 }
