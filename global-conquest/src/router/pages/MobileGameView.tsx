@@ -620,11 +620,22 @@ export function MobileGameView(props: MobileGameViewProps) {
 
   return (
     <div
-      className="fixed inset-0 flex flex-col overflow-hidden bg-slate-900 text-white"
+      className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-slate-900 text-white"
       style={{ height: "100dvh" }}
     >
-      {/* ── Top bar ── */}
-      <header className="flex shrink-0 items-center gap-2 border-b border-slate-700 bg-slate-800 px-3 py-2">
+      {/* ── Top bar ──
+          z-40 above (higher than AppShell's sticky z-30 header) plus this
+          view's own fixed positioning is what actually replaces the app
+          chrome instead of sitting underneath/behind it — without an
+          explicit z-index here, a plain `fixed` element with no z-index
+          loses to any sibling that has one, regardless of DOM order, so
+          the sticky header would paint on top of this view. Safe-area
+          padding accounts for notches/the dynamic island now that this
+          bar is flush against the physical top edge. */}
+      <header
+        className="flex shrink-0 items-center gap-2 border-b border-slate-700 bg-slate-800 px-3 py-2"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)" }}
+      >
         <Link
           to="/app/lobby"
           className="shrink-0 rounded-lg bg-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-300 active:bg-slate-600"
@@ -746,10 +757,14 @@ export function MobileGameView(props: MobileGameViewProps) {
         </div>
       </div>
 
-      {/* ── Bottom sheet ── */}
+      {/* ── Bottom sheet ──
+          Height includes the safe-area inset on top of the usual 280px so
+          the gesture-bar/home-indicator area on notched phones doesn't eat
+          into the actual usable content height, now that this sheet sits
+          flush against the physical bottom edge. */}
       <div
         className="flex shrink-0 flex-col border-t border-slate-700 bg-slate-800"
-        style={{ height: "280px" }}
+        style={{ height: "calc(280px + env(safe-area-inset-bottom))", paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {/* Tab bar */}
         <div className="flex shrink-0 border-b border-slate-700">
