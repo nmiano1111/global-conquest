@@ -3,10 +3,13 @@ import {
   clampCameraPosition,
   computeCoverZoom,
   computeMinZoom,
+  computeReleaseVelocity,
   distance,
   exceedsDragThreshold,
   fitToViewport,
   isDoubleTap,
+  stepMomentum,
+  velocityMagnitude,
   zoomToward,
 } from "./cameraMath";
 
@@ -153,5 +156,63 @@ describe("isDoubleTap", () => {
     const first = { x: 100, y: 100, timeMs: 1000 };
     const second = { x: 300, y: 100, timeMs: 1100 };
     expect(isDoubleTap(first, second, 300, 32)).toBe(false);
+  });
+});
+
+describe("velocityMagnitude", () => {
+  it("computes speed from vx/vy components", () => {
+    expect(velocityMagnitude({ vx: 3, vy: 4 })).toBe(5);
+    expect(velocityMagnitude({ vx: 0, vy: 0 })).toBe(0);
+  });
+});
+
+describe("computeReleaseVelocity", () => {
+  it("returns null with fewer than two samples", () => {
+    expect(computeReleaseVelocity([])).toBeNull();
+    expect(computeReleaseVelocity([{ x: 0, y: 0, timeMs: 0 }])).toBeNull();
+  });
+
+  it("estimates velocity from the trailing window, ignoring older samples outside it", () => {
+    const samples = [
+      { x: 0, y: 0, timeMs: 0 }, // far outside a 100ms trailing window from t=500
+      { x: 400, y: 0, timeMs: 450 }, // just inside the window — the true start point
+      { x: 500, y: 0, timeMs: 500 },
+    ];
+    const v = computeReleaseVelocity(samples, 100);
+    // Should use (450→500) = 100px over 50ms = 2 px/ms, not (0→500) over 500ms = 1 px/ms.
+    expect(v).not.toBeNull();
+    expect(v!.vx).toBeCloseTo(2);
+    expect(v!.vy).toBeCloseTo(0);
+  });
+
+  it("returns null when the trailing samples span zero time", () => {
+    const samples = [
+      { x: 0, y: 0, timeMs: 100 },
+      { x: 10, y: 0, timeMs: 100 },
+    ];
+    expect(computeReleaseVelocity(samples)).toBeNull();
+  });
+});
+
+describe("stepMomentum", () => {
+  const viewport = { width: 1000, height: 1000 };
+  const world = { width: 4000, height: 4000 }; // large world so panning freely doesn't immediately hit a bound
+
+  it("moves position by velocity × dt and decays velocity by friction", () => {
+    const cam = { scale: 1, x: -500, y: -500 };
+    const frameMs = 1000 / 60; // exact frame time stepMomentum normalizes friction against
+    const result = stepMomentum(cam, { vx: 1, vy: 0 }, frameMs, 0.9, viewport, world);
+    expect(result.camera.x).toBeCloseTo(-500 + 1 * frameMs, 5);
+    expect(result.velocity.vx).toBeCloseTo(0.9, 5); // exactly one normalized frame at friction 0.9
+    expect(result.velocity.vy).toBe(0);
+  });
+
+  it("zeroes velocity on the axis that just hit a bound, instead of jittering against it", () => {
+    // Camera already flush against the world's left edge (x=0, world fits scale 1 exactly).
+    const smallWorld = { width: 1000, height: 1000 };
+    const cam = { scale: 1, x: 0, y: 0 };
+    const result = stepMomentum(cam, { vx: -5, vy: 0 }, 16.67, 0.9, viewport, smallWorld);
+    expect(result.camera.x).toBe(0); // clamped — world fits viewport exactly, centered at 0
+    expect(result.velocity.vx).toBe(0);
   });
 });

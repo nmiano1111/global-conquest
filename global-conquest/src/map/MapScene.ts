@@ -22,11 +22,16 @@ import {
 import {
   clampCameraPosition,
   computeMinZoom,
+  computeReleaseVelocity,
   distance,
   exceedsDragThreshold,
   fitToViewport,
   isDoubleTap,
+  stepMomentum,
+  velocityMagnitude,
+  type PanSample,
   type TapRecord,
+  type Velocity,
   zoomToward,
 } from "./cameraMath";
 import { TerritoryNode } from "./TerritoryNode";
@@ -35,6 +40,15 @@ import type { TerritoryDisplayState, TerritoryHighlightKind } from "./types";
 const MAX_ZOOM = 4.0;
 const DOUBLE_TAP_ZOOM_FACTOR = 1.8;
 const WHEEL_ZOOM_FACTOR = 1.0015; // per pixel of wheel delta
+
+// Momentum glide (inertial panning) tuning. Friction is a per-~16.67ms-frame
+// decay factor — normalized to real elapsed time in stepMomentum, so it
+// feels consistent regardless of actual frame rate.
+const MOMENTUM_FRICTION = 0.94;
+/** Below this speed (px/ms), a glide in progress is considered finished. */
+const MOMENTUM_STOP_SPEED = 0.02;
+/** A release must be at least this fast (px/ms) to start a glide at all — filters out slow, deliberate drags. */
+const MOMENTUM_START_SPEED = 0.15;
 
 export interface TerritoryHighlightInput {
   /** The territory currently selected as the primary source (reinforce target / attack-from / fortify-from). */
@@ -88,7 +102,11 @@ export class MapScene {
   private dragSuppressesClick = false;
 
   private lastTap: TapRecord | null = null;
-  private onBackgroundTap: (() => void) | null = null;
+
+  /** Trailing history of recent single-finger pan positions, used to estimate release velocity for momentum glide. */
+  private panSamples: PanSample[] = [];
+  /** Non-null while a momentum glide is animating; consumed frame-by-frame in onTick. */
+  private momentumVelocity: Velocity | null = null;
 
   private readonly reducedMotion: boolean;
   private pulsePhase = 0;
@@ -169,7 +187,7 @@ export class MapScene {
     // Fit the entire map into the initial viewport.
     this.fitToViewport();
 
-    // Wire up pan, pinch, wheel, double-tap, and background-tap.
+    // Wire up pan, pinch, wheel, and double-tap.
     this.setupInteraction();
 
     if (!this.reducedMotion) {
@@ -181,6 +199,22 @@ export class MapScene {
     this.pulsePhase += 0.06;
     for (const node of this.nodes.values()) {
       node.tickPulse(this.pulsePhase);
+    }
+
+    if (this.momentumVelocity) {
+      const result = stepMomentum(
+        { scale: this.camScale, x: this.camX, y: this.camY },
+        this.momentumVelocity,
+        this.app.ticker.deltaMS,
+        MOMENTUM_FRICTION,
+        { width: this.app.screen.width, height: this.app.screen.height },
+        { width: MAP_VIEWBOX_WIDTH, height: MAP_VIEWBOX_HEIGHT },
+      );
+      this.camX = result.camera.x;
+      this.camY = result.camera.y;
+      this.applyCamera();
+      this.momentumVelocity =
+        velocityMagnitude(result.velocity) < MOMENTUM_STOP_SPEED ? null : result.velocity;
     }
   };
 
@@ -217,6 +251,7 @@ export class MapScene {
    * midpoint / double-tap point.
    */
   private zoomToward(newScale: number, pivotX: number, pivotY: number) {
+    this.momentumVelocity = null; // a deliberate zoom overrides any in-flight glide
     const next = zoomToward(
       { scale: this.camScale, x: this.camX, y: this.camY },
       newScale,
@@ -234,18 +269,18 @@ export class MapScene {
   }
 
   /**
-   * Scale and center the world to fit the current viewport, per this
-   * scene's initialFit mode ("contain" for the embedded/mobile map, so the
-   * whole board is visible; "cover" for fullscreen, so the map fills the
-   * screen with no letterboxing — cropping is fine there since the user
-   * can always zoom out to minZoom, which is always the "contain" scale
-   * regardless of initialFit, to see the whole board).
+   * Scale and center the world to fit the current viewport in the given
+   * mode ("contain" shows the whole board; "cover" fills the viewport
+   * edge to edge, cropping — the user can always zoom out to minZoom,
+   * which is always the "contain" scale regardless of mode, to see the
+   * whole board).
    */
-  private fitToViewport() {
+  private applyFit(mode: "contain" | "cover") {
+    this.momentumVelocity = null; // recentering overrides any in-flight glide
     const next = fitToViewport(
       { width: this.app.screen.width, height: this.app.screen.height },
       { width: MAP_VIEWBOX_WIDTH, height: MAP_VIEWBOX_HEIGHT },
-      this.initialFit,
+      mode,
     );
     this.camScale = Math.min(next.scale, MAX_ZOOM);
     this.camX = next.x;
@@ -255,6 +290,11 @@ export class MapScene {
     // clamped scale instead of the original unclamped one.
     this.clampCamera();
     this.applyCamera();
+  }
+
+  /** Fit using this scene's default mode (set once at construction). Used for the very first fit and for resetZoom(). */
+  private fitToViewport() {
+    this.applyFit(this.initialFit);
   }
 
   // ---------------------------------------------------------------------------
@@ -290,10 +330,15 @@ export class MapScene {
       panStartY = y;
       camStartX = this.camX;
       camStartY = this.camY;
+      this.panSamples = [{ x, y, timeMs: Date.now() }];
       this.canvas.style.cursor = "grabbing";
     };
 
     stage.on("pointerdown", (e: FederatedPointerEvent) => {
+      // Any new touch stops an in-flight glide immediately — a hand landing
+      // on a moving map should still it, not fight it.
+      this.momentumVelocity = null;
+
       if (pointers.size === 0) {
         // Fresh gesture: don't let a previous drag suppress this tap.
         this.dragSuppressesClick = false;
@@ -330,19 +375,38 @@ export class MapScene {
         this.camY = camStartY + (e.globalY - panStartY);
         this.clampCamera();
         this.applyCamera();
+
+        // Trailing sample history for release-velocity estimation. Trimmed
+        // to a short window so a slow start followed by a fast flick isn't
+        // dragged down by stale, slower early samples.
+        const now = Date.now();
+        this.panSamples.push({ x: e.globalX, y: e.globalY, timeMs: now });
+        this.panSamples = this.panSamples.filter((s) => now - s.timeMs <= 150);
       }
     });
 
     const onPointerUp = (e: FederatedPointerEvent) => {
+      const wasPanning = panActive;
       pointers.delete(e.pointerId);
 
       if (pointers.size === 0) {
         panActive = false;
         this.canvas.style.cursor = "grab";
 
-        // Background-tap / double-tap-to-zoom detection: only for taps that
-        // didn't drag, and whose target is the stage itself (not a territory
-        // node, which handles its own pointertap independently).
+        if (wasPanning && !this.reducedMotion) {
+          const releaseVelocity = computeReleaseVelocity(this.panSamples);
+          if (releaseVelocity && velocityMagnitude(releaseVelocity) >= MOMENTUM_START_SPEED) {
+            this.momentumVelocity = releaseVelocity;
+          }
+        }
+        this.panSamples = [];
+
+        // Double-tap-to-zoom detection: only for taps that didn't drag, and
+        // whose target is the stage itself (not a territory node, which
+        // handles its own pointertap independently). A single background
+        // tap is otherwise a no-op — it must never trigger anything else
+        // (e.g. entering/exiting fullscreen is only ever done via an
+        // explicit button, never a map tap).
         if (!this.dragSuppressesClick && e.target === stage) {
           const tap: TapRecord = { x: e.globalX, y: e.globalY, timeMs: Date.now() };
           if (isDoubleTap(this.lastTap, tap)) {
@@ -350,7 +414,6 @@ export class MapScene {
             this.lastTap = null;
           } else {
             this.lastTap = tap;
-            this.onBackgroundTap?.();
           }
         }
       } else if (pointers.size === 1) {
@@ -377,11 +440,6 @@ export class MapScene {
   // Public API
   // ---------------------------------------------------------------------------
 
-  /** Registers a callback fired when the user taps empty map background (not a territory, not a drag). */
-  setOnBackgroundTap(fn: (() => void) | null) {
-    this.onBackgroundTap = fn;
-  }
-
   /**
    * Called once, right after scene creation, with the container's actual
    * current size. MapScene.create() may have been initialized with a
@@ -397,6 +455,20 @@ export class MapScene {
   applyInitialSize(width: number, height: number) {
     this.app.renderer.resize(width, height);
     this.fitToViewport();
+  }
+
+  /**
+   * Resizes the renderer to the given size and immediately re-fits to the
+   * "cover" scale (fills edge to edge, no letterboxing) in one atomic
+   * step. Used when a persistent, shared scene is reparented into the
+   * fullscreen shell: the container's new (larger) size needs to be
+   * applied *and* the camera needs to auto-fill it, without waiting for
+   * the ResizeObserver's async callback (which only clamps, never
+   * re-fits, since normally a resize must preserve the user's camera).
+   */
+  enterFullscreenFit(width: number, height: number) {
+    this.app.renderer.resize(width, height);
+    this.applyFit("cover");
   }
 
   /**

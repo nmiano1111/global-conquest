@@ -30,31 +30,27 @@ interface GameMapProps {
    */
   highlightedTerritories?: ReadonlySet<string>;
   /**
-   * Fired when the user taps empty map background — not a territory, and
-   * not the end of a pan/pinch drag. Used to offer "tap the map to expand
-   * to fullscreen" without conflicting with territory selection.
+   * GameMap always fills its container completely (position: absolute;
+   * inset: 0) — the container itself (owned by whichever slot this shared
+   * instance is currently portaled into) is what determines the visible
+   * size/shape, e.g. an aspect-ratio box for the embedded slot vs. a
+   * full-bleed box for the fullscreen slot.
    */
-  onBackgroundTap?: () => void;
-  /** Overrides the default embedded sizing (aspect-ratio box). Fullscreen mode passes an absolute-fill className instead. */
-  className?: string;
-  /**
-   * Initial/reset zoom fit. "contain" (default) shows the whole board,
-   * matching today's embedded/mobile behavior. "cover" fills the viewport
-   * edge to edge with no letterboxing, cropping the board's edges — used
-   * by fullscreen mode so the map reads as large as possible on open;
-   * zooming out is still possible down to the "contain" scale to see the
-   * whole board, regardless of this setting.
-   */
-  initialFit?: "contain" | "cover";
+  className: string;
 }
-
-const DEFAULT_CLASS_NAME =
-  "relative aspect-[2048/1367] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900";
 
 export interface GameMapHandle {
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
+  /**
+   * Resizes to the given size and immediately fits to the "cover" scale
+   * (fills edge to edge). Used when this persistent, shared map instance
+   * is reparented into the fullscreen shell, so it reads as large as
+   * possible on open — zooming out is still possible down to the
+   * "contain" scale to see the whole board.
+   */
+  enterFullscreenFit: (width: number, height: number) => void;
 }
 
 const EMPTY_HIGHLIGHT: ReadonlySet<string> = new Set();
@@ -70,9 +66,7 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
   recentCombat = EMPTY_HIGHLIGHT,
   recentCapture = EMPTY_HIGHLIGHT,
   highlightedTerritories = EMPTY_HIGHLIGHT,
-  onBackgroundTap,
   className,
-  initialFit = "contain",
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<MapScene | null>(null);
@@ -93,7 +87,6 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
     highlightedTerritories,
   });
   const onClickRef = useRef(onTerritoryClick);
-  const onBackgroundTapRef = useRef(onBackgroundTap);
   useLayoutEffect(() => {
     stateRef.current = {
       game,
@@ -107,13 +100,13 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
       highlightedTerritories,
     };
     onClickRef.current = onTerritoryClick;
-    onBackgroundTapRef.current = onBackgroundTap;
   });
 
   useImperativeHandle(ref, () => ({
     zoomIn: () => sceneRef.current?.zoomIn(),
     zoomOut: () => sceneRef.current?.zoomOut(),
     resetZoom: () => sceneRef.current?.resetZoom(),
+    enterFullscreenFit: (width: number, height: number) => sceneRef.current?.enterFullscreenFit(width, height),
   }));
 
   // --- Mount: create Pixi scene ---
@@ -132,7 +125,7 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
     const w = container.offsetWidth || 800;
     const h = container.offsetHeight || 534;
 
-    MapScene.create(w, h, (name) => onClickRef.current(name), initialFit)
+    MapScene.create(w, h, (name) => onClickRef.current(name))
       .then((scene) => {
         if (!mounted) {
           scene.destroy();
@@ -146,7 +139,6 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
         container.appendChild(canvas);
 
         sceneRef.current = scene;
-        scene.setOnBackgroundTap(() => onBackgroundTapRef.current?.());
 
         // Re-measure now rather than trusting the w/h captured before this
         // async init started: Pixi's WebGL context + texture load can take
@@ -190,10 +182,7 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
         sceneRef.current = null;
       }
     };
-    // Intentionally mount-once: onClickRef/onBackgroundTapRef stay current via the
-    // layout effect above, and initialFit is a one-time creation setting, not
-    // something a change to should tear down and recreate the Pixi scene for.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Intentionally mount-once: onClickRef stays current via the layout effect above.
   }, []);
 
   // --- Resize: keep renderer and world scale in sync with container ---
@@ -209,11 +198,6 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
     observer.observe(container);
     return () => observer.disconnect();
   }, []);
-
-  // --- Background-tap callback: keep the scene's handler current ---
-  useEffect(() => {
-    sceneRef.current?.setOnBackgroundTap(onBackgroundTap ? () => onBackgroundTap() : null);
-  }, [onBackgroundTap]);
 
   // --- State sync: update territory visuals whenever game/selection changes ---
   useEffect(() => {
@@ -240,7 +224,7 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
   return (
     <div
       ref={containerRef}
-      className={className ?? DEFAULT_CLASS_NAME}
+      className={className}
       style={{ touchAction: "none" }}
     />
   );

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { GameBootstrap } from "../../api/games";
-import { GameMap, type GameMapHandle } from "../../map/GameMap";
+import type { GameMapHandle } from "../../map/GameMap";
 import { deriveInteractionMode } from "./interactionMode";
 import { PHASE_BADGE_CLASS, PHASE_LABELS, type DiceRollResult } from "./gameShared";
 
@@ -11,6 +11,10 @@ type Player = GameBootstrap["players"][number];
 export interface FullscreenGameMapProps {
   game: GameBootstrap | null;
   onClose: () => void;
+  /** Shared GameMap instance's imperative handle, owned by GamePage — see GamePage for why it's shared rather than one-per-view. */
+  mapRef: RefObject<GameMapHandle | null>;
+  /** Registers this shell's map container as the active portal target for the shared GameMap. */
+  mapSlotRef: (node: HTMLDivElement | null) => void;
 
   phase: string;
   phaseMode: string;
@@ -33,11 +37,6 @@ export interface FullscreenGameMapProps {
   activeFrom: string;
   activeTo: string;
 
-  legalAttackTargets: ReadonlySet<string>;
-  recentCombatTerritories: ReadonlySet<string>;
-  recentCaptureTerritories: ReadonlySet<string>;
-  highlightedTerritories: ReadonlySet<string>;
-
   clampedArmiesInput: number;
   minArmiesInput: number;
   maxArmiesInput: number;
@@ -46,7 +45,6 @@ export interface FullscreenGameMapProps {
   maxDefendDiceAllowed: number;
   canAttackSelection: boolean;
 
-  onMapTerritoryClick: (name: string) => void;
   commitReinforcement: () => void;
   commitFortify: () => void;
   commitOccupy: () => void;
@@ -100,21 +98,100 @@ function MapIconButton(props: {
   );
 }
 
+/**
+ * Drag handle spanning the top of the bottom sheet. Tapping it toggles
+ * open/collapsed; dragging it vertically does too, snapping to whichever
+ * state the drag direction implies once past a small threshold — dragging
+ * down closes, dragging up opens. A tiny movement (a tap, not a drag) just
+ * toggles the current state, matching a native bottom-sheet handle.
+ */
+function SheetHandle(props: { collapsed: boolean; onToggle: (collapsed: boolean) => void }) {
+  const dragStartYRef = useRef<number | null>(null);
+
+  return (
+    <button
+      type="button"
+      aria-expanded={!props.collapsed}
+      aria-label={props.collapsed ? "Expand action panel" : "Collapse action panel"}
+      className="flex w-full touch-none items-center justify-center py-2.5"
+      onPointerDown={(e) => {
+        dragStartYRef.current = e.clientY;
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+      }}
+      onPointerUp={(e) => {
+        const startY = dragStartYRef.current;
+        dragStartYRef.current = null;
+        if (startY === null) return;
+        const deltaY = e.clientY - startY;
+        if (Math.abs(deltaY) < 8) {
+          props.onToggle(!props.collapsed);
+        } else if (deltaY > 24) {
+          props.onToggle(true);
+        } else if (deltaY < -24) {
+          props.onToggle(false);
+        }
+      }}
+      onClick={(e) => {
+        // Keyboard activation (Enter/Space) dispatches a click with no
+        // preceding pointer events, so the pointerup handling above never
+        // runs for it — this is the only path that toggles for keyboard
+        // users. Real mouse/touch clicks are already handled by pointerup
+        // and browsers synthesize a click after them too (with detail >=
+        // 1); ignoring those here avoids toggling twice and canceling out.
+        if (e.detail === 0) props.onToggle(!props.collapsed);
+      }}
+    >
+      <span className="h-1.5 w-10 rounded-full bg-slate-500/70" />
+    </button>
+  );
+}
+
+/**
+ * Shared translucent shell for the bottom sheet, with a drag/tap handle
+ * and a smooth slide-open/slide-shut transition. Uses the CSS grid
+ * "animate to auto height" technique (grid-template-rows: 1fr ↔ 0fr) so it
+ * doesn't need to measure the (per-phase, variable) content height in JS.
+ */
+function CollapsibleSheet(props: {
+  collapsed: boolean;
+  onToggleCollapsed: (collapsed: boolean) => void;
+  variant: "action" | "status";
+  testId: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`relative z-10 shrink-0 rounded-t-2xl border-t border-slate-700 shadow-[0_-8px_24px_rgba(0,0,0,0.4)] backdrop-blur-md ${
+        props.variant === "action" ? "bg-slate-900/70" : "bg-slate-900/60"
+      }`}
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      data-testid={props.testId}
+    >
+      <SheetHandle collapsed={props.collapsed} onToggle={props.onToggleCollapsed} />
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
+        style={{ gridTemplateRows: props.collapsed ? "0fr" : "1fr" }}
+      >
+        <div className="overflow-hidden">{props.children}</div>
+      </div>
+    </div>
+  );
+}
+
 export function FullscreenGameMap(props: FullscreenGameMapProps) {
   const {
-    game, onClose, phase, phaseMode, isMyTurn, isGameOver, wsStatus,
+    game, onClose, mapRef, mapSlotRef, phase, phaseMode, isMyTurn, isGameOver, wsStatus,
     players, playerColors, territoryState,
     pendingReinforcements, mySetupArmies, occupyRequirement, diceResult,
     selectedTerritory, selectedFrom, selectedTo, activeFrom, activeTo,
-    legalAttackTargets, recentCombatTerritories, recentCaptureTerritories, highlightedTerritories,
     clampedArmiesInput, minArmiesInput, maxArmiesInput,
     clampedAttackerDice, maxAttackDiceAllowed, maxDefendDiceAllowed, canAttackSelection,
-    onMapTerritoryClick, commitReinforcement, commitFortify, commitOccupy, onRollDice,
+    commitReinforcement, commitFortify, commitOccupy, onRollDice,
     setArmiesInput, setAttackerDice, sendAction, setSelectedFrom, setSelectedTo, setSelectedTerritory,
   } = props;
 
-  const mapRef = useRef<GameMapHandle>(null);
   const [portalEl] = useState(() => document.createElement("div"));
+  const [sheetCollapsed, setSheetCollapsed] = useState(false);
 
   // Root-level fixed layer: mount a dedicated element on document.body so
   // this renders above the entire app shell (including its sticky, z-30
@@ -537,24 +614,12 @@ export function FullscreenGameMap(props: FullscreenGameMapProps) {
       aria-label="Fullscreen map"
       data-testid="fullscreen-map-root"
     >
-      {/* ── Map layer (fills background) ── */}
-      <div className="absolute inset-0">
-        <GameMap
-          ref={mapRef}
-          game={game}
-          className="absolute inset-0"
-          initialFit="cover"
-          selectedTerritory={selectedTerritory}
-          activeFrom={activeFrom}
-          activeTo={activeTo}
-          highlightedTerritories={highlightedTerritories}
-          legalTargets={legalAttackTargets}
-          recentCombat={recentCombatTerritories}
-          recentCapture={recentCaptureTerritories}
-          playerColors={playerColors}
-          onTerritoryClick={onMapTerritoryClick}
-        />
-      </div>
+      {/* ── Map layer (fills background) ──
+          The actual <GameMap> is owned and rendered by GamePage, portaled
+          in here — see the comment by GamePage's embeddedMapSlotEl for why
+          embedded and fullscreen share one instance rather than each
+          mounting/destroying their own. */}
+      <div ref={mapSlotRef} className="absolute inset-0" />
 
       {/* ── Top bar ── */}
       <header
@@ -605,23 +670,25 @@ export function FullscreenGameMap(props: FullscreenGameMapProps) {
         </div>
       </div>
 
-      {/* ── Bottom sheet ── */}
+      {/* ── Bottom sheet: translucent, slide open/shut via the handle ── */}
       {showMutationControls ? (
-        <div
-          className="relative z-10 shrink-0 rounded-t-2xl border-t border-slate-700 bg-slate-900/90 shadow-[0_-8px_24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
-          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-          data-testid="action-sheet"
+        <CollapsibleSheet
+          collapsed={sheetCollapsed}
+          onToggleCollapsed={setSheetCollapsed}
+          variant="action"
+          testId="action-sheet"
         >
           {sheet}
-        </div>
+        </CollapsibleSheet>
       ) : (
-        <div
-          className="relative z-10 shrink-0 rounded-t-2xl border-t border-slate-700 bg-slate-900/80 shadow-[0_-8px_24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
-          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-          data-testid="status-overlay"
+        <CollapsibleSheet
+          collapsed={sheetCollapsed}
+          onToggleCollapsed={setSheetCollapsed}
+          variant="status"
+          testId="status-overlay"
         >
           {sheet}
-        </div>
+        </CollapsibleSheet>
       )}
     </div>,
     portalEl,

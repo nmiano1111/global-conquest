@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
 import { getGameBootstrap, type GameBootstrap, type Card } from "../../api/games";
 import { useAuth } from "../../auth";
-import { GameMap } from "../../map/GameMap";
+import { GameMap, type GameMapHandle } from "../../map/GameMap";
 import { useSocket } from "../../realtime";
 import { buttonGhostClass, buttonPrimaryClass, inputClass } from "./styles";
 import {
@@ -47,6 +48,65 @@ export function GamePage() {
   // fortify or reinforcement shouldn't get the combat glow).
   const [lastActionType, setLastActionType] = useState("");
   const [mapFullscreenOpen, setMapFullscreenOpen] = useState(false);
+  // A single GameMap (and its underlying Pixi Application) is shared
+  // between the embedded and fullscreen views — reparented imperatively
+  // between whichever of two slot elements is currently active, rather
+  // than being created/destroyed on every fullscreen toggle. This is
+  // required, not just an optimization: PixiJS's canvas-text texture pool
+  // is a module-level singleton (TexturePool), and destroying any one
+  // Application's renderer wipes it for every other still-live
+  // Application on the page — so a second, independently created/
+  // destroyed Application (the old approach) reliably crashes the first
+  // one's eventual cleanup with "Cannot read properties of undefined
+  // (reading 'push')" inside Pixi's CanvasTextPipe.destroy(). Sharing one
+  // instance also means the camera never resets across the toggle, not
+  // just across game-state updates.
+  //
+  // GameMap is portaled into mapHolderEl, a plain DOM node created exactly
+  // once (never swapped) — React's portal reconciliation keys off that
+  // container's identity, and a *changing* container (e.g. portaling
+  // straight into whichever slot is "active") makes React unmount and
+  // remount the portaled tree even though the target was never literally
+  // null in between. Keeping the portal target permanently stable and
+  // instead moving *that* node between slots with plain DOM appendChild
+  // (which React's reconciler never inspects) is what actually avoids the
+  // remount.
+  const mapRef = useRef<GameMapHandle>(null);
+  const [mapHolderEl] = useState(() => {
+    const el = document.createElement("div");
+    el.className = "contents"; // generates no box of its own; GameMap's own absolute-inset-0 div sizes against whichever slot this is currently appended to
+    return el;
+  });
+  const [embeddedMapSlotEl, setEmbeddedMapSlotEl] = useState<HTMLDivElement | null>(null);
+  const [fullscreenMapSlotEl, setFullscreenMapSlotEl] = useState<HTMLDivElement | null>(null);
+  const activeMapSlotEl = mapFullscreenOpen && fullscreenMapSlotEl ? fullscreenMapSlotEl : embeddedMapSlotEl;
+
+  // Moves the (stable, never-recreated) map holder into whichever slot is
+  // currently active. useLayoutEffect (not useEffect) so this happens
+  // before the browser paints, avoiding a flash in the previous slot.
+  useLayoutEffect(() => {
+    if (activeMapSlotEl && mapHolderEl.parentElement !== activeMapSlotEl) {
+      activeMapSlotEl.appendChild(mapHolderEl);
+    }
+  }, [activeMapSlotEl, mapHolderEl]);
+
+  // On entering fullscreen, explicitly fill the (now larger) fullscreen
+  // slot edge-to-edge rather than waiting on the map's own ResizeObserver,
+  // which only clamps the existing camera (correct for an ordinary
+  // resize) rather than re-fitting it — fullscreen specifically wants an
+  // auto-fill zoom on open, not just "whatever the embedded view's camera
+  // happened to be, now shown bigger." A frame's delay lets the fullscreen
+  // shell's layout (100dvh, safe-area insets) settle first.
+  useEffect(() => {
+    if (!mapFullscreenOpen || !fullscreenMapSlotEl) return;
+    const raf = requestAnimationFrame(() => {
+      const { offsetWidth, offsetHeight } = fullscreenMapSlotEl;
+      if (offsetWidth && offsetHeight) {
+        mapRef.current?.enterFullscreenFit(offsetWidth, offsetHeight);
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [mapFullscreenOpen, fullscreenMapSlotEl]);
   // Other connected players' live territory presses, relayed over the
   // socket (see territory_select/territory_selected) — keyed by user id so
   // multiple players' selections can be shown at once. Purely a passive
@@ -804,10 +864,34 @@ export function GamePage() {
     setSelectedCardIndices([]);
   };
 
+  // The one shared GameMap, portaled into the permanently-stable
+  // mapHolderEl (see its declaration above for why the target must never
+  // change) and always rendered — the useLayoutEffect above is what
+  // actually moves it between the embedded and fullscreen slots.
+  const mapPortal = createPortal(
+    <GameMap
+      ref={mapRef}
+      game={game}
+      selectedTerritory={selectedTerritory}
+      activeFrom={activeFrom}
+      activeTo={activeTo}
+      highlightedTerritories={highlightedTerritories}
+      legalTargets={legalAttackTargets}
+      recentCombat={recentCombatTerritories}
+      recentCapture={recentCaptureTerritories}
+      playerColors={playerColors}
+      onTerritoryClick={onMapTerritoryClick}
+      className="absolute inset-0"
+    />,
+    mapHolderEl,
+  );
+
   const fullscreenMap = mapFullscreenOpen ? (
     <FullscreenGameMap
       game={game}
       onClose={() => setMapFullscreenOpen(false)}
+      mapRef={mapRef}
+      mapSlotRef={setFullscreenMapSlotEl}
       phase={phase}
       phaseMode={phaseMode}
       isMyTurn={isMyTurn}
@@ -825,10 +909,6 @@ export function GamePage() {
       selectedTo={selectedTo}
       activeFrom={activeFrom}
       activeTo={activeTo}
-      legalAttackTargets={legalAttackTargets}
-      recentCombatTerritories={recentCombatTerritories}
-      recentCaptureTerritories={recentCaptureTerritories}
-      highlightedTerritories={highlightedTerritories}
       clampedArmiesInput={clampedArmiesInput}
       minArmiesInput={minArmiesInput}
       maxArmiesInput={maxArmiesInput}
@@ -836,7 +916,6 @@ export function GamePage() {
       maxAttackDiceAllowed={maxAttackDiceAllowed}
       maxDefendDiceAllowed={maxDefendDiceAllowed}
       canAttackSelection={canAttackSelection}
-      onMapTerritoryClick={onMapTerritoryClick}
       commitReinforcement={commitReinforcement}
       commitFortify={commitFortify}
       commitOccupy={commitOccupy}
@@ -882,7 +961,6 @@ export function GamePage() {
         selectedTerritory={selectedTerritory}
         activeFrom={activeFrom}
         activeTo={activeTo}
-        highlightedTerritories={highlightedTerritories}
         armiesInput={armiesInput}
         clampedArmiesInput={clampedArmiesInput}
         clampedAttackerDice={clampedAttackerDice}
@@ -892,7 +970,6 @@ export function GamePage() {
         maxDefendDiceAllowed={maxDefendDiceAllowed}
         canAttackSelection={canAttackSelection}
         renderEventBody={renderEventBody}
-        onMapTerritoryClick={onMapTerritoryClick}
         commitReinforcement={commitReinforcement}
         commitFortify={commitFortify}
         commitOccupy={commitOccupy}
@@ -909,11 +986,11 @@ export function GamePage() {
         setSelectedTerritory={setSelectedTerritory}
         onRefresh={() => void loadGame()}
         onToggleDesktop={toggleMobileUI}
-        legalAttackTargets={legalAttackTargets}
-        recentCombatTerritories={recentCombatTerritories}
-        recentCaptureTerritories={recentCaptureTerritories}
         onOpenFullscreen={() => setMapFullscreenOpen(true)}
+        mapRef={mapRef}
+        mapSlotRef={setEmbeddedMapSlotEl}
       />
+      {mapPortal}
       {fullscreenMap}
       </>
     );
@@ -1073,18 +1150,11 @@ export function GamePage() {
             </div>
           ) : null}
 
-          <GameMap
-            game={game}
-            selectedTerritory={selectedTerritory}
-            activeFrom={activeFrom}
-            activeTo={activeTo}
-            highlightedTerritories={highlightedTerritories}
-            legalTargets={legalAttackTargets}
-            recentCombat={recentCombatTerritories}
-            recentCapture={recentCaptureTerritories}
-            playerColors={playerColors}
-            onTerritoryClick={onMapTerritoryClick}
-            onBackgroundTap={() => setMapFullscreenOpen(true)}
+          {/* The actual <GameMap> is rendered once above (sharedGameMap) and
+              portaled in here — see the comment by embeddedMapSlotEl. */}
+          <div
+            ref={setEmbeddedMapSlotEl}
+            className="relative aspect-[2048/1367] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-900"
           />
         </section>
 

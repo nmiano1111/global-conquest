@@ -1,28 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { forwardRef, useEffect, useImperativeHandle } from "react";
+import type { RefObject } from "react";
 import type { GameBootstrap } from "../../api/games";
+import type { GameMapHandle } from "../../map/GameMap";
 import { FullscreenGameMap, type FullscreenGameMapProps } from "./FullscreenGameMap";
 
-const mountCalls = vi.hoisted(() => ({ current: 0 }));
-
-vi.mock("../../map/GameMap", () => {
-  const MockGameMap = forwardRef<unknown, Record<string, unknown>>((props, ref) => {
-    useEffect(() => {
-      mountCalls.current += 1;
-    }, []);
-    useImperativeHandle(ref, () => ({ zoomIn: vi.fn(), zoomOut: vi.fn(), resetZoom: vi.fn() }));
-    const onTerritoryClick = props.onTerritoryClick as (name: string) => void;
-    return (
-      <div data-testid="mock-game-map">
-        <button type="button" onClick={() => onTerritoryClick("Alaska")}>
-          mock-territory-click
-        </button>
-      </div>
-    );
-  });
-  return { GameMap: MockGameMap };
-});
+// FullscreenGameMap no longer renders <GameMap> itself — it's owned and
+// portaled in by GamePage (see GamePage's embeddedMapSlotEl/fullscreenMapSlotEl
+// comment for why: sharing one Pixi Application between the embedded and
+// fullscreen views, rather than creating/destroying a second one, avoids a
+// real PixiJS bug where destroying any renderer wipes a shared global
+// texture pool out from under any other still-live renderer). These tests
+// cover FullscreenGameMap's own responsibilities — the shell, top bar,
+// bottom sheet, and mapSlotRef wiring — not GameMap/MapScene itself.
 
 function makePlayer(overrides: Partial<GameBootstrap["players"][number]> = {}): GameBootstrap["players"][number] {
   return {
@@ -66,6 +56,8 @@ function baseProps(overrides: Partial<FullscreenGameMapProps> = {}): FullscreenG
   return {
     game: makeGame(),
     onClose: vi.fn(),
+    mapRef: { current: null } as RefObject<GameMapHandle | null>,
+    mapSlotRef: vi.fn(),
     phase: "attack",
     phaseMode: "attack",
     isMyTurn: true,
@@ -83,10 +75,6 @@ function baseProps(overrides: Partial<FullscreenGameMapProps> = {}): FullscreenG
     selectedTo: "",
     activeFrom: "",
     activeTo: "",
-    legalAttackTargets: new Set(),
-    recentCombatTerritories: new Set(),
-    recentCaptureTerritories: new Set(),
-    highlightedTerritories: new Set(),
     clampedArmiesInput: 1,
     minArmiesInput: 1,
     maxArmiesInput: 5,
@@ -94,7 +82,6 @@ function baseProps(overrides: Partial<FullscreenGameMapProps> = {}): FullscreenG
     maxAttackDiceAllowed: 3,
     maxDefendDiceAllowed: 2,
     canAttackSelection: false,
-    onMapTerritoryClick: vi.fn(),
     commitReinforcement: vi.fn(),
     commitFortify: vi.fn(),
     commitOccupy: vi.fn(),
@@ -108,10 +95,6 @@ function baseProps(overrides: Partial<FullscreenGameMapProps> = {}): FullscreenG
     ...overrides,
   };
 }
-
-beforeEach(() => {
-  mountCalls.current = 0;
-});
 
 afterEach(() => {
   cleanup();
@@ -161,19 +144,24 @@ describe("FullscreenGameMap", () => {
     }
   });
 
-  it("routes a territory tap through onMapTerritoryClick", () => {
-    const onMapTerritoryClick = vi.fn();
-    render(<FullscreenGameMap {...baseProps({ onMapTerritoryClick })} />);
-    fireEvent.click(screen.getByText("mock-territory-click"));
-    expect(onMapTerritoryClick).toHaveBeenCalledWith("Alaska");
-  });
+  it("registers its map container as the portal target on mount, and deregisters it on unmount", () => {
+    // React's dev build calls ref-cleanup functions through an internal
+    // wrapper (runWithFiberInDEV) that appends extra trailing `undefined`
+    // arguments beyond the single value React actually intends to pass —
+    // harmless for real callers (state setters only read the first arg),
+    // but means asserting the exact call signature (toHaveBeenLastCalledWith)
+    // is too brittle here; check the first argument of each call instead.
+    const firstArgs: unknown[] = [];
+    const mapSlotRef = (node: HTMLDivElement | null) => {
+      firstArgs.push(node);
+    };
+    const { unmount } = render(<FullscreenGameMap {...baseProps({ mapSlotRef })} />);
+    expect(firstArgs).toHaveLength(1);
+    expect(firstArgs[0]).toBeInstanceOf(HTMLDivElement);
 
-  it("does not remount the underlying map when the game prop changes (camera survives updates)", () => {
-    const { rerender } = render(<FullscreenGameMap {...baseProps({ game: makeGame({ pendingReinforcements: 0 }) })} />);
-    expect(mountCalls.current).toBe(1);
-    rerender(<FullscreenGameMap {...baseProps({ game: makeGame({ pendingReinforcements: 2, currentPlayer: 0 }) })} />);
-    rerender(<FullscreenGameMap {...baseProps({ game: makeGame({ phase: "fortify", currentPlayer: 0 }) })} />);
-    expect(mountCalls.current).toBe(1);
+    unmount();
+    expect(firstArgs).toHaveLength(2);
+    expect(firstArgs[1]).toBeNull();
   });
 
   it("shows a waiting status and hides mutation controls when it isn't the local player's turn", () => {
@@ -254,5 +242,43 @@ describe("FullscreenGameMap", () => {
     expect(screen.getByText(/territory conquered/i)).toBeInTheDocument();
     fireEvent.click(screen.getByText(/move 2 troops/i));
     expect(commitOccupy).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts with the bottom sheet open, and tapping its handle collapses/expands it", () => {
+    render(<FullscreenGameMap {...baseProps({ phaseMode: "reinforce" })} />);
+    const handle = screen.getByLabelText("Collapse action panel");
+    expect(handle).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(handle);
+    const collapsedHandle = screen.getByLabelText("Expand action panel");
+    expect(collapsedHandle).toHaveAttribute("aria-expanded", "false");
+    // Content stays mounted (so state/selection isn't lost) — only its
+    // rendered height collapses via CSS, not removal from the DOM.
+    expect(screen.getByText(/tap one of your territories/i)).toBeInTheDocument();
+
+    fireEvent.click(collapsedHandle);
+    expect(screen.getByLabelText("Collapse action panel")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("collapses the sheet when the handle is dragged down, and expands it when dragged up", () => {
+    render(<FullscreenGameMap {...baseProps({ phaseMode: "reinforce" })} />);
+    const handle = screen.getByLabelText("Collapse action panel");
+
+    fireEvent.pointerDown(handle, { clientY: 100 });
+    fireEvent.pointerUp(handle, { clientY: 160 }); // dragged down 60px -> collapse
+    expect(screen.getByLabelText("Expand action panel")).toHaveAttribute("aria-expanded", "false");
+
+    const collapsedHandle = screen.getByLabelText("Expand action panel");
+    fireEvent.pointerDown(collapsedHandle, { clientY: 160 });
+    fireEvent.pointerUp(collapsedHandle, { clientY: 100 }); // dragged up 60px -> expand
+    expect(screen.getByLabelText("Collapse action panel")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("treats a small handle movement as a tap toggle rather than a drag", () => {
+    render(<FullscreenGameMap {...baseProps({ phaseMode: "reinforce" })} />);
+    const handle = screen.getByLabelText("Collapse action panel");
+    fireEvent.pointerDown(handle, { clientY: 100 });
+    fireEvent.pointerUp(handle, { clientY: 102 }); // 2px — well under the drag threshold
+    expect(screen.getByLabelText("Expand action panel")).toHaveAttribute("aria-expanded", "false");
   });
 });

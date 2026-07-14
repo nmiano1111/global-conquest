@@ -1,7 +1,7 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Link } from "@tanstack/react-router";
 import type { Card, GameBootstrap } from "../../api/games";
-import { GameMap, type GameMapHandle } from "../../map/GameMap";
+import type { GameMapHandle } from "../../map/GameMap";
 import {
   PHASE_BADGE_CLASS,
   PHASE_LABELS,
@@ -44,11 +44,6 @@ export interface MobileGameViewProps {
   selectedTerritory: string;
   activeFrom: string;
   activeTo: string;
-  /** Passive highlight for bot actions and other players' live territory presses — see GameMap. */
-  highlightedTerritories?: ReadonlySet<string>;
-  legalAttackTargets?: ReadonlySet<string>;
-  recentCombatTerritories?: ReadonlySet<string>;
-  recentCaptureTerritories?: ReadonlySet<string>;
   armiesInput: number;
   clampedArmiesInput: number;
   clampedAttackerDice: number;
@@ -59,7 +54,6 @@ export interface MobileGameViewProps {
   canAttackSelection: boolean;
 
   renderEventBody: (body: string) => React.ReactNode;
-  onMapTerritoryClick: (name: string) => void;
   commitReinforcement: () => void;
   commitFortify: () => void;
   commitOccupy: () => void;
@@ -77,6 +71,10 @@ export interface MobileGameViewProps {
   onRefresh: () => void;
   onToggleDesktop: () => void;
   onOpenFullscreen: () => void;
+  /** Shared GameMap instance's imperative handle, owned by GamePage — see gameShared/GamePage for why it's shared rather than one-per-view. */
+  mapRef: RefObject<GameMapHandle | null>;
+  /** Registers this view's map container as the active portal target for the shared GameMap. */
+  mapSlotRef: (node: HTMLDivElement | null) => void;
 }
 
 type Tab = "actions" | "cards" | "events" | "chat";
@@ -96,21 +94,19 @@ export function MobileGameView(props: MobileGameViewProps) {
     players, playerColors, territoryState, myCards, selectedCardIndices,
     mySetupArmies, nextTradeBonus, pendingReinforcements, occupyRequirement,
     diceResult, selectedTerritory, activeFrom, activeTo,
-    highlightedTerritories, legalAttackTargets, recentCombatTerritories, recentCaptureTerritories,
     clampedArmiesInput, clampedAttackerDice,
     minArmiesInput, maxArmiesInput, maxAttackDiceAllowed, maxDefendDiceAllowed,
-    canAttackSelection, renderEventBody, onMapTerritoryClick,
+    canAttackSelection, renderEventBody,
     commitReinforcement, commitFortify, commitOccupy, commitTradeCards,
     toggleCardSelection, onRollDice, setAttackerDice, setArmiesInput,
     setChatDraft, onSendChat, sendAction, setSelectedFrom, setSelectedTo,
-    setSelectedTerritory, onToggleDesktop, onOpenFullscreen,
+    setSelectedTerritory, onToggleDesktop, onOpenFullscreen, mapRef, mapSlotRef,
   } = props;
 
   const [activeTab, setActiveTab] = useState<Tab>("actions");
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const eventScrollRef = useRef<HTMLDivElement>(null);
   const tabContentRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<GameMapHandle>(null);
 
   // useLayoutEffect fires after DOM commit but before paint, so the ref is
   // guaranteed to be attached even for freshly-mounted tab content.
@@ -654,20 +650,11 @@ export function MobileGameView(props: MobileGameViewProps) {
 
       {/* ── Map ── */}
       <div className="relative min-h-0 flex-1 bg-slate-900 flex items-center overflow-hidden">
-        <GameMap
-          ref={mapRef}
-          game={game}
-          selectedTerritory={selectedTerritory}
-          activeFrom={activeFrom}
-          activeTo={activeTo}
-          highlightedTerritories={highlightedTerritories}
-          legalTargets={legalAttackTargets}
-          recentCombat={recentCombatTerritories}
-          recentCapture={recentCaptureTerritories}
-          playerColors={playerColors}
-          onTerritoryClick={onMapTerritoryClick}
-          onBackgroundTap={onOpenFullscreen}
-        />
+        {/* The actual <GameMap> is owned and rendered by GamePage, portaled
+            in here — display:contents makes this wrapper invisible to the
+            flex layout so GameMap's own div sizes itself exactly as if it
+            were a direct child of this container, as before. */}
+        <div ref={mapSlotRef} className="contents" />
         <button
           type="button"
           onClick={onOpenFullscreen}

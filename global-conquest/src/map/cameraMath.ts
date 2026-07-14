@@ -151,3 +151,78 @@ export function isDoubleTap(
   if (current.timeMs - previous.timeMs > maxIntervalMs) return false;
   return distance(previous.x, previous.y, current.x, current.y) <= maxDistancePx;
 }
+
+// ---------------------------------------------------------------------------
+// Momentum glide (inertial panning after a drag release)
+// ---------------------------------------------------------------------------
+
+export interface Velocity {
+  /** Pixels per millisecond. */
+  vx: number;
+  vy: number;
+}
+
+export interface PanSample {
+  x: number;
+  y: number;
+  timeMs: number;
+}
+
+export function velocityMagnitude(v: Velocity): number {
+  return Math.hypot(v.vx, v.vy);
+}
+
+/**
+ * Estimates release velocity (px/ms) from a short trailing history of pan
+ * samples — the earliest sample still within windowMs of the most recent
+ * one, compared against that most recent one. Using a short trailing
+ * window (rather than the whole drag) means a flick that decelerates
+ * before release doesn't inherit speed from earlier in the gesture.
+ * Returns null when there's not enough history to estimate from.
+ */
+export function computeReleaseVelocity(
+  samples: readonly PanSample[],
+  windowMs = 100,
+): Velocity | null {
+  if (samples.length < 2) return null;
+  const last = samples[samples.length - 1];
+  let first = last;
+  for (const s of samples) {
+    if (last.timeMs - s.timeMs <= windowMs) {
+      first = s;
+      break;
+    }
+  }
+  const dt = last.timeMs - first.timeMs;
+  if (dt <= 0) return null;
+  return { vx: (last.x - first.x) / dt, vy: (last.y - first.y) / dt };
+}
+
+/**
+ * Advances the camera by one momentum-glide step: moves position by
+ * velocity × dt, decays velocity by friction (normalized to a ~60fps
+ * frame so it feels consistent regardless of actual frame rate), and
+ * clamps position to bounds. Velocity is zeroed on any axis that just hit
+ * a bound, so the glide stops cleanly at the map's edge instead of
+ * jittering against it.
+ */
+export function stepMomentum(
+  cam: CameraState,
+  velocity: Velocity,
+  dtMs: number,
+  friction: number,
+  viewport: Viewport,
+  world: WorldSize,
+): { camera: CameraState; velocity: Velocity } {
+  const rawX = cam.x + velocity.vx * dtMs;
+  const rawY = cam.y + velocity.vy * dtMs;
+  const clamped = clampCameraPosition({ scale: cam.scale, x: rawX, y: rawY }, viewport, world);
+  const decay = Math.pow(friction, dtMs / (1000 / 60));
+  return {
+    camera: clamped,
+    velocity: {
+      vx: clamped.x !== rawX ? 0 : velocity.vx * decay,
+      vy: clamped.y !== rawY ? 0 : velocity.vy * decay,
+    },
+  };
+}
