@@ -619,7 +619,10 @@ export function MobileGameView(props: MobileGameViewProps) {
   );
 
   return (
-    <div className="flex flex-col overflow-hidden bg-slate-900 text-white" style={{ height: "100dvh" }}>
+    <div
+      className="fixed inset-0 flex flex-col overflow-hidden bg-slate-900 text-white"
+      style={{ height: "100dvh" }}
+    >
       {/* ── Top bar ── */}
       <header className="flex shrink-0 items-center gap-2 border-b border-slate-700 bg-slate-800 px-3 py-2">
         <Link
