@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Link } from "@tanstack/react-router";
 import type { Card, GameBootstrap } from "../../api/games";
 import type { GameMapHandle } from "../../map/GameMap";
@@ -107,6 +107,23 @@ export function MobileGameView(props: MobileGameViewProps) {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const eventScrollRef = useRef<HTMLDivElement>(null);
   const tabContentRef = useRef<HTMLDivElement>(null);
+
+  // This view is a self-contained height:100dvh layout with its own
+  // internal scroll areas (chat/events tabs) — it's never meant to be
+  // scrolled as part of the outer page. But it's still rendered inside
+  // AppShell's normally-flowing <main> (which adds its own padding below
+  // a sticky header that also occupies real document height), so without
+  // this the *page* becomes tall enough to scroll, dragging this view's
+  // top — including the map — up and behind the sticky nav bar with no
+  // way to tell it happened. Locking body scroll while mounted closes
+  // that gap, the same way FullscreenGameMap already does for itself.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
 
   // useLayoutEffect fires after DOM commit but before paint, so the ref is
   // guaranteed to be attached even for freshly-mounted tab content.

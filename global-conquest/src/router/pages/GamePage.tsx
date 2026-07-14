@@ -1465,6 +1465,7 @@ export function GamePage() {
         </section>
       </aside>
     </div>
+    {mapPortal}
     {fullscreenMap}
     </>
   );
