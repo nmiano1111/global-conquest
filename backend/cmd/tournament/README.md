@@ -64,19 +64,33 @@ when at least one game didn't complete), and a per-strategy table:
 tournament: 100 games (98 completed, 2 failed) · seeds 1-100 · avg 79.5 turns, 1861.3 commands · 39.8s elapsed
 failures: duration_limit_reached: 2
 
-strategy   appearances  completed  wins  win rate  avg finish  avg captures  avg elims
-basic-v1   98           98         12    12.2%     2.60        88.45         0.20
-scored-v1  196          196        86    43.9%     1.71        123.67        0.90
+strategy   appearances  completed  wins  seat win%  game win%  avg finish  avg captures  avg elims
+basic-v1   98           98         12    12.2%      12.2%      2.60        88.45         0.20
+scored-v1  196          196        86    43.9%      87.8%      1.71        123.67        0.90
 ```
 
 A strategy's `appearances` counts every seat that used it across every game
-run (a mirror matchup like `scored-v1,scored-v1,basic-v1` gives `scored-v1`
-2x the samples per game — each seat is an independent sample of that
-strategy playing from that seat). `win rate` and every `avg *` column are
-computed over `completed` games only: a stalemate/limit-hit game has no
-winner and no meaningful finish order for anyone, so including it would
-misread a systemic matchup property as a strategy weakness — see
-`failures` instead.
+run — a mirror matchup like `scored-v1,scored-v1,basic-v1` gives
+`scored-v1` 2x the samples per game, since each seat is an independent
+sample of that strategy playing from that seat. This means there are
+**two different, easily-confused win rates** once a strategy occupies more
+than one seat:
+
+- **`seat win%`** — `wins / completed appearances`: given a seat is
+  playing this strategy, how often does *that seat* win. A strategy
+  occupying `k` of `n` seats can never exceed `1/k` here even if it wins
+  every game, because its own seats are competing against each other too.
+- **`game win%`** — `wins / completed games`: what fraction of games did
+  *any* seat playing this strategy win, regardless of which one. This is
+  the number that answers "is this strategy actually better" — in the
+  example above, `scored-v1` occupies 2 of 3 seats and won 87.8% of all
+  games, even though no single one of its seats won more than 43.9% of
+  the time.
+
+Both `avg *` columns are computed over `completed` games only: a
+stalemate/limit-hit game has no winner and no meaningful finish order for
+anyone, so including it would misread a systemic matchup property as a
+strategy weakness — see `failures` instead.
 
 **JSON** (`--format json`) — the `Config` that produced the run, paired
 with the full `Aggregate`:
@@ -108,10 +122,23 @@ df = pd.read_json("/tmp/tournament.jsonl", lines=True)
 
 ## Progress
 
-While games run, a live status line on stderr shows `N/games complete
-(F failed)... elapsed`, updated as results arrive and cleared before the
-final output prints. Suppressed automatically when stderr isn't a
-terminal, same as `cmd/simulate`.
+While games run, a live progress bar on stderr ([schollz/progressbar](https://github.com/schollz/progressbar))
+shows percent complete, games/total, throughput, ETA, and a running failure
+count — updated as results arrive, finalized before the aggregate prints.
+Suppressed automatically when stderr isn't a terminal, same as
+`cmd/simulate`'s spinner.
+
+## Color
+
+The terminal aggregate table ([fatih/color](https://github.com/fatih/color))
+highlights the best strategy by win rate in green and the worst in dim
+gray, with the header/failure lines colored for scannability. Color is
+applied *after* the table is fully aligned by `tabwriter`, one whole
+rendered line at a time, so it never disturbs column alignment. Disabled
+automatically for `--output <file>` (a file shouldn't carry escape codes),
+when stdout isn't a live terminal (piped/redirected), or when `NO_COLOR`
+is set / `TERM=dumb`. `--format json` and `--raw-output` are never
+colored.
 
 ## Trace level
 

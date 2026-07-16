@@ -82,8 +82,32 @@ type StrategyStats struct {
 	Appearances          int
 	CompletedAppearances int
 
-	Wins    int
-	WinRate float64
+	// Wins counts completed games where the seat holding this StrategyID
+	// was the winner. Since exactly one seat wins per game, this is
+	// simultaneously "how many seat-appearances of this strategy won" and
+	// "how many games this strategy identity won" -- the two ratios below
+	// divide it by two different, easily-confused denominators.
+	Wins int
+
+	// SeatWinRate is Wins / CompletedAppearances: given a seat is playing
+	// this strategy, how often does that specific seat win. When a
+	// strategy occupies more than one seat in the matchup (a mirror
+	// match, e.g. "basic-v1,scored-v1,scored-v1"), CompletedAppearances
+	// counts every one of those seats every game, but only one can ever
+	// win -- so a strategy occupying k of n seats has a maximum possible
+	// SeatWinRate of 1/k even if it wins every single game. This is easy
+	// to misread as "the strategy is weak" when it's really just seat
+	// dilution; see GameWinRate for the metric that isn't affected by it.
+	SeatWinRate float64
+
+	// GameWinRate is Wins / (the tournament's completed game count): what
+	// fraction of games did *a* seat playing this strategy win, regardless
+	// of how many seats it occupied. This is the metric that answers "is
+	// this strategy identity actually better than the other one" -- e.g.
+	// two scored-v1 seats beating basic-v1 in every single game yields
+	// GameWinRate 1.0 for scored-v1 even though each individual scored-v1
+	// seat only won half of those games from SeatWinRate's point of view.
+	GameWinRate float64
 
 	AvgFinishOrder       float64
 	AvgCaptures          float64
@@ -214,12 +238,20 @@ func (a *aggregator) finalize() Aggregate {
 		}
 		if acc.completedAppearances > 0 {
 			n := float64(acc.completedAppearances)
-			stats.WinRate = float64(acc.wins) / n
+			stats.SeatWinRate = float64(acc.wins) / n
 			stats.AvgFinishOrder = float64(acc.finishOrderSum) / n
 			stats.AvgCaptures = float64(acc.capturesSum) / n
 			stats.AvgEliminationsMade = float64(acc.eliminationsSum) / n
 			stats.AvgCombatLossesTaken = float64(acc.combatLossesSum) / n
 			stats.AvgFinalTerritories = float64(acc.territoriesSum) / n
+		}
+		// GameWinRate's denominator is the tournament's completed game
+		// count, not this strategy's own CompletedAppearances -- since
+		// Config.Strategies is fixed for every game in a tournament, every
+		// strategy ID present appears in literally every game, so the two
+		// only coincide when that strategy occupies exactly one seat.
+		if a.completedGames > 0 {
+			stats.GameWinRate = float64(acc.wins) / float64(a.completedGames)
 		}
 		agg.Strategies = append(agg.Strategies, stats)
 	}

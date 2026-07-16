@@ -109,8 +109,8 @@ func TestAggregatorBasicMath(t *testing.T) {
 	if basic.CompletedAppearances != 2 {
 		t.Errorf("basic-v1 CompletedAppearances = %d, want 2", basic.CompletedAppearances)
 	}
-	if basic.Wins != 0 || basic.WinRate != 0 {
-		t.Errorf("basic-v1 Wins/WinRate = %d/%v, want 0/0", basic.Wins, basic.WinRate)
+	if basic.Wins != 0 || basic.SeatWinRate != 0 || basic.GameWinRate != 0 {
+		t.Errorf("basic-v1 Wins/SeatWinRate/GameWinRate = %d/%v/%v, want 0/0/0", basic.Wins, basic.SeatWinRate, basic.GameWinRate)
 	}
 	// FinishOrder for seat 0 (loser) in both completed games is 2.
 	if basic.AvgFinishOrder != 2 {
@@ -124,8 +124,14 @@ func TestAggregatorBasicMath(t *testing.T) {
 	if scored.Wins != 2 {
 		t.Errorf("scored-v1 Wins = %d, want 2", scored.Wins)
 	}
-	if scored.WinRate != 1 {
-		t.Errorf("scored-v1 WinRate = %v, want 1", scored.WinRate)
+	// Each strategy occupies exactly one seat here, so SeatWinRate and
+	// GameWinRate coincide -- the mirror-matchup case where they diverge
+	// is covered separately by TestAggregatorGameWinRateVsSeatWinRateInMirrorMatch.
+	if scored.SeatWinRate != 1 {
+		t.Errorf("scored-v1 SeatWinRate = %v, want 1", scored.SeatWinRate)
+	}
+	if scored.GameWinRate != 1 {
+		t.Errorf("scored-v1 GameWinRate = %v, want 1", scored.GameWinRate)
 	}
 	if scored.AvgFinishOrder != 1 {
 		t.Errorf("scored-v1 AvgFinishOrder = %v, want 1", scored.AvgFinishOrder)
@@ -157,11 +163,66 @@ func TestAggregatorNoCompletedGamesLeavesAveragesZero(t *testing.T) {
 	if s.Appearances != 6 || s.CompletedAppearances != 0 {
 		t.Errorf("Appearances/CompletedAppearances = %d/%d, want 6/0", s.Appearances, s.CompletedAppearances)
 	}
-	if s.WinRate != 0 || s.AvgFinishOrder != 0 {
-		t.Errorf("expected zero-valued rate stats with no completed appearances, got WinRate=%v AvgFinishOrder=%v", s.WinRate, s.AvgFinishOrder)
+	if s.SeatWinRate != 0 || s.GameWinRate != 0 || s.AvgFinishOrder != 0 {
+		t.Errorf("expected zero-valued rate stats with no completed appearances, got SeatWinRate=%v GameWinRate=%v AvgFinishOrder=%v",
+			s.SeatWinRate, s.GameWinRate, s.AvgFinishOrder)
 	}
 	if result.Failures[simulation.FailureCommandLimitReached] != 2 {
 		t.Errorf("Failures[command_limit_reached] = %d, want 2", result.Failures[simulation.FailureCommandLimitReached])
+	}
+}
+
+// TestAggregatorGameWinRateVsSeatWinRateInMirrorMatch directly reproduces
+// the scenario that motivated splitting Wins into two rates: scored-v1
+// occupies 2 of 3 seats and wins every single completed game (from
+// whichever of its two seats), basic-v1 never wins. GameWinRate must read
+// this as "scored-v1 won 100% of games", not the diluted-by-seat-count
+// SeatWinRate of 50%.
+func TestAggregatorGameWinRateVsSeatWinRateInMirrorMatch(t *testing.T) {
+	strategies := []string{bot.StrategyBasicV1, bot.StrategyScoredV1, bot.StrategyScoredV1}
+	agg := newAggregator()
+	// scored-v1 wins every game, alternating which of its two seats takes
+	// it -- the aggregate must come out the same regardless of which seat
+	// wins, since both seats share the same StrategyID.
+	agg.absorb(completedResult(1, 3, strategies, 1, 10, 100))
+	agg.absorb(completedResult(2, 3, strategies, 2, 10, 100))
+	agg.absorb(completedResult(3, 3, strategies, 1, 10, 100))
+	agg.absorb(completedResult(4, 3, strategies, 2, 10, 100))
+
+	result := agg.finalize()
+	if result.CompletedGames != 4 {
+		t.Fatalf("CompletedGames = %d, want 4", result.CompletedGames)
+	}
+
+	var basic, scored StrategyStats
+	for _, s := range result.Strategies {
+		switch s.StrategyID {
+		case bot.StrategyBasicV1:
+			basic = s
+		case bot.StrategyScoredV1:
+			scored = s
+		}
+	}
+
+	if basic.Wins != 0 || basic.GameWinRate != 0 || basic.SeatWinRate != 0 {
+		t.Errorf("basic-v1 Wins/GameWinRate/SeatWinRate = %d/%v/%v, want 0/0/0", basic.Wins, basic.GameWinRate, basic.SeatWinRate)
+	}
+
+	// scored-v1 occupies 2 of 3 seats: CompletedAppearances = 2*4 = 8, and
+	// it won all 4 games (one of its two seats each time), so Wins = 4.
+	if scored.CompletedAppearances != 8 {
+		t.Fatalf("scored-v1 CompletedAppearances = %d, want 8", scored.CompletedAppearances)
+	}
+	if scored.Wins != 4 {
+		t.Fatalf("scored-v1 Wins = %d, want 4", scored.Wins)
+	}
+	// GameWinRate: scored-v1 won every game -> 100%, regardless of seat count.
+	if scored.GameWinRate != 1 {
+		t.Errorf("scored-v1 GameWinRate = %v, want 1 (won every game)", scored.GameWinRate)
+	}
+	// SeatWinRate: Wins / CompletedAppearances = 4/8 -> 50%, the seat-count-diluted figure.
+	if scored.SeatWinRate != 0.5 {
+		t.Errorf("scored-v1 SeatWinRate = %v, want 0.5 (diluted by occupying 2 seats)", scored.SeatWinRate)
 	}
 }
 
