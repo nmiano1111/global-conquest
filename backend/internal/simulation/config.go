@@ -1,0 +1,175 @@
+// Package simulation drives complete bot-vs-bot Global Conquest games
+// headlessly: no Postgres, no WebSocket, no Discord, no HTTP, no live
+// pacing. It calls internal/risk directly and resolves decisions through
+// internal/bot's Strategy interface, translating each returned Command to
+// the matching risk.Game method itself rather than reusing bot.Runner —
+// see simulator.go for why.
+package simulation
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/nmiano1111/global-conquest/backend/internal/bot"
+)
+
+// TraceLevel controls how much detail a simulation records beyond its
+// final Result. See recorder.go for exactly what each level captures.
+type TraceLevel string
+
+const (
+	TraceNone     TraceLevel = "none"
+	TraceSummary  TraceLevel = "summary"
+	TraceDecision TraceLevel = "decision"
+	TraceFull     TraceLevel = "full"
+)
+
+// GameMode selects which risk constructor builds the simulated game.
+// AutoStart skips straight to PhaseReinforce with armies already
+// distributed; RandomTerritory stops at PhaseSetupReinforce and requires
+// bots to place their own initial armies via place_initial_army commands.
+// Both are fully supported by the command dispatcher; which one to use is
+// a per-experiment choice, not a fixed default.
+type GameMode string
+
+const (
+	GameModeAutoStart       GameMode = "auto_start"
+	GameModeRandomTerritory GameMode = "random_territory"
+)
+
+// ErrInvalidConfig is returned by Config.Validate (and Limits.Validate) for
+// any configuration mistake caught before a risk.Game is ever constructed.
+// A simulation must never surface this kind of problem as a mid-run
+// Failure — an unresolvable strategy ID or a bad player count is a setup
+// error, not a game event.
+var ErrInvalidConfig = errors.New("simulation: invalid config")
+
+// Limits bounds a single simulation so a strategy bug can't hang forever.
+type Limits struct {
+	// MaxCommands stops the simulation after this many total dispatched
+	// commands, across every seat and phase.
+	MaxCommands int
+	// MaxTurns stops the simulation once risk.Game.TurnNumber reaches
+	// this value.
+	MaxTurns int
+	// MaxCommandsWithoutProgress stops the simulation if this many
+	// consecutive commands pass with neither CurrentPlayer nor Phase
+	// changing — a cheap first-line stall detector, checked before the
+	// more expensive repeated-state-hash check (see statehash.go).
+	MaxCommandsWithoutProgress int
+	// MaxRepeatedStates stops the simulation once the same state
+	// fingerprint (statehash.go) has recurred this many times.
+	MaxRepeatedStates int
+}
+
+// DefaultLimits are generous enough not to cut off any real game while
+// still bounding a runaway strategy bug to a fast, cheap failure.
+func DefaultLimits() Limits {
+	return Limits{
+		MaxCommands:                20000,
+		MaxTurns:                   2000,
+		MaxCommandsWithoutProgress: 500,
+		MaxRepeatedStates:          3,
+	}
+}
+
+// Validate checks the limits are usable before a simulation starts.
+func (l Limits) Validate() error {
+	if l.MaxCommands <= 0 {
+		return fmt.Errorf("%w: MaxCommands must be positive, got %d", ErrInvalidConfig, l.MaxCommands)
+	}
+	if l.MaxTurns <= 0 {
+		return fmt.Errorf("%w: MaxTurns must be positive, got %d", ErrInvalidConfig, l.MaxTurns)
+	}
+	if l.MaxCommandsWithoutProgress <= 0 {
+		return fmt.Errorf("%w: MaxCommandsWithoutProgress must be positive, got %d", ErrInvalidConfig, l.MaxCommandsWithoutProgress)
+	}
+	if l.MaxRepeatedStates <= 0 {
+		return fmt.Errorf("%w: MaxRepeatedStates must be positive, got %d", ErrInvalidConfig, l.MaxRepeatedStates)
+	}
+	return nil
+}
+
+// Config fully specifies one reproducible simulation: the same Config
+// (same Seed, same Strategies, same GameMode) against the same strategy
+// registry must always produce the same game.
+type Config struct {
+	Seed int64
+
+	// Strategies holds one strategy ID per seat, in seat order; its
+	// length is the player count (risk.NewClassicGame requires 3-6). Seat
+	// i is assigned player ID SeatPlayerID(i) before risk's internal
+	// turn-order shuffle runs, so this mapping stays correct regardless
+	// of where that player ends up sitting after shuffling.
+	Strategies []string
+
+	GameMode GameMode
+	Trace    TraceLevel
+	Limits   Limits
+}
+
+// PlayerCount is the number of seats this config configures, derived from
+// Strategies rather than tracked separately so the two can't drift apart.
+func (c Config) PlayerCount() int {
+	return len(c.Strategies)
+}
+
+// SeatPlayerID returns the deterministic player ID assigned to a seat
+// before construction: simple and reproducible, unlike production's
+// crypto/rand-backed UUID-format bot IDs (internal/service's unexported
+// newBotPlayerID). Nothing in internal/risk or internal/bot parses or
+// validates player ID format, so there's no reason to match that shape.
+func SeatPlayerID(seat int) string {
+	return fmt.Sprintf("p%d", seat)
+}
+
+// PlayerIDs returns the ordered player IDs this config passes to
+// risk.NewClassicGame / NewClassicAutoStartGame / NewClassicRandomTerritoryGame.
+func (c Config) PlayerIDs() []string {
+	ids := make([]string, len(c.Strategies))
+	for i := range c.Strategies {
+		ids[i] = SeatPlayerID(i)
+	}
+	return ids
+}
+
+// StrategyByPlayerID builds the playerID -> strategyID mapping this config
+// implies. Intended to be called once at simulation setup and consulted
+// by player ID thereafter (risk's internal turn-order shuffle reorders
+// risk.Game.Players, so an index-based lookup after construction would be
+// wrong; a player's ID is stable through the shuffle, its index is not).
+func (c Config) StrategyByPlayerID() map[string]string {
+	m := make(map[string]string, len(c.Strategies))
+	for i, strategyID := range c.Strategies {
+		m[SeatPlayerID(i)] = strategyID
+	}
+	return m
+}
+
+// Validate checks a Config against the given strategy registry, catching
+// configuration mistakes -- an unknown strategy ID, a player count outside
+// risk's supported 3-6 range, an unrecognized trace level or game mode --
+// before any risk.Game is constructed. These must never surface as a
+// mid-run Failure, only as a setup-time error the caller can report
+// immediately.
+func (c Config) Validate(registry bot.StrategyRegistry) error {
+	if len(c.Strategies) < 3 || len(c.Strategies) > 6 {
+		return fmt.Errorf("%w: player count must be between 3 and 6, got %d", ErrInvalidConfig, len(c.Strategies))
+	}
+	for i, strategyID := range c.Strategies {
+		if _, ok := registry.Get(strategyID); !ok {
+			return fmt.Errorf("%w: seat %d: unknown strategy %q", ErrInvalidConfig, i, strategyID)
+		}
+	}
+	switch c.Trace {
+	case TraceNone, TraceSummary, TraceDecision, TraceFull:
+	default:
+		return fmt.Errorf("%w: unknown trace level %q", ErrInvalidConfig, c.Trace)
+	}
+	switch c.GameMode {
+	case GameModeAutoStart, GameModeRandomTerritory:
+	default:
+		return fmt.Errorf("%w: unknown game mode %q", ErrInvalidConfig, c.GameMode)
+	}
+	return c.Limits.Validate()
+}
