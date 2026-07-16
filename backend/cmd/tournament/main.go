@@ -53,6 +53,8 @@ func run(args []string) (completed bool, err error) {
 	format := fs.String("format", "text", "Aggregate output format: text|json")
 	output := fs.String("output", "", "Write the aggregate summary to this file instead of stdout")
 	rawOutput := fs.String("raw-output", "", "If set, write one JSON-encoded simulation.Result per line (JSONL) to this path as each game completes")
+	var weightsVariants weightsVariantFlag
+	fs.Var(&weightsVariants, "weights-variant", "Register a custom-weighted scored-v1 variant as <strategy-id>=<path> (repeatable) -- see internal/bot.LoadWeights")
 	if err := fs.Parse(args); err != nil {
 		return false, err
 	}
@@ -75,6 +77,9 @@ func run(args []string) (completed bool, err error) {
 	registry := bot.StrategyRegistry{
 		bot.StrategyBasicV1:  bot.NewBasicStrategy(),
 		bot.StrategyScoredV1: bot.NewScoredStrategy(bot.DefaultWeights),
+	}
+	if err := registerWeightsVariants(registry, weightsVariants); err != nil {
+		return false, err
 	}
 	sim := simulation.NewSimulator(registry)
 

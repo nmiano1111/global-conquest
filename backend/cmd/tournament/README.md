@@ -36,6 +36,7 @@ go run ./cmd/tournament --strategies basic-v1,scored-v1,scored-v1 --games 100
 | `--output` | no | stdout | Write the aggregate summary to this file instead of stdout. |
 | `--raw-output` | no | (none) | If set, path to write one JSON-encoded `simulation.Result` per line (JSONL) as each game completes. Omitted = aggregate only, no raw dump. |
 | `--config` | no | (none) | Path to a JSON file running several tournaments concurrently instead of one — see [Batch mode](#batch-mode---config) below. Mutually exclusive with every flag above except `--format`/`--output`, which apply to the combined batch output instead. |
+| `--weights-variant` | no | (none) | `<strategy-id>=<path>`, repeatable — register a custom-weighted `scored-v1` variant loaded from a JSON file (see [`internal/bot.LoadWeights`](../../internal/bot/weights_io.go)) under its own strategy ID, usable anywhere a strategy ID appears (`--strategies`, or a `--config` entry's `strategies`). Compatible with both modes above, not mutually exclusive with either. |
 
 ## Examples
 
@@ -120,6 +121,37 @@ Loading it in pandas:
 import pandas as pd
 df = pd.read_json("/tmp/tournament.jsonl", lines=True)
 ```
+
+## Custom weights (`--weights-variant`)
+
+Evaluates a fitted or hand-edited `bot.Weights` candidate against baseline
+— the endpoint of the loop described in
+[`project-docs/bot_player/phase_3_continuous_improvement/10_Bot_Weight_Tuning.md`](../../../project-docs/bot_player/phase_3_continuous_improvement/10_Bot_Weight_Tuning.md):
+generate training data (`cmd/traindata`), fit a model however you like,
+export the result as a `Weights`-shaped JSON file, then measure it here.
+
+```bash
+go run ./cmd/tournament \
+  --strategies basic-v1,scored-v1,scored-v1-candidate \
+  --games 500 \
+  --weights-variant scored-v1-candidate=candidate.json
+```
+
+`candidate.json` only needs to specify the fields it's actually changing —
+[`internal/bot.LoadWeights`](../../internal/bot/weights_io.go) fills in
+everything else from today's `bot.DefaultWeights`:
+
+```json
+{ "ArmyAdvantage": 1.8, "ExposurePenalty": -1.1 }
+```
+
+The registered ID (`scored-v1-candidate` above) is then usable anywhere a
+strategy ID appears — a direct `--strategies` list, or any entry's
+`strategies` in a `--config` batch file, so you can compare several
+candidates against baseline and against each other in one run. Repeatable
+for multiple candidates at once (`--weights-variant a=1.json --weights-variant b=2.json`);
+an ID that collides with a built-in (`basic-v1`/`scored-v1`) or another
+`--weights-variant` is rejected up front, before any game runs.
 
 ## Batch mode (`--config`)
 
