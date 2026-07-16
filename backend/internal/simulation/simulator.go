@@ -43,6 +43,12 @@ func NewSimulator(registry bot.StrategyRegistry) *Simulator {
 // *Failure value (it implements error), so both idiomatic `if err != nil`
 // handling and inspecting Result.Failure's structured fields work.
 //
+// onProgress, if non-nil, is called at most every progressInterval with
+// the game's current state -- purely an observation side-channel (e.g.
+// for a CLI to show a live status line) that never influences any
+// decision or the game itself, so it has no bearing on determinism. Pass
+// nil to skip it entirely.
+//
 // "Seat" throughout this function and in every Entry/Milestone/SeatResult
 // means the stable 0-indexed position in Config.Strategies -- not
 // risk.Game.CurrentPlayer, which indexes risk.Game.Players *after* the
@@ -50,8 +56,9 @@ func NewSimulator(registry bot.StrategyRegistry) *Simulator {
 // any one seat across different seeds. Every lookup goes through
 // seatByPlayerID, keyed by the deterministic player IDs Config assigns
 // before construction.
-func (s *Simulator) RunOne(ctx context.Context, cfg Config) (Result, *Recorder, error) {
+func (s *Simulator) RunOne(ctx context.Context, cfg Config, onProgress func(ProgressUpdate)) (Result, *Recorder, error) {
 	start := time.Now()
+	lastProgress := start
 	recorder := NewRecorder(cfg.Trace)
 
 	if err := cfg.Validate(s.registry); err != nil {
@@ -226,6 +233,11 @@ func (s *Simulator) RunOne(ctx context.Context, cfg Config) (Result, *Recorder, 
 			DomainEvent:  domainEvent,
 		})
 
+		if onProgress != nil && time.Since(lastProgress) >= progressInterval {
+			onProgress(ProgressUpdate{Commands: result.Commands, Turn: g.TurnNumber, Elapsed: time.Since(start)})
+			lastProgress = time.Now()
+		}
+
 		switch cmd.Action {
 		case bot.ActionAttack:
 			ar := dispatchResult.AttackResult
@@ -286,6 +298,10 @@ func (s *Simulator) RunOne(ctx context.Context, cfg Config) (Result, *Recorder, 
 	result.Turns = g.TurnNumber
 	result.Completed = true
 	result.Duration = time.Since(start)
+
+	if onProgress != nil {
+		onProgress(ProgressUpdate{Commands: result.Commands, Turn: result.Turns, Elapsed: result.Duration})
+	}
 
 	if g.Winner != "" {
 		if winnerSeat, ok := seatByPlayerID[g.Winner]; ok {

@@ -72,6 +72,18 @@ the trace level captured:
 `milestones` and `decisions` are omitted/empty below the trace level that
 populates them (see below).
 
+## Progress
+
+While a game is running, a live status line (spinner, current turn,
+command count, elapsed time) prints to stderr — updated a few times a
+second, cleared before the final result prints. There's no percent
+complete: game length isn't knowable ahead of time (see
+[Convergence](#a-note-on-convergence) below). This is suppressed
+automatically when stderr isn't a terminal, so redirected output, `2>`
+logs, and CI runs never see the spinner's carriage-return noise — only
+`--format text`/`json`'s actual result goes to stdout, and that's never
+touched by the progress line.
+
 ## Trace levels
 
 | Level | Adds |

@@ -55,7 +55,7 @@ func TestRunOneReachesGameOverForEveryStrategyCombination(t *testing.T) {
 				Trace:      TraceSummary,
 				Limits:     DefaultLimits(),
 			}
-			result, _, err := sim.RunOne(context.Background(), cfg)
+			result, _, err := sim.RunOne(context.Background(), cfg, nil)
 			if err != nil {
 				t.Fatalf("RunOne: %v", err)
 			}
@@ -87,6 +87,61 @@ func TestRunOneReachesGameOverForEveryStrategyCombination(t *testing.T) {
 	}
 }
 
+// TestRunOneReportsProgress uses the 3p-all-basic-v1 case, which takes
+// over a second (well past progressInterval's 100ms) in every prior
+// timing observation in this file, so at least one throttled update is
+// guaranteed.
+func TestRunOneReportsProgress(t *testing.T) {
+	sim := NewSimulator(fullRegistry())
+	cfg := Config{
+		Seed:       1,
+		Strategies: []string{bot.StrategyBasicV1, bot.StrategyBasicV1, bot.StrategyBasicV1},
+		GameMode:   GameModeAutoStart,
+		Trace:      TraceNone,
+		Limits:     DefaultLimits(),
+	}
+
+	var updates []ProgressUpdate
+	result, _, err := sim.RunOne(context.Background(), cfg, func(u ProgressUpdate) {
+		updates = append(updates, u)
+	})
+	if err != nil {
+		t.Fatalf("RunOne: %v", err)
+	}
+	if len(updates) == 0 {
+		t.Fatalf("expected at least one progress update for a multi-second game")
+	}
+	last := updates[len(updates)-1]
+	if last.Commands != result.Commands {
+		t.Fatalf("expected the final progress update to report the final command count (%d), got %d", result.Commands, last.Commands)
+	}
+	if last.Turn != result.Turns {
+		t.Fatalf("expected the final progress update to report the final turn (%d), got %d", result.Turns, last.Turn)
+	}
+	for i := 1; i < len(updates); i++ {
+		if updates[i].Commands < updates[i-1].Commands {
+			t.Fatalf("expected Commands to be non-decreasing across updates, got %d then %d", updates[i-1].Commands, updates[i].Commands)
+		}
+		if updates[i].Elapsed < updates[i-1].Elapsed {
+			t.Fatalf("expected Elapsed to be non-decreasing across updates")
+		}
+	}
+}
+
+func TestRunOneNilProgressCallbackIsSafe(t *testing.T) {
+	sim := NewSimulator(fullRegistry())
+	cfg := Config{
+		Seed:       1,
+		Strategies: []string{bot.StrategyBasicV1, bot.StrategyBasicV1, bot.StrategyBasicV1},
+		GameMode:   GameModeAutoStart,
+		Trace:      TraceNone,
+		Limits:     DefaultLimits(),
+	}
+	if _, _, err := sim.RunOne(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("RunOne: %v", err)
+	}
+}
+
 func TestRunOneIsDeterministic(t *testing.T) {
 	sim := NewSimulator(fullRegistry())
 	cfg := Config{
@@ -97,11 +152,11 @@ func TestRunOneIsDeterministic(t *testing.T) {
 		Limits:     DefaultLimits(),
 	}
 
-	r1, rec1, err1 := sim.RunOne(context.Background(), cfg)
+	r1, rec1, err1 := sim.RunOne(context.Background(), cfg, nil)
 	if err1 != nil {
 		t.Fatalf("first run: %v", err1)
 	}
-	r2, rec2, err2 := sim.RunOne(context.Background(), cfg)
+	r2, rec2, err2 := sim.RunOne(context.Background(), cfg, nil)
 	if err2 != nil {
 		t.Fatalf("second run: %v", err2)
 	}
@@ -141,7 +196,7 @@ func TestRunOneDifferentSeedsCanDiverge(t *testing.T) {
 	for seed := int64(1); seed <= 5; seed++ {
 		cfg := base
 		cfg.Seed = seed
-		r, _, err := sim.RunOne(context.Background(), cfg)
+		r, _, err := sim.RunOne(context.Background(), cfg, nil)
 		if err != nil {
 			t.Logf("seed %d: did not converge within the test's MaxDuration (%v) -- a legitimate stalemate outcome, not asserted against", seed, err)
 			continue
@@ -162,7 +217,7 @@ func TestRunOneRejectsInvalidConfig(t *testing.T) {
 		Trace:      TraceNone,
 		Limits:     DefaultLimits(),
 	}
-	result, _, err := sim.RunOne(context.Background(), cfg)
+	result, _, err := sim.RunOne(context.Background(), cfg, nil)
 	if err == nil {
 		t.Fatalf("expected an error for an invalid config")
 	}
@@ -184,7 +239,7 @@ func TestRunOneRespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already canceled before RunOne even starts its loop
 
-	result, _, err := sim.RunOne(ctx, cfg)
+	result, _, err := sim.RunOne(ctx, cfg, nil)
 	if err == nil {
 		t.Fatalf("expected an error when context is already canceled")
 	}
@@ -208,7 +263,7 @@ func TestRunOneStopsAtCommandLimit(t *testing.T) {
 		Limits:     limits,
 	}
 
-	result, _, err := sim.RunOne(context.Background(), cfg)
+	result, _, err := sim.RunOne(context.Background(), cfg, nil)
 	if err == nil {
 		t.Fatalf("expected an error when the command limit is hit")
 	}
@@ -238,14 +293,14 @@ func TestRunOneTraceLevelDoesNotAffectResult(t *testing.T) {
 
 	none := base
 	none.Trace = TraceNone
-	rNone, _, err := sim.RunOne(context.Background(), none)
+	rNone, _, err := sim.RunOne(context.Background(), none, nil)
 	if err != nil {
 		t.Fatalf("TraceNone run: %v", err)
 	}
 
 	full := base
 	full.Trace = TraceFull
-	rFull, _, err := sim.RunOne(context.Background(), full)
+	rFull, _, err := sim.RunOne(context.Background(), full, nil)
 	if err != nil {
 		t.Fatalf("TraceFull run: %v", err)
 	}
@@ -304,7 +359,7 @@ func TestRunOneCompletesQuickly(t *testing.T) {
 		Limits:     DefaultLimits(),
 	}
 	start := time.Now()
-	result, _, err := sim.RunOne(context.Background(), cfg)
+	result, _, err := sim.RunOne(context.Background(), cfg, nil)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("RunOne: %v", err)

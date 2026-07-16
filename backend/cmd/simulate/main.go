@@ -82,7 +82,9 @@ func run(args []string) (completed bool, err error) {
 	}
 	sim := simulation.NewSimulator(registry)
 
-	result, recorder, runErr := sim.RunOne(context.Background(), cfg)
+	progress := newProgressReporter()
+	result, recorder, runErr := sim.RunOne(context.Background(), cfg, progress.update)
+	progress.done()
 	if runErr != nil && result.Failure == nil {
 		// A config-validation or game-construction error -- no game was
 		// ever built, so there's no partial Result worth reporting.
