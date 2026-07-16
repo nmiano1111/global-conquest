@@ -63,8 +63,8 @@ export function LeaderboardPage() {
       ) : null}
 
       {!loading && !error && entries.length > 0 ? (
-        <section className="rounded-xl border border-gc-border bg-gc-surface overflow-hidden">
-          <table className="w-full text-sm">
+        <section className="overflow-x-auto rounded-xl border border-gc-border bg-gc-surface">
+          <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-gc-border bg-gc-surface-2">
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Rank</th>
