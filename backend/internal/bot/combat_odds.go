@@ -83,30 +83,43 @@ func ForecastAttack(attackerArmies, defenderArmies int) CombatForecast {
 // roundDistribution enumerates every one of the 6^attackerDice * 6^defenderDice
 // possible die combinations for a single round and tallies the resulting
 // (attackerLoss, defenderLoss) outcomes into a probability distribution.
+// Tallied into a slice indexed by defenderLoss (attackerLoss is always
+// compared-defenderLoss, since every one of the compared die pairs
+// assigns exactly one loss) rather than a map: ForecastAttack sums over
+// this result with floating-point addition, which isn't associative, so
+// the iteration order has to be deterministic call to call -- a map's
+// range order is randomized per call in Go, which was silently making
+// ForecastAttack (and therefore any strategy decision comparing two
+// closely-scored candidates) nondeterministic in the last few bits.
 func roundDistribution(attackerDice, defenderDice int) []diceOutcome {
 	compared := min(attackerDice, defenderDice)
-	counts := make(map[[2]int]int)
+	counts := make([]int, compared+1) // indexed by defenderLoss
 	total := 0
 
 	forEachRoll(attackerDice, func(att []int) {
 		forEachRoll(defenderDice, func(def []int) {
 			total++
 			as, ds := sortedDesc(att), sortedDesc(def)
-			var attackerLoss, defenderLoss int
+			defenderLoss := 0
 			for i := 0; i < compared; i++ {
 				if as[i] > ds[i] {
 					defenderLoss++
-				} else {
-					attackerLoss++
 				}
 			}
-			counts[[2]int{attackerLoss, defenderLoss}]++
+			counts[defenderLoss]++
 		})
 	})
 
-	out := make([]diceOutcome, 0, len(counts))
-	for k, c := range counts {
-		out = append(out, diceOutcome{AttackerLoss: k[0], DefenderLoss: k[1], P: float64(c) / float64(total)})
+	out := make([]diceOutcome, 0, compared+1)
+	for defenderLoss, c := range counts {
+		if c == 0 {
+			continue
+		}
+		out = append(out, diceOutcome{
+			AttackerLoss: compared - defenderLoss,
+			DefenderLoss: defenderLoss,
+			P:            float64(c) / float64(total),
+		})
 	}
 	return out
 }

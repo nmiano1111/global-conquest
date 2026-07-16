@@ -2,6 +2,7 @@ package simulation
 
 import (
 	"testing"
+	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
@@ -15,6 +16,7 @@ func generousLimits() Limits {
 		MaxTurns:                   1_000_000,
 		MaxCommandsWithoutProgress: 1_000_000,
 		MaxRepeatedStates:          1_000_000,
+		MaxDuration:                time.Hour,
 	}
 }
 
@@ -27,20 +29,46 @@ func limitFixture(t *testing.T) *risk.Game {
 	return g
 }
 
+func TestLimitTrackerMaxDuration(t *testing.T) {
+	limits := generousLimits()
+	limits.MaxDuration = 20 * time.Millisecond
+	tracker := NewLimitTracker(limits)
+	g := limitFixture(t)
+
+	if breach := tracker.Observe(g); breach != nil {
+		t.Fatalf("expected no breach immediately after construction, got %+v", breach)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+
+	breach := tracker.Observe(g)
+	if breach == nil {
+		t.Fatalf("expected a breach once MaxDuration elapsed")
+	}
+	if breach.Type != FailureDurationLimitReached {
+		t.Fatalf("expected FailureDurationLimitReached, got %s", breach.Type)
+	}
+}
+
+// TestLimitTrackerMaxCommands: MaxCommands=3 means 3 commands may be
+// dispatched total -- the breach fires on the 3rd Observe call (the one
+// that reaches the cap), not the 4th, so a caller that stops immediately
+// on breach (as Simulator.RunOne does) ends with exactly 3 commands
+// recorded, never 4.
 func TestLimitTrackerMaxCommands(t *testing.T) {
 	limits := generousLimits()
 	limits.MaxCommands = 3
 	tracker := NewLimitTracker(limits)
 	g := limitFixture(t)
 
-	for i := 1; i <= 3; i++ {
+	for i := 1; i <= 2; i++ {
 		if breach := tracker.Observe(g); breach != nil {
 			t.Fatalf("call %d: expected no breach yet, got %+v", i, breach)
 		}
 	}
 	breach := tracker.Observe(g)
 	if breach == nil {
-		t.Fatalf("expected a breach on the 4th call")
+		t.Fatalf("expected a breach on the 3rd call")
 	}
 	if breach.Type != FailureCommandLimitReached {
 		t.Fatalf("expected FailureCommandLimitReached, got %s", breach.Type)

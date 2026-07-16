@@ -2,6 +2,7 @@ package simulation
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
@@ -21,6 +22,7 @@ type LimitBreach struct {
 // command.
 type LimitTracker struct {
 	limits Limits
+	start  time.Time
 
 	commands int
 
@@ -34,10 +36,12 @@ type LimitTracker struct {
 
 // NewLimitTracker returns a tracker enforcing the given limits, which
 // must already be valid (see Limits.Validate) -- this constructor doesn't
-// re-validate them.
+// re-validate them. MaxDuration is measured from this call, not from the
+// first Observe.
 func NewLimitTracker(limits Limits) *LimitTracker {
 	return &LimitTracker{
 		limits:      limits,
+		start:       time.Now(),
 		stateCounts: make(map[StateFingerprint]int),
 	}
 }
@@ -55,11 +59,30 @@ func NewLimitTracker(limits Limits) *LimitTracker {
 // FailureRepeatedStateDetected, since they're two different-granularity
 // views of the same underlying problem: the game isn't moving forward.
 func (lt *LimitTracker) Observe(g *risk.Game) *LimitBreach {
+	// Checked first: a wall-clock backstop for scenarios the count-based
+	// checks below can't catch, e.g. two bots endlessly reinforcing a
+	// shared border without ever attacking -- the state fingerprint
+	// changes every turn (army counts keep climbing) so
+	// MaxCommandsWithoutProgress/MaxRepeatedStates never fire, while
+	// ForecastAttack's cost grows with army count and quietly makes each
+	// decision more expensive than the last.
+	if elapsed := time.Since(lt.start); elapsed > lt.limits.MaxDuration {
+		return &LimitBreach{
+			Type:    FailureDurationLimitReached,
+			Message: fmt.Sprintf("exceeded MaxDuration (%s), elapsed %s", lt.limits.MaxDuration, elapsed),
+		}
+	}
+
+	// >= rather than >: MaxCommands=N means N commands may be dispatched
+	// total, so the breach is reported on the Nth Observe call (the one
+	// that reaches the cap), not the (N+1)th -- the simulator stops
+	// immediately on a breach, so the result ends with exactly N commands
+	// recorded, never N+1.
 	lt.commands++
-	if lt.commands > lt.limits.MaxCommands {
+	if lt.commands >= lt.limits.MaxCommands {
 		return &LimitBreach{
 			Type:    FailureCommandLimitReached,
-			Message: fmt.Sprintf("exceeded MaxCommands (%d)", lt.limits.MaxCommands),
+			Message: fmt.Sprintf("reached MaxCommands (%d)", lt.limits.MaxCommands),
 		}
 	}
 

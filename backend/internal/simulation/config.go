@@ -9,6 +9,7 @@ package simulation
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 )
@@ -60,16 +61,31 @@ type Limits struct {
 	// MaxRepeatedStates stops the simulation once the same state
 	// fingerprint (statehash.go) has recurred this many times.
 	MaxRepeatedStates int
+	// MaxDuration is a wall-clock backstop, checked alongside the other
+	// limits every command. It is deliberately NOT part of the
+	// deterministic Result/trace story (Result.Duration is explicitly
+	// excluded from determinism comparisons) -- it exists only as a
+	// practical safety valve for scenarios the other limits can't catch:
+	// e.g. two bots locked in an "arms race" at a shared border,
+	// indefinitely reinforcing without ever attacking, where the state
+	// fingerprint changes every turn (army counts keep climbing) so
+	// MaxCommandsWithoutProgress/MaxRepeatedStates never fire, while
+	// ForecastAttack's cost grows with army count and quietly turns each
+	// decision more expensive than the last. Confirmed necessary by an
+	// actual such stalemate hanging a test during development.
+	MaxDuration time.Duration
 }
 
 // DefaultLimits are generous enough not to cut off any real game while
-// still bounding a runaway strategy bug to a fast, cheap failure.
+// still bounding a runaway strategy bug (or a genuine gameplay stalemate)
+// to a fast, cheap failure.
 func DefaultLimits() Limits {
 	return Limits{
 		MaxCommands:                20000,
 		MaxTurns:                   2000,
 		MaxCommandsWithoutProgress: 500,
 		MaxRepeatedStates:          3,
+		MaxDuration:                30 * time.Second,
 	}
 }
 
@@ -86,6 +102,9 @@ func (l Limits) Validate() error {
 	}
 	if l.MaxRepeatedStates <= 0 {
 		return fmt.Errorf("%w: MaxRepeatedStates must be positive, got %d", ErrInvalidConfig, l.MaxRepeatedStates)
+	}
+	if l.MaxDuration <= 0 {
+		return fmt.Errorf("%w: MaxDuration must be positive, got %s", ErrInvalidConfig, l.MaxDuration)
 	}
 	return nil
 }

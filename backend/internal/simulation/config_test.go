@@ -142,6 +142,7 @@ func TestLimitsValidateRejectsNonPositiveFields(t *testing.T) {
 		{"MaxTurns", func(l *Limits) { l.MaxTurns = -1 }},
 		{"MaxCommandsWithoutProgress", func(l *Limits) { l.MaxCommandsWithoutProgress = 0 }},
 		{"MaxRepeatedStates", func(l *Limits) { l.MaxRepeatedStates = 0 }},
+		{"MaxDuration", func(l *Limits) { l.MaxDuration = 0 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

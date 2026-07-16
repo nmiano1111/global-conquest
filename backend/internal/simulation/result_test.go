@@ -51,6 +51,7 @@ func TestFailureTypeConstantsAreDistinct(t *testing.T) {
 		FailureCommandLimitReached,
 		FailureTurnLimitReached,
 		FailureRepeatedStateDetected,
+		FailureDurationLimitReached,
 		FailureContextCanceled,
 		FailureInternalInvariant,
 	}
@@ -61,7 +62,7 @@ func TestFailureTypeConstantsAreDistinct(t *testing.T) {
 		}
 		seen[ft] = true
 	}
-	if len(seen) != 8 {
-		t.Fatalf("expected 8 distinct failure types, got %d", len(seen))
+	if len(seen) != 9 {
+		t.Fatalf("expected 9 distinct failure types, got %d", len(seen))
 	}
 }

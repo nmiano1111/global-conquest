@@ -67,9 +67,11 @@ type SeatResult struct {
 	StrategyID string
 	Eliminated bool
 
-	// FinishOrder is 1 for the winner, then increases in the order seats
-	// were eliminated (most recently eliminated = last place). 0 if the
-	// simulation ended before finishing order could be determined.
+	// FinishOrder is 1 for the winner. Among eliminated seats, the seat
+	// eliminated LAST (survived longest) places 2nd, down to the seat
+	// eliminated FIRST placing last (PlayerCount) -- surviving longer is
+	// always at least as good a finish. 0 if the simulation ended before
+	// finishing order could be determined.
 	FinishOrder int
 
 	FinalTerritories int
@@ -120,6 +122,14 @@ const (
 	// cheap no-progress counter (Limits.MaxCommandsWithoutProgress) was
 	// exceeded.
 	FailureRepeatedStateDetected FailureType = "repeated_state_detected"
+
+	// FailureDurationLimitReached means Limits.MaxDuration was hit -- a
+	// wall-clock backstop distinct from the count-based limits above,
+	// for scenarios where the state keeps genuinely changing (so no
+	// repeated-state check fires) but per-command cost grows without the
+	// game converging, e.g. two bots endlessly reinforcing a shared
+	// border without ever attacking.
+	FailureDurationLimitReached FailureType = "duration_limit_reached"
 
 	// FailureContextCanceled means ctx.Done() fired -- caller-initiated,
 	// not a bug.
