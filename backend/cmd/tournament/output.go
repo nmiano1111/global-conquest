@@ -167,6 +167,92 @@ func writeAggregateJSON(w io.Writer, cfg tournament.Config, agg tournament.Aggre
 	return enc.Encode(jsonAggregateReport{Config: cfg, Aggregate: agg})
 }
 
+// writeBatchText renders every --config entry's own aggregate (labeled,
+// via writeAggregateText unchanged) followed by a combined comparison
+// table across all of them.
+func writeBatchText(w io.Writer, results []batchResult) error {
+	restore := setColorEnabled(useColor(w))
+	defer restore()
+
+	for _, r := range results {
+		fmt.Fprintln(w, color.New(color.FgCyan, color.Bold).Sprintf("=== %s ===", r.name))
+		if r.err != nil {
+			fmt.Fprintf(w, "%s\n\n", color.New(color.FgRed).Sprintf("did not complete: %v", r.err))
+			continue
+		}
+		if err := writeAggregateText(w, r.cfg, r.agg, r.elapsed); err != nil {
+			return err
+		}
+		fmt.Fprintln(w)
+	}
+	return writeComparisonTable(w, results)
+}
+
+// writeComparisonTable renders one row per (tournament, strategy) pair
+// across every --config entry -- entries may compare different strategy
+// sets against a shared baseline, so this is the view that lets a user
+// scan every run at once rather than needing to mentally diff several
+// separate per-tournament tables. Same tabwriter-then-colorize approach as
+// writeAggregateText, for the same reason (color must never be applied
+// before tabwriter finishes computing column widths).
+func writeComparisonTable(w io.Writer, results []batchResult) error {
+	restore := setColorEnabled(useColor(w))
+	defer restore()
+
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "tournament\tstrategy\tappearances\tcompleted\twins\tseat win%\tgame win%\tavg finish\tavg captures\tavg elims")
+	for _, r := range results {
+		if r.err != nil {
+			msg := strings.ReplaceAll(r.err.Error(), "\n", " ")
+			fmt.Fprintf(tw, "%s\t(did not complete: %s)\t\t\t\t\t\t\t\t\n", r.name, msg)
+			continue
+		}
+		for _, s := range r.agg.Strategies {
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%.1f%%\t%.1f%%\t%.2f\t%.2f\t%.2f\n",
+				r.name, s.StrategyID, s.Appearances, s.CompletedAppearances, s.Wins,
+				s.SeatWinRate*100, s.GameWinRate*100, s.AvgFinishOrder, s.AvgCaptures, s.AvgEliminationsMade)
+		}
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+	fmt.Fprintln(w, color.New(color.Bold, color.Underline).Sprint(lines[0]))
+	for _, line := range lines[1:] {
+		fmt.Fprintln(w, line)
+	}
+	return nil
+}
+
+// jsonBatchEntry is one --config entry's result for --format json --
+// Error is set instead of Aggregate being meaningful when the tournament
+// didn't run to completion (context cancellation, a raw-output write
+// failure).
+type jsonBatchEntry struct {
+	Name      string               `json:"name"`
+	Config    tournament.Config    `json:"config"`
+	Aggregate tournament.Aggregate `json:"aggregate"`
+	Error     string               `json:"error,omitempty"`
+}
+
+func writeBatchJSON(w io.Writer, results []batchResult) error {
+	entries := make([]jsonBatchEntry, len(results))
+	for i, r := range results {
+		entries[i] = jsonBatchEntry{Name: r.name, Config: r.cfg, Aggregate: r.agg}
+		if r.err != nil {
+			entries[i].Error = r.err.Error()
+		}
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(entries)
+}
+
 // rawWriter appends one compact JSON-encoded simulation.Result per line
 // (JSONL) as each game completes -- the same field shape cmd/simulate's
 // --format json emits under its "result" key, so a tool consuming both

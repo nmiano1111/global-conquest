@@ -1,0 +1,17 @@
+{
+    "tournaments": [
+      {
+        "name": "basic-vs-scored",
+        "strategies": ["basic-v1", "scored-v1", "scored-v1"],
+        "games": 20,
+        "max_turns": 300
+      },
+      {
+        "name": "scored-mirror",
+        "strategies": ["scored-v1", "scored-v1", "scored-v1"],
+        "games": 20,
+        "seed_start": 100,
+        "max_turns": 300
+      }
+    ]
+  }

@@ -27,15 +27,18 @@ const (
 
 // GameMode selects which risk constructor builds the simulated game.
 // AutoStart skips straight to PhaseReinforce with armies already
-// distributed; RandomTerritory stops at PhaseSetupReinforce and requires
-// bots to place their own initial armies via place_initial_army commands.
+// distributed; Manual stops at PhaseSetupReinforce and requires bots to
+// place their own initial armies via place_initial_army commands -- named
+// to match internal/service's own "manual" setup-mode terminology for the
+// identical underlying risk.NewClassicRandomTerritoryGame constructor
+// (see that function's doc comment for why its own name doesn't match).
 // Both are fully supported by the command dispatcher; which one to use is
 // a per-experiment choice, not a fixed default.
 type GameMode string
 
 const (
-	GameModeAutoStart       GameMode = "auto_start"
-	GameModeRandomTerritory GameMode = "random_territory"
+	GameModeAutoStart GameMode = "auto_start"
+	GameModeManual    GameMode = "manual"
 )
 
 // ErrInvalidConfig is returned by Config.Validate (and Limits.Validate) for
@@ -186,7 +189,7 @@ func (c Config) Validate(registry bot.StrategyRegistry) error {
 		return fmt.Errorf("%w: unknown trace level %q", ErrInvalidConfig, c.Trace)
 	}
 	switch c.GameMode {
-	case GameModeAutoStart, GameModeRandomTerritory:
+	case GameModeAutoStart, GameModeManual:
 	default:
 		return fmt.Errorf("%w: unknown game mode %q", ErrInvalidConfig, c.GameMode)
 	}

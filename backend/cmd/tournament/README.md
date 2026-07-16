@@ -29,12 +29,13 @@ go run ./cmd/tournament --strategies basic-v1,scored-v1,scored-v1 --games 100
 | `--games` | yes | — | How many games to run. |
 | `--seed-start` | no | `1` | Seeds used are `seed-start .. seed-start+games-1`. Same `seed-start` + `games` + `strategies` always reproduces the same batch of games. |
 | `--parallel` | no | number of CPUs | How many games run concurrently. |
-| `--game-mode` | no | `auto_start` | `auto_start` or `random_territory` — same as `cmd/simulate`. |
+| `--game-mode` | no | `auto_start` | `auto_start` or `manual` — same as `cmd/simulate`. |
 | `--max-turns` | no | 2000 | Override the per-game turn safety limit. |
 | `--max-commands` | no | 20000 | Override the per-game command safety limit. |
 | `--format` | no | `text` | Aggregate output format: `text` or `json`. |
 | `--output` | no | stdout | Write the aggregate summary to this file instead of stdout. |
 | `--raw-output` | no | (none) | If set, path to write one JSON-encoded `simulation.Result` per line (JSONL) as each game completes. Omitted = aggregate only, no raw dump. |
+| `--config` | no | (none) | Path to a JSON file running several tournaments concurrently instead of one — see [Batch mode](#batch-mode---config) below. Mutually exclusive with every flag above except `--format`/`--output`, which apply to the combined batch output instead. |
 
 ## Examples
 
@@ -120,13 +121,79 @@ import pandas as pd
 df = pd.read_json("/tmp/tournament.jsonl", lines=True)
 ```
 
+## Batch mode (`--config`)
+
+Run several tournaments concurrently from one process instead of one
+invocation per comparison — the natural way to run "baseline vs candidate
+A" and "baseline vs candidate B" side by side, each with its own live
+progress bar, and get a combined comparison table at the end instead of
+mentally diffing separate outputs.
+
+```bash
+go run ./cmd/tournament --config batch.json
+```
+
+```json
+{
+  "tournaments": [
+    {
+      "name": "baseline-vs-candidate-a",
+      "strategies": ["basic-v1", "scored-v1", "scored-v1"],
+      "games": 500,
+      "raw_output": "results/baseline-vs-candidate-a.jsonl"
+    },
+    {
+      "name": "baseline-vs-candidate-b",
+      "strategies": ["basic-v1", "scored-v1", "scored-v1"],
+      "games": 500,
+      "seed_start": 1000,
+      "raw_output": "results/baseline-vs-candidate-b.jsonl"
+    }
+  ]
+}
+```
+
+Each entry mirrors the direct flags above by name: `name` (required,
+unique — labels its progress bar and output section), `strategies`,
+`games` (required), `seed_start` (default `1`), `parallel` (default
+number of CPUs), `game_mode` (default `auto_start`), `max_turns`,
+`max_commands`, `raw_output`. Every entry is validated before any
+tournament starts — one bad entry fails the whole batch up front, no
+partial runs. Tournaments run **fully concurrently**, each with its own
+`parallel` budget (no shared global cap — size each entry's `parallel`
+with the others in mind if running many at once).
+
+Output: each tournament's own aggregate (labeled with its `name`),
+followed by a combined comparison table — one row per `(tournament,
+strategy)` pair, so entries comparing different strategy sets against a
+shared baseline are still easy to scan together:
+
+```
+=== baseline-vs-candidate-a ===
+tournament: 500 games (498 completed, 2 failed) · seeds 1-500 · avg 74.2 turns, 1701.9 commands · 3m12s elapsed
+...
+
+=== baseline-vs-candidate-b ===
+...
+
+tournament                 strategy     appearances  completed  wins  seat win%  game win%  avg finish  avg captures  avg elims
+baseline-vs-candidate-a    basic-v1     498          498        61    12.2%      12.2%      2.60        88.45         0.20
+baseline-vs-candidate-a    scored-v1    996          996        437   43.9%      87.8%      1.71        123.67        0.90
+baseline-vs-candidate-b    basic-v1     499          499        58    11.6%      11.6%      2.58        90.12         0.19
+baseline-vs-candidate-b    scored-v1    998          998        441   44.2%      88.4%      1.73        125.40        0.91
+```
+
+`--raw-output` (the single-tournament flag) doesn't apply in batch mode —
+each entry specifies its own `raw_output` path instead.
+
 ## Progress
 
-While games run, a live progress bar on stderr ([schollz/progressbar](https://github.com/schollz/progressbar))
-shows percent complete, games/total, throughput, ETA, and a running failure
-count — updated as results arrive, finalized before the aggregate prints.
-Suppressed automatically when stderr isn't a terminal, same as
-`cmd/simulate`'s spinner.
+While games run, one live progress bar per tournament renders on stderr
+([mpb](https://github.com/vbauerster/mpb)) — a single-tournament run gets
+one bar, a `--config` batch run gets one per entry, each on its own line,
+updating concurrently as that tournament's own results arrive. Suppressed
+automatically when stderr isn't a terminal, same as `cmd/simulate`'s
+spinner.
 
 ## Color
 

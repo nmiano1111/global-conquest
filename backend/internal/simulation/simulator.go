@@ -71,7 +71,7 @@ func (s *Simulator) RunOne(ctx context.Context, cfg Config, onProgress func(Prog
 	var g *risk.Game
 	var err error
 	switch cfg.GameMode {
-	case GameModeRandomTerritory:
+	case GameModeManual:
 		g, err = risk.NewClassicRandomTerritoryGame(playerIDs, rng)
 	default: // Validate already rejected anything but the two known modes
 		g, err = risk.NewClassicAutoStartGame(playerIDs, rng)

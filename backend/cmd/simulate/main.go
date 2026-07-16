@@ -34,7 +34,7 @@ func run(args []string) (completed bool, err error) {
 	fs := flag.NewFlagSet("simulate", flag.ExitOnError)
 	seed := fs.Int64("seed", 0, "Random seed (required) -- the same seed, strategies, and game mode always produce the same game")
 	strategies := fs.String("strategies", "", "Comma-separated strategy ID per seat, e.g. basic-v1,scored-v1,scored-v1 (player count is this list's length)")
-	gameMode := fs.String("game-mode", "auto_start", "Game construction mode: auto_start|random_territory")
+	gameMode := fs.String("game-mode", "auto_start", "Game construction mode: auto_start|manual")
 	trace := fs.String("trace", "summary", "Trace level: none|summary|decision|full")
 	maxTurns := fs.Int("max-turns", 0, "Override the default turn safety limit (0 = use the default)")
 	maxCommands := fs.Int("max-commands", 0, "Override the default command safety limit (0 = use the default)")

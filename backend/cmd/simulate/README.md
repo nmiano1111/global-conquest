@@ -22,7 +22,7 @@ go run ./cmd/simulate --seed 12345 --strategies basic-v1,scored-v1,scored-v1
 |---|---|---|---|
 | `--seed` | yes | — | Any integer. The same seed + strategies + game mode always reproduces the identical game, dice rolls and all. |
 | `--strategies` | yes | — | Comma-separated strategy ID per seat, e.g. `basic-v1,scored-v1,scored-v1`. Player count is this list's length (3–6). Available IDs: `basic-v1`, `scored-v1`. |
-| `--game-mode` | no | `auto_start` | `auto_start` (armies pre-distributed, starts at Reinforce) or `random_territory` (starts at SetupReinforce — bots place their own initial armies). |
+| `--game-mode` | no | `auto_start` | `auto_start` (armies pre-distributed, starts at Reinforce) or `manual` (starts at SetupReinforce — bots place their own initial armies). |
 | `--trace` | no | `summary` | `none`, `summary`, `decision`, or `full` — see [Trace levels](#trace-levels). |
 | `--max-turns` | no | 2000 | Override the turn safety limit. |
 | `--max-commands` | no | 20000 | Override the command safety limit. |

@@ -321,6 +321,18 @@ func NewClassicAutoStartGame(playerIDs []string, rng RNG) (*Game, error) {
 // NewClassicRandomTerritoryGame creates a classic game with territories randomly
 // pre-assigned to players (1 army each), then starts in PhaseSetupReinforce so
 // players can manually place their remaining starting armies before the game begins.
+//
+// Naming note: "RandomTerritory" describes the initial territory deal, but
+// NewClassicAutoStartGame deals territories the exact same random way --
+// it's not what actually distinguishes the two constructors. The real
+// difference is that this one leaves the *remaining* starting armies for
+// players to place manually, which is also how internal/service's own
+// lobbyState.SetupMode == "manual" already refers to this same mode. Worth
+// renaming this constructor (and the callers below) to something like
+// NewClassicManualSetupGame to match that terminology and stop the two
+// layers naming the identical concept two different ways -- not done yet,
+// deliberately deferred rather than renamed alongside internal/simulation's
+// GameModeManual (see that type's doc comment).
 func NewClassicRandomTerritoryGame(playerIDs []string, rng RNG) (*Game, error) {
 	g, err := NewClassicGame(playerIDs, rng)
 	if err != nil {

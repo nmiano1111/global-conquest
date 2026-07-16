@@ -58,7 +58,7 @@ func TestRunOneReachesGameOverForEveryStrategyCombination(t *testing.T) {
 		{"3p all basic-v1", []string{bot.StrategyBasicV1, bot.StrategyBasicV1, bot.StrategyBasicV1}, GameModeAutoStart, 1},
 		{"3p all scored-v1", []string{bot.StrategyScoredV1, bot.StrategyScoredV1, bot.StrategyScoredV1}, GameModeAutoStart, 1},
 		{"4p mixed, auto-start", []string{bot.StrategyBasicV1, bot.StrategyScoredV1, bot.StrategyBasicV1, bot.StrategyScoredV1}, GameModeAutoStart, 1},
-		{"4p mixed, random-territory", []string{bot.StrategyBasicV1, bot.StrategyScoredV1, bot.StrategyBasicV1, bot.StrategyScoredV1}, GameModeRandomTerritory, 1},
+		{"4p mixed, manual", []string{bot.StrategyBasicV1, bot.StrategyScoredV1, bot.StrategyBasicV1, bot.StrategyScoredV1}, GameModeManual, 1},
 		// 6 identical scored-v1 bots frequently deadlock in a multi-way
 		// border stand-off that never resolves (empirically confirmed:
 		// scanning seeds 1-30 for this exact matchup, roughly half never
