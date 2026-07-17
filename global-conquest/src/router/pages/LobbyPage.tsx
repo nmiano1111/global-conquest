@@ -351,28 +351,32 @@ export function LobbyPage() {
           <form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={onCreateGame}>
             <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
               Players
-              <input
+              <select
                 className={`${inputClass} w-28`}
-                type="number"
-                min={3}
-                max={6}
                 value={playerCount}
                 onChange={(e) => onPlayerCountChange(Number(e.target.value))}
                 required
-              />
+              >
+                {[3, 4, 5, 6].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
               Computer players
-              <input
+              <select
                 className={`${inputClass} w-28`}
-                type="number"
-                min={0}
-                max={maxBotCount}
                 value={botCount}
-                onChange={(e) =>
-                  setBotCount(Math.max(0, Math.min(maxBotCount, Number(e.target.value))))
-                }
-              />
+                onChange={(e) => setBotCount(Number(e.target.value))}
+              >
+                {Array.from({ length: maxBotCount + 1 }, (_, n) => n).map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
             </label>
             {auth.user?.role === "admin" && (
               <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
