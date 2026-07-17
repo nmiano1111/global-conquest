@@ -1,9 +1,9 @@
 package service
 
 import (
+	"context"
 	"github.com/nmiano1111/global-conquest/backend/internal/game"
 	"github.com/nmiano1111/global-conquest/backend/internal/proto/wsmsg"
-	"context"
 )
 
 // GameActionService is a thin adapter between the game package's
@@ -100,4 +100,11 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 			}
 		}(),
 	}, nil
+}
+
+// CanAccessGame delegates to GamesService.CanAccessGame, letting the game
+// hub (internal/game/server.go) gate game_chat_join on the same sandbox
+// visibility rule that governs the REST list/join/bootstrap endpoints.
+func (s *GameActionService) CanAccessGame(ctx context.Context, gameID, userID string) (bool, error) {
+	return s.games.CanAccessGame(ctx, gameID, userID)
 }

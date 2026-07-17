@@ -7,6 +7,7 @@ export type UserRecord = {
   username: string;
   role: string;
   accessStatus: "active" | "blocked";
+  isSandboxed: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -28,6 +29,10 @@ function readNumber(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function readBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 function normalizeUser(value: unknown): UserRecord {
   const record = asRecord(value);
   if (!record) {
@@ -36,6 +41,7 @@ function normalizeUser(value: unknown): UserRecord {
       username: "",
       role: "player",
       accessStatus: "active",
+      isSandboxed: false,
       createdAt: "",
       updatedAt: "",
     };
@@ -47,6 +53,7 @@ function normalizeUser(value: unknown): UserRecord {
     username: readString(record.username ?? record.UserName),
     role: readString(record.role ?? record.Role, "player"),
     accessStatus: access === "blocked" ? "blocked" : "active",
+    isSandboxed: readBoolean(record.is_sandboxed ?? record.isSandboxed ?? record.IsSandboxed, false),
     createdAt: readString(record.created_at ?? record.CreatedAt),
     updatedAt: readString(record.updated_at ?? record.UpdatedAt),
   };
@@ -86,6 +93,15 @@ export async function updateUserAccess(userID: string, accessStatus: "active" | 
     method: "PUT",
     url: `/admin/users/${encodeURIComponent(userID)}/access`,
     data: { access_status: accessStatus },
+  });
+  return normalizeUser(res);
+}
+
+export async function updateUserSandbox(userID: string, sandboxed: boolean): Promise<UserRecord> {
+  const res = await request<unknown>({
+    method: "PUT",
+    url: `/admin/users/${encodeURIComponent(userID)}/sandbox`,
+    data: { sandboxed },
   });
   return normalizeUser(res);
 }

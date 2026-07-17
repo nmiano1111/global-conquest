@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
 )
 
 type stubQuerier struct {
@@ -107,7 +107,7 @@ var _ pgx.Rows = (*stubRows)(nil)
 func TestPostgresUsersStoreCreate(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", "active", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "active", false, now, now}},
 	}
 	s := NewPostgresUsersStore()
 
@@ -132,7 +132,7 @@ func TestPostgresUsersStoreCreate(t *testing.T) {
 func TestPostgresUsersStoreGetUser(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", "active", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "active", false, now, now}},
 	}
 	s := NewPostgresUsersStore()
 
@@ -155,7 +155,7 @@ func TestPostgresUsersStoreGetUserBySessionToken(t *testing.T) {
 	now := time.Now().UTC()
 	tokenHash := []byte{1, 2, 3}
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", "active", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "active", false, now, now}},
 	}
 	s := NewPostgresUsersStore()
 
@@ -178,8 +178,8 @@ func TestPostgresUsersStoreListUsers(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
 		rows: &stubRows{values: [][]any{
-			{"u1", "alice", "player", "active", now, now},
-			{"u2", "bob", "admin", "active", now, now},
+			{"u1", "alice", "player", "active", false, now, now},
+			{"u2", "bob", "admin", "active", false, now, now},
 		}},
 	}
 	s := NewPostgresUsersStore()
@@ -199,7 +199,7 @@ func TestPostgresUsersStoreListUsers(t *testing.T) {
 func TestPostgresUsersStoreGetUserAuth(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", "active", "pw_hash", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "active", false, "pw_hash", now, now}},
 	}
 	s := NewPostgresUsersStore()
 
@@ -219,8 +219,8 @@ func TestPostgresUsersStoreListAdminUsers(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
 		rows: &stubRows{values: [][]any{
-			{"u1", "alice", "player", "active", now, now, 2},
-			{"u2", "bob", "admin", "active", now, now, 1},
+			{"u1", "alice", "player", "active", false, now, now, 2},
+			{"u2", "bob", "admin", "active", false, now, now, 1},
 		}},
 	}
 	s := NewPostgresUsersStore()
@@ -240,7 +240,7 @@ func TestPostgresUsersStoreListAdminUsers(t *testing.T) {
 func TestPostgresUsersStoreUpdateUserAccess(t *testing.T) {
 	now := time.Now().UTC()
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"u1", "alice", "player", "blocked", now, now}},
+		row: &stubRow{values: []any{"u1", "alice", "player", "blocked", false, now, now}},
 	}
 	s := NewPostgresUsersStore()
 

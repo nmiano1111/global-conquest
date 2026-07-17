@@ -29,7 +29,7 @@ func (s *ScoredStrategy) occupy(g *risk.Game, playerID string) (Command, Explana
 			Features: s.occupyFeatures(a.Armies, sourceArmies, sourceThreat, destThreat),
 		})
 	}
-	cmd, expl := selectBest(options, 3)
+	cmd, expl := s.selectBest(options, 3)
 	return cmd, expl, nil
 }
 

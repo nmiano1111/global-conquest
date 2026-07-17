@@ -5,8 +5,8 @@
 package httpapi
 
 import (
-	"github.com/nmiano1111/global-conquest/backend/internal/wsapi"
 	"context"
+	"github.com/nmiano1111/global-conquest/backend/internal/wsapi"
 	"net/http"
 	"os"
 	"strings"
@@ -87,6 +87,7 @@ func NewRouter(h *Handler) *gin.Engine {
 			admin.Use(h.RequireAuth(), h.RequireAdmin())
 			admin.GET("/users", h.ListAdminUsers)
 			admin.PUT("/users/:id/access", h.UpdateUserAccess)
+			admin.PUT("/users/:id/sandbox", h.UpdateUserSandbox)
 			admin.POST("/users/:id/revoke-sessions", h.RevokeUserSessions)
 		}
 

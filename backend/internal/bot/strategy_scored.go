@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"math/rand/v2"
 	"slices"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
@@ -19,6 +20,12 @@ import (
 // as later doc work.
 const StrategyScoredV1 = "scored-v1"
 
+// StrategyScoredV1Exploring identifies a ScoredStrategy built with
+// NewExploringScoredStrategy -- see that constructor's doc comment. Only
+// registered by cmd/traindata; never used in real gameplay, cmd/simulate,
+// or cmd/tournament's built-in registry.
+const StrategyScoredV1Exploring = "scored-v1-exploring"
+
 // ScoredStrategy implements StrategyScoredV1.
 type ScoredStrategy struct {
 	weights Weights
@@ -27,6 +34,33 @@ type ScoredStrategy struct {
 	// — kept as a defensive default rather than assuming every phase the
 	// engine could theoretically report is enumerated above.
 	fallback *BasicStrategy
+
+	// explorationRate is the probability selectBest picks a uniformly
+	// random legal candidate instead of the highest-scoring one. Zero for
+	// every strategy built via NewScoredStrategy -- only
+	// NewExploringScoredStrategy sets it, and only for generating
+	// training data (never real gameplay or evaluation).
+	explorationRate float64
+	// randFloat64/randIntN back explorationRate's random draws. Default
+	// to math/rand/v2's package-level functions in
+	// NewExploringScoredStrategy -- already safe for concurrent use with
+	// no shared instance state (unlike a seeded *rand.Rand), so a single
+	// ScoredStrategy instance stays safe to reuse across concurrent
+	// RunOne calls exactly as before (internal/tournament.Run and
+	// cmd/traindata's worker pools both already rely on that). Left nil
+	// on every plain NewScoredStrategy instance -- never called, since
+	// explorationRate <= 0 short-circuits before either is invoked. Tests
+	// inject deterministic stubs instead.
+	randFloat64 func() float64
+	randIntN    func(n int) int
+
+	// recordCandidates, when true, populates Explanation.AllCandidates
+	// with every legal candidate's full feature breakdown on every
+	// decision -- see Candidate's doc comment. Only ever set by
+	// NewExploringScoredStrategy (again, only for cmd/traindata); false
+	// on every plain NewScoredStrategy instance, so real gameplay pays no
+	// extra allocation.
+	recordCandidates bool
 }
 
 // NewScoredStrategy creates a ScoredStrategy that scores candidates using
@@ -34,6 +68,48 @@ type ScoredStrategy struct {
 // strategy doesn't itself handle.
 func NewScoredStrategy(w Weights) *ScoredStrategy {
 	return &ScoredStrategy{weights: w, fallback: NewBasicStrategy()}
+}
+
+// NewExploringScoredStrategy returns a ScoredStrategy that, with
+// probability explorationRate on each decision, picks a uniformly random
+// legal candidate instead of the highest-scoring one -- injecting the
+// action-outcome contrast Approach A's fitting needs (see
+// project-docs/bot_player/phase_3_continuous_improvement/10_Bot_Weight_Tuning.md
+// and Next_Phase_Bot_ML_Roadmap.md's diagnosis of the first fit's
+// near-zero reinforce coefficients: an always-argmax policy never
+// generates a "we tried something worse here and it correlated with
+// losing" example for logistic regression to learn from). Also always
+// records every legal candidate's full feature breakdown on every
+// decision (Explanation.AllCandidates, recordCandidates: true) -- not
+// just the chosen one -- so cmd/traindata can build one training row per
+// candidate instead of per decision, avoiding the chosen-only selection
+// bias diagnosed for the collinearity that crushed several fitted
+// coefficients to near-zero. Only ever used by cmd/traindata to generate
+// training data -- cmd/backend, cmd/simulate, and cmd/tournament's
+// built-in registry all still use plain NewScoredStrategy.
+func NewExploringScoredStrategy(w Weights, explorationRate float64) *ScoredStrategy {
+	return &ScoredStrategy{
+		weights:          w,
+		fallback:         NewBasicStrategy(),
+		explorationRate:  explorationRate,
+		randFloat64:      rand.Float64,
+		randIntN:         rand.IntN,
+		recordCandidates: true,
+	}
+}
+
+// selectBest wraps the package-level selectBest, injecting exploration
+// when explorationRate is set -- a no-op wrapper (identical to calling
+// the package-level selectBest directly) for every ScoredStrategy built
+// via the plain NewScoredStrategy, since explorationRate's zero value
+// short-circuits the first condition below.
+func (s *ScoredStrategy) selectBest(options []scoredOption, maxAlternatives int) (Command, Explanation) {
+	all := rankOptions(options)
+	if s.explorationRate <= 0 || len(all) <= 1 || s.randFloat64() >= s.explorationRate {
+		return explanationFor(all, 0, maxAlternatives, false, s.recordCandidates)
+	}
+	idx := s.randIntN(len(all))
+	return explanationFor(all, idx, maxAlternatives, idx != 0, s.recordCandidates)
 }
 
 // NextCommand picks the next command for playerID by scoring every legal
@@ -82,7 +158,7 @@ func (s *ScoredStrategy) attack(g *risk.Game, playerID string) (Command, Explana
 		Features: []Feature{{Name: "end_phase_bias", Value: s.weights.EndPhaseBias}},
 	})
 
-	cmd, expl := selectBest(options, 3)
+	cmd, expl := s.selectBest(options, 3)
 	return cmd, expl, nil
 }
 

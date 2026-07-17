@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
-import { listAdminUsers, revokeUserSessions, updateUserAccess, type AdminUserRecord } from "../../api/users";
+import {
+  listAdminUsers,
+  revokeUserSessions,
+  updateUserAccess,
+  updateUserSandbox,
+  type AdminUserRecord,
+} from "../../api/users";
 import { useAuth } from "../../auth";
 import { buttonGhostClass, buttonPrimaryClass } from "./styles";
 
@@ -74,6 +80,29 @@ export function AdminPage() {
     }
   };
 
+  const onToggleSandbox = async (u: AdminUserRecord) => {
+    setBusyUserID(u.id);
+    setError("");
+    try {
+      await updateUserSandbox(u.id, !u.isSandboxed);
+      await load();
+    } catch (err) {
+      const apiErr = err as ApiError;
+      if (apiErr.status === 401) {
+        auth.clearSession();
+        await navigate({ to: "/login" });
+        return;
+      }
+      if (apiErr.status === 403) {
+        await navigate({ to: "/app/lobby" });
+        return;
+      }
+      setError(apiErr.message || "Failed to update sandbox status");
+    } finally {
+      setBusyUserID("");
+    }
+  };
+
   const onRevokeSessions = async (u: AdminUserRecord) => {
     setBusyUserID(u.id);
     setError("");
@@ -128,6 +157,7 @@ export function AdminPage() {
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">User</th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Role</th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Status</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Sandbox</th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Sessions</th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gc-muted">Actions</th>
             </tr>
@@ -154,6 +184,15 @@ export function AdminPage() {
                       {isBlocked ? "Blocked" : "Active"}
                     </span>
                   </td>
+                  <td className="px-4 py-3">
+                    {u.isSandboxed ? (
+                      <span className="inline-flex rounded-full border border-gc-accent/40 bg-gc-accent/10 px-2 py-0.5 text-[11px] font-medium text-gc-accent">
+                        Sandboxed
+                      </span>
+                    ) : (
+                      <span className="text-gc-muted">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gc-muted">{u.activeSessions}</td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-2">
@@ -176,6 +215,14 @@ export function AdminPage() {
                           Block
                         </button>
                       )}
+                      <button
+                        className={buttonGhostClass}
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void onToggleSandbox(u)}
+                      >
+                        {u.isSandboxed ? "Unsandbox" : "Sandbox"}
+                      </button>
                       <button
                         className={buttonPrimaryClass}
                         type="button"

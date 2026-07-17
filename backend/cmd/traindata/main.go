@@ -29,6 +29,20 @@ import (
 	"github.com/nmiano1111/global-conquest/backend/internal/simulation"
 )
 
+// explorationRate is how often bot.StrategyScoredV1Exploring picks a
+// uniformly random legal candidate instead of the highest-scoring one --
+// see bot.NewExploringScoredStrategy. Not a CLI flag: this is a first
+// experiment, trivial to retune by editing this constant if it suggests a
+// different value. Briefly raised to 0.35 to test whether more
+// action-outcome contrast moved the near-zero reinforce-phase
+// coefficients; it didn't (coefficients were statistically unchanged) and
+// substantially increased the game-failure rate (up to 88/150), so
+// reverted back to 0.15. The strategy now also records every legal
+// candidate's features per decision (see NewExploringScoredStrategy's doc
+// comment), which is the actual fix under test for the collinearity that
+// crushed those coefficients -- not exploration intensity.
+const explorationRate = 0.15
+
 func main() {
 	completed, err := run(os.Args[1:])
 	if err != nil {
@@ -80,8 +94,9 @@ func run(args []string) (completed bool, err error) {
 	}
 
 	registry := bot.StrategyRegistry{
-		bot.StrategyBasicV1:  bot.NewBasicStrategy(),
-		bot.StrategyScoredV1: bot.NewScoredStrategy(bot.DefaultWeights),
+		bot.StrategyBasicV1:           bot.NewBasicStrategy(),
+		bot.StrategyScoredV1:          bot.NewScoredStrategy(bot.DefaultWeights),
+		bot.StrategyScoredV1Exploring: bot.NewExploringScoredStrategy(bot.DefaultWeights, explorationRate),
 	}
 	if err := baseCfg.Validate(registry); err != nil {
 		return false, err

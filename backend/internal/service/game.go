@@ -17,12 +17,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/nmiano1111/global-conquest/backend/internal/gamename"
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
-	"github.com/jackc/pgx/v5"
 )
 
 type gameDB interface {
@@ -440,16 +440,16 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 		return store.Game{}, ErrInvalidGameInput
 	}
 
-	var existingOwner int
+	var ownerSandboxed bool
 	if err := s.db.Queryer().QueryRow(
 		ctx,
-		`SELECT count(*) FROM users WHERE id::text = $1`,
+		`SELECT is_sandboxed FROM users WHERE id::text = $1`,
 		ownerUserID,
-	).Scan(&existingOwner); err != nil {
+	).Scan(&ownerSandboxed); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.Game{}, ErrUnknownPlayerIDs
+		}
 		return store.Game{}, err
-	}
-	if existingOwner != 1 {
-		return store.Game{}, ErrUnknownPlayerIDs
 	}
 
 	// Best-effort: exclude the creator's own username from the bot name
@@ -504,6 +504,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 		Name:        gamename.Generate(),
 		Status:      status,
 		State:       stateJSON,
+		IsSandboxed: ownerSandboxed,
 	})
 	if err != nil {
 		return store.Game{}, err
@@ -528,7 +529,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 				return store.Game{}, err
 			}
 		}
-		if s.discordOutbox != nil && anyHuman(startedEngine.Players, firstPlayerID) {
+		if s.discordOutbox != nil && !g.IsSandboxed && anyHuman(startedEngine.Players, firstPlayerID) {
 			discordNames, err := s.discordNamesByIDsQ(ctx, s.db.Queryer(), []string{firstPlayerID})
 			if err != nil {
 				return store.Game{}, err
@@ -605,6 +606,44 @@ func anyHuman(players []risk.PlayerState, ids ...string) bool {
 	return false
 }
 
+// gameVisible reports whether a viewer with the given admin/sandboxed
+// status may see, join, or otherwise access ownerUserID's game, given that
+// game's own (creation-time-snapshotted) sandboxed flag. An admin sees
+// everything; a viewer always sees their own games; otherwise a sandboxed
+// viewer and a sandboxed game are each invisible to everyone but the two
+// exceptions above -- so a sandboxed player is isolated even from other
+// sandboxed players' games, and a regular player never sees a sandboxed
+// player's games.
+func gameVisible(viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool, ownerUserID string, gameIsSandboxed bool) bool {
+	if viewerIsAdmin {
+		return true
+	}
+	if viewerUserID != "" && viewerUserID == ownerUserID {
+		return true
+	}
+	return !viewerIsSandboxed && !gameIsSandboxed
+}
+
+// lookupUserFlags fetches userID's admin/sandboxed status directly, for
+// callers (namely the WebSocket hub's CanAccessGame path) that only have a
+// bare user ID and not an already-authenticated store.User to read those
+// flags off of. An empty userID (an anonymous WebSocket client) is treated
+// as a non-admin, non-sandboxed viewer rather than an error.
+func (s *GamesService) lookupUserFlags(ctx context.Context, q db.Querier, userID string) (isAdmin, isSandboxed bool, err error) {
+	if userID == "" || q == nil {
+		return false, false, nil
+	}
+	var role string
+	err = q.QueryRow(ctx, `SELECT role, is_sandboxed FROM users WHERE id::text = $1`, userID).Scan(&role, &isSandboxed)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	return strings.EqualFold(role, "admin"), isSandboxed, nil
+}
+
 // newBotPlayerID mints a synthetic player ID for a bot in the same
 // textual format Postgres's gen_random_uuid() produces for real users, so
 // bot IDs are indistinguishable in logs/events. Bots are never inserted
@@ -634,9 +673,13 @@ func newBotPlayerID() (string, error) {
 // and SetGameStartedHook's callback (if configured) is invoked after the
 // transaction commits. It returns ErrInvalidGameInput for an empty gameID
 // or playerID, ErrGameNotFound if the game does not exist,
-// ErrGameNotJoinable if the game is not in "lobby" status, and
-// ErrGamePlayerCountFull if the lobby has already reached its player count.
-func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error) {
+// ErrGameNotJoinable if the game is not in "lobby" status,
+// ErrGamePlayerCountFull if the lobby has already reached its player count,
+// and ErrGameForbidden if the joiner is blocked by the game's or their own
+// sandbox status (see gameVisible) -- a sandboxed player may only join a
+// game they themselves created, and no one but an admin may join a
+// sandboxed player's game.
+func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID string, joinerIsAdmin, joinerIsSandboxed bool) (store.Game, error) {
 	if gameID == "" || playerID == "" {
 		return store.Game{}, ErrInvalidGameInput
 	}
@@ -653,6 +696,9 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		}
 		if g.Status != "lobby" {
 			return ErrGameNotJoinable
+		}
+		if !gameVisible(playerID, joinerIsAdmin, joinerIsSandboxed, g.OwnerUserID, g.IsSandboxed) {
+			return ErrGameForbidden
 		}
 
 		lobby, err := decodeLobbyState(g.State)
@@ -707,7 +753,7 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 				}
 			}
 			firstPlayerID := startedEngine.Players[startedEngine.CurrentPlayer].ID
-			if s.discordOutbox != nil && anyHuman(startedEngine.Players, firstPlayerID) {
+			if s.discordOutbox != nil && !g.IsSandboxed && anyHuman(startedEngine.Players, firstPlayerID) {
 				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{firstPlayerID})
 				if err != nil {
 					return err
@@ -773,7 +819,12 @@ func (s *GamesService) GetLeaderboard(ctx context.Context, limit int) ([]store.L
 }
 
 // GetGame fetches the game identified by gameID without locking the row.
-// It returns ErrGameNotFound if no such game exists.
+// It returns ErrGameNotFound if no such game exists. This is an internal,
+// unauthorized read used by callers that are not acting on behalf of a
+// particular viewer (e.g. the bot runner reloading its own game's
+// authoritative state, or GetGameBootstrap which does its own visibility
+// check with the extra context it has). HTTP handlers serving a specific
+// user's request should use GetGameForViewer instead.
 func (s *GamesService) GetGame(ctx context.Context, gameID string) (store.Game, error) {
 	g, err := s.games.GetByID(ctx, s.db.Queryer(), gameID)
 	if err != nil {
@@ -783,6 +834,42 @@ func (s *GamesService) GetGame(ctx context.Context, gameID string) (store.Game, 
 		return store.Game{}, err
 	}
 	return g, nil
+}
+
+// GetGameForViewer fetches the game identified by gameID, same as GetGame,
+// but additionally returns ErrGameForbidden if viewerUserID is blocked by
+// the game's or their own sandbox status (see gameVisible).
+func (s *GamesService) GetGameForViewer(ctx context.Context, gameID, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) (store.Game, error) {
+	g, err := s.GetGame(ctx, gameID)
+	if err != nil {
+		return store.Game{}, err
+	}
+	if !gameVisible(viewerUserID, viewerIsAdmin, viewerIsSandboxed, g.OwnerUserID, g.IsSandboxed) {
+		return store.Game{}, ErrGameForbidden
+	}
+	return g, nil
+}
+
+// CanAccessGame reports whether userID may access gameID under the sandbox
+// visibility rule (see gameVisible), looking up userID's admin/sandboxed
+// status itself since callers of this method (namely the WebSocket hub,
+// via the GameAccessChecker interface it uses to gate game_chat_join)
+// typically have nothing but a bare user ID to go on. It returns false,
+// nil (rather than an error) if gameID does not exist, since the caller
+// only needs a yes/no answer.
+func (s *GamesService) CanAccessGame(ctx context.Context, gameID, userID string) (bool, error) {
+	g, err := s.GetGame(ctx, gameID)
+	if err != nil {
+		if errors.Is(err, ErrGameNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	isAdmin, isSandboxed, err := s.lookupUserFlags(ctx, s.db.Queryer(), userID)
+	if err != nil {
+		return false, err
+	}
+	return gameVisible(userID, isAdmin, isSandboxed, g.OwnerUserID, g.IsSandboxed), nil
 }
 
 // DeleteGame permanently removes a game and everything derived from it
@@ -817,20 +904,24 @@ type GameSummary struct {
 
 // ListGames returns a page of GameSummary projections matching the given
 // filters (ownerUserID and status may be empty to mean "any"), ordered and
-// paginated by the underlying store using limit and offset. For each
-// in_progress game whose state decodes successfully, it also resolves and
-// attaches the current player's phase and display name via batched
-// username lookups. It returns ErrInvalidGameInput if limit or offset is
-// negative.
-func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]GameSummary, error) {
+// paginated by the underlying store using limit and offset, and further
+// restricted to games visible to viewerUserID under the sandbox visibility
+// rule (see gameVisible) unless viewerIsAdmin. For each in_progress game
+// whose state decodes successfully, it also resolves and attaches the
+// current player's phase and display name via batched username lookups. It
+// returns ErrInvalidGameInput if limit or offset is negative.
+func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) ([]GameSummary, error) {
 	if limit < 0 || offset < 0 {
 		return nil, ErrInvalidGameInput
 	}
 	games, err := s.games.List(ctx, s.db.Queryer(), store.GameListFilter{
-		OwnerUserID: ownerUserID,
-		Status:      status,
-		Limit:       limit,
-		Offset:      offset,
+		OwnerUserID:       ownerUserID,
+		Status:            status,
+		Limit:             limit,
+		Offset:            offset,
+		ViewerUserID:      viewerUserID,
+		ViewerIsAdmin:     viewerIsAdmin,
+		ViewerIsSandboxed: viewerIsSandboxed,
 	})
 	if err != nil {
 		return nil, err
@@ -1039,7 +1130,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			if ar.Eliminated != "" {
 				eventBody += fmt.Sprintf(" %s was eliminated.", displayName(names, ar.Eliminated))
-				if s.discordOutbox != nil && anyHuman(engine.Players, in.PlayerUserID, ar.Eliminated) {
+				if s.discordOutbox != nil && !g.IsSandboxed && anyHuman(engine.Players, in.PlayerUserID, ar.Eliminated) {
 					discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID, ar.Eliminated})
 					if err != nil {
 						return err
@@ -1072,7 +1163,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			// Winning the game is only detected here: checkWinner() runs inside
 			// OccupyTerritory (and EndTurn, defensively), never inside Attack —
 			// a conquering attack always transitions to PhaseOccupy first.
-			if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.discordOutbox != nil && anyHuman(engine.Players, engine.Winner) {
+			if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.discordOutbox != nil && !g.IsSandboxed && anyHuman(engine.Players, engine.Winner) {
 				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{engine.Winner})
 				if err != nil {
 					return err
@@ -1110,7 +1201,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			eventType = "turn_ended"
 			eventBody = fmt.Sprintf("%s ended their turn. %s is up next.", displayName(names, in.PlayerUserID), displayName(names, nextPlayer))
-			if s.discordOutbox != nil && nextPlayer != "" && engine.Phase != risk.PhaseGameOver && anyHuman(engine.Players, in.PlayerUserID, nextPlayer) {
+			if s.discordOutbox != nil && !g.IsSandboxed && nextPlayer != "" && engine.Phase != risk.PhaseGameOver && anyHuman(engine.Players, in.PlayerUserID, nextPlayer) {
 				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID, nextPlayer})
 				if err != nil {
 					return err
@@ -1129,7 +1220,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			result = map[string]int{"armies": armies}
 			eventType = "cards_traded"
 			eventBody = fmt.Sprintf("%s traded cards for %d armies.", displayName(names, in.PlayerUserID), armies)
-			if s.discordOutbox != nil && anyHuman(engine.Players, in.PlayerUserID) {
+			if s.discordOutbox != nil && !g.IsSandboxed && anyHuman(engine.Players, in.PlayerUserID) {
 				discordNames, err := s.discordNamesByIDsQ(ctx, q, []string{in.PlayerUserID})
 				if err != nil {
 					return err
@@ -1251,15 +1342,20 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 // names, includes the requester's own card hand only (never other
 // players'), and includes the event log. It returns ErrInvalidGameInput if
 // gameID or requesterUserID is empty, the game's status is unrecognized,
-// or its persisted state cannot be decoded, and propagates ErrGameNotFound
-// from the underlying GetGame call.
-func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (GameBootstrap, error) {
+// or its persisted state cannot be decoded, propagates ErrGameNotFound from
+// the underlying GetGame call, and returns ErrGameForbidden if the
+// requester is blocked by the game's or their own sandbox status (see
+// gameVisible).
+func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool) (GameBootstrap, error) {
 	if gameID == "" || requesterUserID == "" {
 		return GameBootstrap{}, ErrInvalidGameInput
 	}
 	g, err := s.GetGame(ctx, gameID)
 	if err != nil {
 		return GameBootstrap{}, err
+	}
+	if !gameVisible(requesterUserID, requesterIsAdmin, requesterIsSandboxed, g.OwnerUserID, g.IsSandboxed) {
+		return GameBootstrap{}, ErrGameForbidden
 	}
 
 	out := GameBootstrap{

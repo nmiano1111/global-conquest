@@ -1,14 +1,14 @@
 package httpapi
 
 import (
-	"github.com/nmiano1111/global-conquest/backend/internal/auth"
-	"github.com/nmiano1111/global-conquest/backend/internal/game"
-	"github.com/nmiano1111/global-conquest/backend/internal/service"
-	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/nmiano1111/global-conquest/backend/internal/auth"
+	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/service"
+	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"net/http"
 	"testing"
 	"time"
@@ -20,6 +20,7 @@ type fakeUsersService struct {
 	listAdminUsersFn      func(ctx context.Context) ([]store.AdminUser, error)
 	getUserFn             func(ctx context.Context, userName string) (store.User, error)
 	updateUserAccessFn    func(ctx context.Context, userID, accessStatus string) (store.User, error)
+	setSandboxedFn        func(ctx context.Context, userID string, sandboxed bool) (store.User, error)
 	revokeUserSessionsFn  func(ctx context.Context, userID string) (int64, error)
 	authenticateSessionFn func(ctx context.Context, token string) (store.User, error)
 	loginFn               func(ctx context.Context, userName, password string) (service.LoginResult, error)
@@ -66,6 +67,13 @@ func (f *fakeUsersService) UpdateUserAccess(ctx context.Context, userID, accessS
 	return f.updateUserAccessFn(ctx, userID, accessStatus)
 }
 
+func (f *fakeUsersService) SetSandboxed(ctx context.Context, userID string, sandboxed bool) (store.User, error) {
+	if f.setSandboxedFn == nil {
+		return store.User{}, nil
+	}
+	return f.setSandboxedFn(ctx, userID, sandboxed)
+}
+
 func (f *fakeUsersService) RevokeUserSessions(ctx context.Context, userID string) (int64, error) {
 	if f.revokeUserSessionsFn == nil {
 		return 0, nil
@@ -88,19 +96,19 @@ func (f *fakeGamesService) CreateClassicGame(ctx context.Context, ownerUserID st
 	return f.createClassicGameFn(ctx, ownerUserID, playerCount, setupMode, botCount)
 }
 
-func (f *fakeGamesService) JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error) {
+func (f *fakeGamesService) JoinClassicGame(ctx context.Context, gameID, playerID string, joinerIsAdmin, joinerIsSandboxed bool) (store.Game, error) {
 	return f.joinClassicGameFn(ctx, gameID, playerID)
 }
 
-func (f *fakeGamesService) GetGame(ctx context.Context, gameID string) (store.Game, error) {
+func (f *fakeGamesService) GetGameForViewer(ctx context.Context, gameID, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) (store.Game, error) {
 	return f.getGameFn(ctx, gameID)
 }
 
-func (f *fakeGamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error) {
+func (f *fakeGamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool) (service.GameBootstrap, error) {
 	return f.getGameBootstrapFn(ctx, gameID, requesterUserID)
 }
 
-func (f *fakeGamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error) {
+func (f *fakeGamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) ([]service.GameSummary, error) {
 	return f.listGamesFn(ctx, ownerUserID, status, limit, offset)
 }
 

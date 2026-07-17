@@ -8,13 +8,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/nmiano1111/global-conquest/backend/internal/game"
 	"github.com/nmiano1111/global-conquest/backend/internal/httpapi"
 	"github.com/nmiano1111/global-conquest/backend/internal/service"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
-	"github.com/joho/godotenv"
 
 	_ "github.com/nmiano1111/global-conquest/backend/docs"
 
@@ -76,6 +76,7 @@ func main() {
 	gameChatSvc := service.NewGameChatService(d, gameChatStore)
 	s.SetGameChatLogStore(gameChatSvc)
 	s.SetGameActionService(gameActionSvc)
+	s.SetGameAccessChecker(gameActionSvc)
 
 	// bots
 	botLoader := service.NewBotGameLoader(gamesSvc)
@@ -112,7 +113,10 @@ func recoverBotGames(ctx context.Context, gamesSvc *service.GamesService, botMan
 	offset := 0
 	total := 0
 	for {
-		games, err := gamesSvc.ListGames(ctx, "", "in_progress", pageSize, offset)
+		// viewerIsAdmin true: this is an internal maintenance scan, not a
+		// request on behalf of any particular user, so it must see every
+		// in_progress game regardless of sandboxing.
+		games, err := gamesSvc.ListGames(ctx, "", "in_progress", pageSize, offset, "", true, false)
 		if err != nil {
 			log.Printf("bot: startup recovery: list in_progress games: %v", err)
 			return

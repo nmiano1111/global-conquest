@@ -19,6 +19,39 @@ func entry(phase, playerID string, features ...bot.Feature) simulation.Entry {
 	}
 }
 
+func exploredEntry(phase, playerID string, features ...bot.Feature) simulation.Entry {
+	return simulation.Entry{
+		CommandIndex: 5,
+		Turn:         3,
+		Seat:         1,
+		PlayerID:     playerID,
+		StrategyID:   bot.StrategyScoredV1Exploring,
+		Phase:        phase,
+		Explanation:  bot.Explanation{Features: features, Explored: true},
+	}
+}
+
+// entryWithCandidates builds an entry as bot.NewExploringScoredStrategy's
+// recordCandidates=true path would -- Explanation.AllCandidates populated
+// with every legal candidate, chosen marking which one was actually
+// picked (its Features also mirrored onto Explanation.Features, matching
+// what explanationFor always does regardless of recording).
+func entryWithCandidates(phase, playerID string, chosen int, candidates ...[]bot.Feature) simulation.Entry {
+	all := make([]bot.Candidate, len(candidates))
+	for i, features := range candidates {
+		all[i] = bot.Candidate{Features: features, Chosen: i == chosen}
+	}
+	return simulation.Entry{
+		CommandIndex: 5,
+		Turn:         3,
+		Seat:         1,
+		PlayerID:     playerID,
+		StrategyID:   bot.StrategyScoredV1Exploring,
+		Phase:        phase,
+		Explanation:  bot.Explanation{Features: candidates[chosen], AllCandidates: all},
+	}
+}
+
 func TestRowsFromEntriesRecoversRawSignalPerPhase(t *testing.T) {
 	w := bot.DefaultWeights
 	cases := []struct {
@@ -153,6 +186,83 @@ func TestRowsFromEntriesLabelsWinLoss(t *testing.T) {
 	}
 	if rows[0].GameID != "test-game-7" || rows[1].GameID != "test-game-7" {
 		t.Errorf("expected GameID to be carried through onto every row, got %q and %q", rows[0].GameID, rows[1].GameID)
+	}
+}
+
+func TestRowsFromEntriesPropagatesExplored(t *testing.T) {
+	w := bot.DefaultWeights
+	explored := exploredEntry("attack", "p0", bot.Feature{Name: "army_advantage", Value: w.ArmyAdvantage * 4})
+	notExplored := entry("attack", "p1", bot.Feature{Name: "army_advantage", Value: w.ArmyAdvantage * 4})
+
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{explored, notExplored}, "p0")
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	if !rows[0].Explored {
+		t.Errorf("expected the exploring strategy's row to have Explored == true")
+	}
+	if rows[1].Explored {
+		t.Errorf("expected the plain-scored strategy's row to have Explored == false")
+	}
+}
+
+func TestRowsFromEntriesEmitsOneRowPerCandidateWhenAllCandidatesPopulated(t *testing.T) {
+	w := bot.DefaultWeights
+	e := entryWithCandidates("reinforce", "p0", 1,
+		[]bot.Feature{{Name: "enemy_threat", Value: w.ReinforceEnemyThreat * 2}},
+		[]bot.Feature{{Name: "enemy_threat", Value: w.ReinforceEnemyThreat * 9}},
+		[]bot.Feature{{Name: "enemy_threat", Value: w.ReinforceEnemyThreat * 5}},
+	)
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{e}, "p0")
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows (one per candidate), got %d: %+v", len(rows), rows)
+	}
+
+	wantRaw := map[int]float64{0: 2, 1: 9, 2: 5}
+	chosenCount := 0
+	for i, r := range rows {
+		if got := r.Features["enemy_threat"]; got < wantRaw[i]-1e-9 || got > wantRaw[i]+1e-9 {
+			t.Errorf("candidate %d: enemy_threat raw = %v, want %v", i, got, wantRaw[i])
+		}
+		if r.CommandIndex != e.CommandIndex || r.GameID != "test-game" || r.PlayerID != "p0" {
+			t.Errorf("candidate %d: expected shared decision metadata carried through, got %+v", i, r)
+		}
+		if r.Chosen {
+			chosenCount++
+			if i != 1 {
+				t.Errorf("expected only candidate index 1 to be marked Chosen, got it at index %d", i)
+			}
+		}
+	}
+	if chosenCount != 1 {
+		t.Errorf("expected exactly 1 row marked Chosen, got %d", chosenCount)
+	}
+}
+
+func TestRowsFromEntriesSkipsUnrecognizedCandidatesButKeepsOthers(t *testing.T) {
+	w := bot.DefaultWeights
+	e := entryWithCandidates("attack", "p0", 0,
+		[]bot.Feature{{Name: "army_advantage", Value: w.ArmyAdvantage * 3}},
+		[]bot.Feature{{Name: "end_phase_bias", Value: 0}}, // the only-excluded-feature case, like the real end_attack sentinel
+	)
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{e}, "p0")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row (the end_phase_bias-only candidate skipped), got %d: %+v", len(rows), rows)
+	}
+	if !rows[0].Chosen {
+		t.Errorf("expected the surviving row to be the chosen candidate")
+	}
+}
+
+func TestRowsFromEntriesChosenOnlyFallbackWithoutAllCandidates(t *testing.T) {
+	w := bot.DefaultWeights
+	e := entry("attack", "p0", bot.Feature{Name: "army_advantage", Value: w.ArmyAdvantage})
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{e}, "p0")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if !rows[0].Chosen {
+		t.Errorf("expected the sole row from a non-recording entry to be marked Chosen")
 	}
 }
 

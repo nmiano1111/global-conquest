@@ -122,6 +122,13 @@ func (s *UsersService) UpdateUserAccess(ctx context.Context, userID, accessStatu
 	return s.users.UpdateUserAccess(ctx, s.db.Queryer(), userID, accessStatus)
 }
 
+// SetSandboxed sets the given user's is_sandboxed flag. Games the user
+// creates after this call carry that flag for their lifetime (see
+// store.Game.IsSandboxed); games they already created are unaffected.
+func (s *UsersService) SetSandboxed(ctx context.Context, userID string, sandboxed bool) (store.User, error) {
+	return s.users.SetSandboxed(ctx, s.db.Queryer(), userID, sandboxed)
+}
+
 // RevokeUserSessions deletes all active sessions for the given user (e.g.
 // when an admin blocks them), returning the number of sessions revoked.
 func (s *UsersService) RevokeUserSessions(ctx context.Context, userID string) (int64, error) {
@@ -206,6 +213,7 @@ func (s *UsersService) Login(ctx context.Context, userName, password string) (Lo
 				UserName:     u.UserName,
 				Role:         u.Role,
 				AccessStatus: u.AccessStatus,
+				IsSandboxed:  u.IsSandboxed,
 				CreatedAt:    u.CreatedAt,
 				UpdatedAt:    u.UpdatedAt,
 			},

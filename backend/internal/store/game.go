@@ -1,10 +1,10 @@
 package store
 
 import (
-	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"strings"
 	"time"
 )
@@ -22,6 +22,11 @@ type Game struct {
 	Status string `json:"status"`
 	// State is the JSONB-serialized risk.Game engine state.
 	State json.RawMessage `swaggertype:"object" json:"state,omitempty"`
+	// IsSandboxed is a snapshot of the creator's is_sandboxed flag taken at
+	// creation time: fixed for the game's lifetime regardless of later
+	// changes to the creator's own flag. See GameListFilter for how this
+	// drives visibility.
+	IsSandboxed bool `json:"is_sandboxed"`
 	// CreatedAt is when the game row was inserted.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is when the game row was last updated.
@@ -38,6 +43,8 @@ type NewGame struct {
 	Status string
 	// State is the initial JSONB-serialized risk.Game engine state.
 	State json.RawMessage
+	// IsSandboxed snapshots the creator's is_sandboxed flag at creation time.
+	IsSandboxed bool
 }
 
 // UpdateGameState is the input for updating a game's status and state via UpdateState.
@@ -60,6 +67,20 @@ type GameListFilter struct {
 	Limit int
 	// Offset skips this many rows before returning results.
 	Offset int
+
+	// ViewerUserID, ViewerIsAdmin, and ViewerIsSandboxed together drive the
+	// sandbox visibility rule applied to every List call: a game is included
+	// only if the viewer is an admin, the viewer created it themselves, or
+	// neither the viewer nor the game is sandboxed. A sandboxed player is
+	// therefore isolated even from other sandboxed players' games -- the
+	// only games visible to them are their own. ViewerUserID must be set for
+	// this filter to apply (every List caller is expected to have an
+	// authenticated viewer; callers that need every game regardless of
+	// sandboxing, e.g. an internal maintenance scan, should pass
+	// ViewerIsAdmin true instead of leaving ViewerUserID empty).
+	ViewerUserID      string
+	ViewerIsAdmin     bool
+	ViewerIsSandboxed bool
 }
 
 // GamesStore defines the persistence operations for games.
@@ -81,13 +102,13 @@ func NewPostgresGamesStore() *PostgresGamesStore { return &PostgresGamesStore{} 
 // Create inserts a new game row and returns it as stored.
 func (s *PostgresGamesStore) Create(ctx context.Context, exec db.Querier, in NewGame) (Game, error) {
 	const stmt = `
-		INSERT INTO games (owner_user_id, name, status, state)
-		VALUES ($1::uuid, $2, $3, $4::jsonb)
-		RETURNING id::text, owner_user_id::text, name, status, state, created_at, updated_at
+		INSERT INTO games (owner_user_id, name, status, state, is_sandboxed)
+		VALUES ($1::uuid, $2, $3, $4::jsonb, $5)
+		RETURNING id::text, owner_user_id::text, name, status, state, is_sandboxed, created_at, updated_at
 	`
 	var g Game
-	err := exec.QueryRow(ctx, stmt, in.OwnerUserID, in.Name, in.Status, in.State).Scan(
-		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.CreatedAt, &g.UpdatedAt,
+	err := exec.QueryRow(ctx, stmt, in.OwnerUserID, in.Name, in.Status, in.State, in.IsSandboxed).Scan(
+		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
 }
@@ -96,13 +117,13 @@ func (s *PostgresGamesStore) Create(ctx context.Context, exec db.Querier, in New
 // to mutate the game within a transaction must use GetByIDForUpdate instead.
 func (s *PostgresGamesStore) GetByID(ctx context.Context, exec db.Querier, gameID string) (Game, error) {
 	const stmt = `
-		SELECT id::text, owner_user_id::text, name, status, state, created_at, updated_at
+		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, created_at, updated_at
 		FROM games
 		WHERE id = $1::uuid
 	`
 	var g Game
 	err := exec.QueryRow(ctx, stmt, gameID).Scan(
-		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
 }
@@ -113,14 +134,14 @@ func (s *PostgresGamesStore) GetByID(ctx context.Context, exec db.Querier, gameI
 // WithTxQ) before any read-modify-write mutation of game state.
 func (s *PostgresGamesStore) GetByIDForUpdate(ctx context.Context, exec db.Querier, gameID string) (Game, error) {
 	const stmt = `
-		SELECT id::text, owner_user_id::text, name, status, state, created_at, updated_at
+		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, created_at, updated_at
 		FROM games
 		WHERE id = $1::uuid
 		FOR UPDATE
 	`
 	var g Game
 	err := exec.QueryRow(ctx, stmt, gameID).Scan(
-		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
 }
@@ -143,11 +164,11 @@ func (s *PostgresGamesStore) List(ctx context.Context, exec db.Querier, filter G
 	}
 
 	stmt := `
-		SELECT id::text, owner_user_id::text, name, status, state, created_at, updated_at
+		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, created_at, updated_at
 		FROM games
 	`
-	conds := make([]string, 0, 2)
-	args := make([]any, 0, 4)
+	conds := make([]string, 0, 3)
+	args := make([]any, 0, 5)
 	if filter.OwnerUserID != "" {
 		conds = append(conds, fmt.Sprintf("owner_user_id = $%d::uuid", len(args)+1))
 		args = append(args, filter.OwnerUserID)
@@ -155,6 +176,17 @@ func (s *PostgresGamesStore) List(ctx context.Context, exec db.Querier, filter G
 	if filter.Status != "" {
 		conds = append(conds, fmt.Sprintf("status = $%d", len(args)+1))
 		args = append(args, filter.Status)
+	}
+	// See GameListFilter's doc comment for the visibility rule this
+	// encodes. Applied whenever a viewer is given and isn't an admin --
+	// admins (or an empty ViewerUserID, meaning "no visibility filtering
+	// requested") see every game regardless of sandboxing.
+	if filter.ViewerUserID != "" && !filter.ViewerIsAdmin {
+		conds = append(conds, fmt.Sprintf(
+			"(owner_user_id = $%d::uuid OR (NOT $%d AND NOT is_sandboxed))",
+			len(args)+1, len(args)+2,
+		))
+		args = append(args, filter.ViewerUserID, filter.ViewerIsSandboxed)
 	}
 	if len(conds) > 0 {
 		stmt += " WHERE " + strings.Join(conds, " AND ")
@@ -171,7 +203,7 @@ func (s *PostgresGamesStore) List(ctx context.Context, exec db.Querier, filter G
 	out := make([]Game, 0, limit)
 	for rows.Next() {
 		var g Game
-		if err := rows.Scan(&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -193,11 +225,11 @@ func (s *PostgresGamesStore) UpdateState(ctx context.Context, exec db.Querier, i
 		    state = $3::jsonb,
 		    updated_at = now()
 		WHERE id = $1::uuid
-		RETURNING id::text, owner_user_id::text, name, status, state, created_at, updated_at
+		RETURNING id::text, owner_user_id::text, name, status, state, is_sandboxed, created_at, updated_at
 	`
 	var g Game
 	err := exec.QueryRow(ctx, stmt, in.GameID, in.Status, in.State).Scan(
-		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
 }

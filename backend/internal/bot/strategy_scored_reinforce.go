@@ -33,7 +33,7 @@ func (s *ScoredStrategy) reinforce(g *risk.Game, playerID string) (Command, Expl
 			Features: s.reinforceFeatures(g, pi, a.Territory),
 		})
 	}
-	cmd, expl := selectBest(options, 3)
+	cmd, expl := s.selectBest(options, 3)
 	cmd.Armies = min(g.PendingReinforcements, max(1, g.PendingReinforcements/3))
 	return cmd, expl, nil
 }
@@ -55,7 +55,7 @@ func (s *ScoredStrategy) setupReinforce(g *risk.Game, playerID string) (Command,
 			Features: s.reinforceFeatures(g, pi, a.Territory),
 		})
 	}
-	cmd, expl := selectBest(options, 3)
+	cmd, expl := s.selectBest(options, 3)
 	return cmd, expl, nil
 }
 

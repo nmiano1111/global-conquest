@@ -7,12 +7,12 @@
 package game
 
 import (
-	"github.com/nmiano1111/global-conquest/backend/internal/proto/wsmsg"
 	"context"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"github.com/nmiano1111/global-conquest/backend/internal/proto/wsmsg"
 	"log"
 	"strings"
 	"time"
@@ -31,6 +31,7 @@ type Server struct {
 	chatRooms map[string]map[string]struct{}
 	chatLog   GameChatLogStore
 	actions   GameActionService
+	access    GameAccessChecker
 
 	// botTrigger is invoked after every committed game action (human or
 	// bot-submitted) with the affected game ID, so a bot manager can check
@@ -232,6 +233,19 @@ type GameActionService interface {
 	ApplyGameAction(ctx context.Context, in GameActionInput) (GameActionUpdate, error)
 }
 
+// GameAccessChecker reports whether userID is allowed to access gameID,
+// enforcing the same sandbox visibility rule the REST list/join/bootstrap
+// endpoints use. The hub consults it before letting a client join a game's
+// chat room (see the CLAUDE.md invariant that game_chat_join gates
+// game_state_updated delivery) -- without this check, any authenticated
+// client that guessed or was given a sandboxed game's ID could still
+// receive its state broadcasts even though every other access path is
+// closed to them. If unset (SetGameAccessChecker never called), the hub
+// allows every join, matching pre-sandbox behavior.
+type GameAccessChecker interface {
+	CanAccessGame(ctx context.Context, gameID, userID string) (bool, error)
+}
+
 // --- inbox messages ---
 
 // Register is an inbox message that registers a newly connected Client with
@@ -312,6 +326,13 @@ func (s *Server) SetGameChatLogStore(chatLog GameChatLogStore) {
 // It must be called before Run starts processing game actions.
 func (s *Server) SetGameActionService(actions GameActionService) {
 	s.actions = actions
+}
+
+// SetGameAccessChecker configures the checker used to gate game_chat_join
+// against a game's sandbox visibility. It must be called before Run starts
+// processing messages; if never called, every join is allowed.
+func (s *Server) SetGameAccessChecker(access GameAccessChecker) {
+	s.access = access
 }
 
 // SetBotTrigger configures the callback invoked after every committed game
@@ -516,6 +537,13 @@ func (s *Server) handleIncoming(clientID string, env wsmsg.Envelope) {
 		if gameID == "" {
 			c.Conn.Send(errEnv(id, "invalid_message", "game_id is required"))
 			return
+		}
+		if s.access != nil {
+			ok, err := s.access.CanAccessGame(context.Background(), gameID, c.UserID)
+			if err != nil || !ok {
+				c.Conn.Send(errEnv(id, "forbidden", "You do not have access to this game"))
+				return
+			}
 		}
 		s.joinChatRoom(c, gameID)
 

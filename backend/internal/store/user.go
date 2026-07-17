@@ -6,8 +6,8 @@
 package store
 
 import (
-	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"context"
+	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"time"
 )
 
@@ -21,6 +21,11 @@ type User struct {
 	Role string `json:"role"`
 	// AccessStatus indicates whether the user is allowed to log in (e.g. active vs. revoked).
 	AccessStatus string `json:"access_status"`
+	// IsSandboxed marks the user as fully isolated from other players: their
+	// games are invisible to and unjoinable by everyone but admins, they
+	// cannot see or join anyone else's games, and no Discord notification is
+	// ever enqueued for a game they created. Set by an admin.
+	IsSandboxed bool `json:"is_sandboxed"`
 	// CreatedAt is when the user account was created.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is when the user row was last modified.
@@ -85,6 +90,7 @@ type UsersStore interface {
 	GetUserAuth(ctx context.Context, q db.Querier, userName string) (UserAuth, error)
 	CreateSession(ctx context.Context, q db.Querier, in NewSession) (Session, error)
 	UpdateUserAccess(ctx context.Context, q db.Querier, userID, accessStatus string) (User, error)
+	SetSandboxed(ctx context.Context, q db.Querier, userID string, sandboxed bool) (User, error)
 	RevokeSessions(ctx context.Context, q db.Querier, userID string) (int64, error)
 }
 
@@ -99,11 +105,11 @@ func (s *PostgresUsersStore) Create(ctx context.Context, exec db.Querier, in New
 	const stmt = `
 		INSERT INTO users (username, password_hash)
 		VALUES ($1, $2)
-		RETURNING id::text, username, role, access_status, created_at, updated_at
+		RETURNING id::text, username, role, access_status, is_sandboxed, created_at, updated_at
 	`
 	var u User
 	err := exec.QueryRow(ctx, stmt, in.UserName, in.PasswordHash).Scan(
-		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.CreatedAt, &u.UpdatedAt,
+		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.IsSandboxed, &u.CreatedAt, &u.UpdatedAt,
 	)
 	return u, err
 }
@@ -111,7 +117,7 @@ func (s *PostgresUsersStore) Create(ctx context.Context, exec db.Querier, in New
 // ListUsers returns all users, ordered by creation time descending (newest first).
 func (s *PostgresUsersStore) ListUsers(ctx context.Context, exec db.Querier) ([]User, error) {
 	const stmt = `
-		SELECT id::text, username, role, access_status, created_at, updated_at
+		SELECT id::text, username, role, access_status, is_sandboxed, created_at, updated_at
 		FROM users
 		ORDER BY created_at DESC
 	`
@@ -124,7 +130,7 @@ func (s *PostgresUsersStore) ListUsers(ctx context.Context, exec db.Querier) ([]
 	var users []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.IsSandboxed, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -143,6 +149,7 @@ func (s *PostgresUsersStore) ListAdminUsers(ctx context.Context, exec db.Querier
 			u.username,
 			u.role,
 			u.access_status,
+			u.is_sandboxed,
 			u.created_at,
 			u.updated_at,
 			COALESCE(COUNT(s.id), 0)::int AS active_sessions
@@ -150,7 +157,7 @@ func (s *PostgresUsersStore) ListAdminUsers(ctx context.Context, exec db.Querier
 		LEFT JOIN sessions s
 			ON s.user_id = u.id
 			AND s.expires_at > now()
-		GROUP BY u.id, u.username, u.role, u.access_status, u.created_at, u.updated_at
+		GROUP BY u.id, u.username, u.role, u.access_status, u.is_sandboxed, u.created_at, u.updated_at
 		ORDER BY u.created_at DESC
 	`
 	rows, err := exec.Query(ctx, stmt)
@@ -167,6 +174,7 @@ func (s *PostgresUsersStore) ListAdminUsers(ctx context.Context, exec db.Querier
 			&u.UserName,
 			&u.Role,
 			&u.AccessStatus,
+			&u.IsSandboxed,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 			&u.ActiveSessions,
@@ -184,13 +192,13 @@ func (s *PostgresUsersStore) ListAdminUsers(ctx context.Context, exec db.Querier
 // GetUser fetches a single user by username. It returns sql.ErrNoRows (via the underlying QueryRow.Scan) if no user with that username exists.
 func (s *PostgresUsersStore) GetUser(ctx context.Context, exec db.Querier, email string) (User, error) {
 	const stmt = `
-		SELECT id::text, username, role, access_status, created_at, updated_at
+		SELECT id::text, username, role, access_status, is_sandboxed, created_at, updated_at
 		FROM users
 		WHERE username = $1
 	`
 	var u User
 	err := exec.QueryRow(ctx, stmt, email).Scan(
-		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.CreatedAt, &u.UpdatedAt,
+		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.IsSandboxed, &u.CreatedAt, &u.UpdatedAt,
 	)
 	return u, err
 }
@@ -198,7 +206,7 @@ func (s *PostgresUsersStore) GetUser(ctx context.Context, exec db.Querier, email
 // GetUserBySessionToken fetches the user associated with an unexpired session whose token hash matches tokenHash. It returns sql.ErrNoRows if no matching, unexpired session exists.
 func (s *PostgresUsersStore) GetUserBySessionToken(ctx context.Context, exec db.Querier, tokenHash []byte) (User, error) {
 	const stmt = `
-		SELECT u.id::text, u.username, u.role, u.access_status, u.created_at, u.updated_at
+		SELECT u.id::text, u.username, u.role, u.access_status, u.is_sandboxed, u.created_at, u.updated_at
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = $1
@@ -206,7 +214,7 @@ func (s *PostgresUsersStore) GetUserBySessionToken(ctx context.Context, exec db.
 	`
 	var u User
 	err := exec.QueryRow(ctx, stmt, tokenHash).Scan(
-		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.CreatedAt, &u.UpdatedAt,
+		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.IsSandboxed, &u.CreatedAt, &u.UpdatedAt,
 	)
 	return u, err
 }
@@ -214,13 +222,13 @@ func (s *PostgresUsersStore) GetUserBySessionToken(ctx context.Context, exec db.
 // GetUserAuth fetches a user by username along with their password hash, for verifying login credentials. It returns sql.ErrNoRows if no user with that username exists.
 func (s *PostgresUsersStore) GetUserAuth(ctx context.Context, exec db.Querier, userName string) (UserAuth, error) {
 	const stmt = `
-		SELECT id::text, username, role, access_status, password_hash, created_at, updated_at
+		SELECT id::text, username, role, access_status, is_sandboxed, password_hash, created_at, updated_at
 		FROM users
 		WHERE username = $1
 	`
 	var u UserAuth
 	err := exec.QueryRow(ctx, stmt, userName).Scan(
-		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt,
+		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.IsSandboxed, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt,
 	)
 	return u, err
 }
@@ -247,11 +255,30 @@ func (s *PostgresUsersStore) UpdateUserAccess(ctx context.Context, exec db.Queri
 			access_status = $2,
 			updated_at = now()
 		WHERE id = $1::uuid
-		RETURNING id::text, username, role, access_status, created_at, updated_at
+		RETURNING id::text, username, role, access_status, is_sandboxed, created_at, updated_at
 	`
 	var u User
 	err := exec.QueryRow(ctx, stmt, userID, accessStatus).Scan(
-		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.CreatedAt, &u.UpdatedAt,
+		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.IsSandboxed, &u.CreatedAt, &u.UpdatedAt,
+	)
+	return u, err
+}
+
+// SetSandboxed sets the given user's is_sandboxed flag and updates their
+// updated_at timestamp, returning the updated row. It returns sql.ErrNoRows
+// if no user with that ID exists.
+func (s *PostgresUsersStore) SetSandboxed(ctx context.Context, exec db.Querier, userID string, sandboxed bool) (User, error) {
+	const stmt = `
+		UPDATE users
+		SET
+			is_sandboxed = $2,
+			updated_at = now()
+		WHERE id = $1::uuid
+		RETURNING id::text, username, role, access_status, is_sandboxed, created_at, updated_at
+	`
+	var u User
+	err := exec.QueryRow(ctx, stmt, userID, sandboxed).Scan(
+		&u.ID, &u.UserName, &u.Role, &u.AccessStatus, &u.IsSandboxed, &u.CreatedAt, &u.UpdatedAt,
 	)
 	return u, err
 }

@@ -7,10 +7,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
-	"github.com/jackc/pgx/v5"
 )
 
 type scalarRow struct {
@@ -33,17 +33,64 @@ func (r scalarRow) Scan(dest ...any) error {
 	return nil
 }
 
+// countQuerier fakes the single-row `SELECT is_sandboxed FROM users WHERE
+// id::text = $1` lookup CreateClassicGame uses to both confirm ownerUserID
+// exists and snapshot its sandboxed flag onto the new game. notFound mimics
+// a missing owner (scanned as pgx.ErrNoRows, mapped to ErrUnknownPlayerIDs);
+// otherwise it reports sandboxed as the owner's is_sandboxed value.
 type countQuerier struct {
-	count int
-	err   error
+	sandboxed bool
+	notFound  bool
+	err       error
 }
 
 func (q countQuerier) QueryRow(context.Context, string, ...any) pgx.Row {
-	return scalarRow{val: q.count, err: q.err}
+	if q.notFound {
+		return scalarRow{err: pgx.ErrNoRows}
+	}
+	return scalarRow{val: q.sandboxed, err: q.err}
 }
 
 func (q countQuerier) Query(context.Context, string, ...any) (pgx.Rows, error) {
 	return nil, q.err
+}
+
+// roleSandboxQuerier fakes lookupUserFlags' `SELECT role, is_sandboxed FROM
+// users WHERE id::text = $1` two-column lookup -- distinct from countQuerier
+// because that query scans a single destination, while this one scans two.
+type roleSandboxQuerier struct {
+	role      string
+	sandboxed bool
+}
+
+func (q roleSandboxQuerier) QueryRow(context.Context, string, ...any) pgx.Row {
+	return roleSandboxRow(q)
+}
+
+func (q roleSandboxQuerier) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, errors.New("roleSandboxQuerier: Query not supported")
+}
+
+type roleSandboxRow struct {
+	role      string
+	sandboxed bool
+}
+
+func (r roleSandboxRow) Scan(dest ...any) error {
+	if len(dest) != 2 {
+		return errors.New("expected two destinations")
+	}
+	rolePtr, ok := dest[0].(*string)
+	if !ok {
+		return errors.New("first destination must be *string")
+	}
+	sandboxedPtr, ok := dest[1].(*bool)
+	if !ok {
+		return errors.New("second destination must be *bool")
+	}
+	*rolePtr = r.role
+	*sandboxedPtr = r.sandboxed
+	return nil
 }
 
 type fakeGamesStore struct {
@@ -83,7 +130,7 @@ func (f *fakeGamesStore) Delete(ctx context.Context, q db.Querier, gameID string
 }
 
 func TestCreateClassicGameValidation(t *testing.T) {
-	svc := NewGamesService(&fakeDB{q: countQuerier{count: 1}}, &fakeGamesStore{
+	svc := NewGamesService(&fakeDB{q: countQuerier{}}, &fakeGamesStore{
 		createFn: func(context.Context, db.Querier, store.NewGame) (store.Game, error) {
 			t.Fatalf("create should not be called")
 			return store.Game{}, nil
@@ -138,7 +185,7 @@ func TestGetGameBootstrap_CompletedGame(t *testing.T) {
 		},
 	})
 
-	out, err := svc.GetGameBootstrap(context.Background(), "g1", "u1")
+	out, err := svc.GetGameBootstrap(context.Background(), "g1", "u1", false, false)
 	if err != nil {
 		t.Fatalf("expected no error viewing a completed game, got %v", err)
 	}
@@ -178,7 +225,7 @@ func TestGetGameBootstrap_NonParticipantCanSpectate(t *testing.T) {
 		},
 	})
 
-	out, err := svc.GetGameBootstrap(context.Background(), "g1", "outsider")
+	out, err := svc.GetGameBootstrap(context.Background(), "g1", "outsider", false, false)
 	if err != nil {
 		t.Fatalf("expected a non-participant to be able to spectate, got %v", err)
 	}
@@ -208,7 +255,7 @@ func TestGetGameBootstrap_LobbyNonParticipantCanSpectate(t *testing.T) {
 		},
 	})
 
-	out, err := svc.GetGameBootstrap(context.Background(), "g1", "outsider")
+	out, err := svc.GetGameBootstrap(context.Background(), "g1", "outsider", false, false)
 	if err != nil {
 		t.Fatalf("expected a non-participant to be able to view a lobby, got %v", err)
 	}
@@ -222,7 +269,7 @@ func TestGetGameBootstrap_LobbyNonParticipantCanSpectate(t *testing.T) {
 
 func TestCreateClassicGamePersistsLobbyState(t *testing.T) {
 	called := false
-	svc := NewGamesService(&fakeDB{q: countQuerier{count: 1}}, &fakeGamesStore{
+	svc := NewGamesService(&fakeDB{q: countQuerier{}}, &fakeGamesStore{
 		createFn: func(_ context.Context, _ db.Querier, in store.NewGame) (store.Game, error) {
 			called = true
 			if in.OwnerUserID != "u1" || in.Status != "lobby" {
@@ -260,7 +307,7 @@ func TestCreateClassicGamePersistsLobbyState(t *testing.T) {
 }
 
 func TestCreateClassicGameRejectsUnknownOwner(t *testing.T) {
-	svc := NewGamesService(&fakeDB{q: countQuerier{count: 0}}, &fakeGamesStore{
+	svc := NewGamesService(&fakeDB{q: countQuerier{notFound: true}}, &fakeGamesStore{
 		createFn: func(context.Context, db.Querier, store.NewGame) (store.Game, error) {
 			t.Fatalf("create should not be called when owner is missing")
 			return store.Game{}, nil
@@ -304,7 +351,7 @@ func TestJoinClassicGameTransitionsWhenFull(t *testing.T) {
 		},
 	})
 
-	out, err := svc.JoinClassicGame(context.Background(), "g1", "u3")
+	out, err := svc.JoinClassicGame(context.Background(), "g1", "u3", false, false)
 	if err != nil {
 		t.Fatalf("join game: %v", err)
 	}
@@ -334,7 +381,7 @@ func TestJoinClassicGameManualSetupMode(t *testing.T) {
 		},
 	})
 
-	_, err := svc.JoinClassicGame(context.Background(), "g1", "u3")
+	_, err := svc.JoinClassicGame(context.Background(), "g1", "u3", false, false)
 	if err != nil {
 		t.Fatalf("join game: %v", err)
 	}
@@ -363,7 +410,7 @@ func TestJoinClassicGameLobbyUpdate(t *testing.T) {
 		},
 	})
 
-	out, err := svc.JoinClassicGame(context.Background(), "g1", "u3")
+	out, err := svc.JoinClassicGame(context.Background(), "g1", "u3", false, false)
 	if err != nil {
 		t.Fatalf("join game: %v", err)
 	}
@@ -391,16 +438,16 @@ func TestJoinClassicGameErrors(t *testing.T) {
 		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	if _, err := svc.JoinClassicGame(context.Background(), "", "u1"); !errors.Is(err, ErrInvalidGameInput) {
+	if _, err := svc.JoinClassicGame(context.Background(), "", "u1", false, false); !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected invalid input, got %v", err)
 	}
-	if _, err := svc.JoinClassicGame(context.Background(), "missing", "u1"); !errors.Is(err, ErrGameNotFound) {
+	if _, err := svc.JoinClassicGame(context.Background(), "missing", "u1", false, false); !errors.Is(err, ErrGameNotFound) {
 		t.Fatalf("expected game not found, got %v", err)
 	}
-	if _, err := svc.JoinClassicGame(context.Background(), "started", "u4"); !errors.Is(err, ErrGameNotJoinable) {
+	if _, err := svc.JoinClassicGame(context.Background(), "started", "u4", false, false); !errors.Is(err, ErrGameNotJoinable) {
 		t.Fatalf("expected game not joinable, got %v", err)
 	}
-	if _, err := svc.JoinClassicGame(context.Background(), "full", "u4"); !errors.Is(err, ErrGamePlayerCountFull) {
+	if _, err := svc.JoinClassicGame(context.Background(), "full", "u4", false, false); !errors.Is(err, ErrGamePlayerCountFull) {
 		t.Fatalf("expected game full, got %v", err)
 	}
 }
@@ -460,14 +507,14 @@ func TestListGamesValidationAndPassThrough(t *testing.T) {
 		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	if _, err := svc.ListGames(context.Background(), "", "", -1, 0); !errors.Is(err, ErrInvalidGameInput) {
+	if _, err := svc.ListGames(context.Background(), "", "", -1, 0, "", false, false); !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput, got %v", err)
 	}
-	if _, err := svc.ListGames(context.Background(), "", "", 0, -2); !errors.Is(err, ErrInvalidGameInput) {
+	if _, err := svc.ListGames(context.Background(), "", "", 0, -2, "", false, false); !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput, got %v", err)
 	}
 
-	out, err := svc.ListGames(context.Background(), "u1", "lobby", 20, 10)
+	out, err := svc.ListGames(context.Background(), "u1", "lobby", 20, 10, "", false, false)
 	if err != nil {
 		t.Fatalf("list games: %v", err)
 	}
@@ -491,7 +538,7 @@ func TestListGamesEnrichesInProgressTurnInfo(t *testing.T) {
 		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	out, err := svc.ListGames(context.Background(), "", "", 0, 0)
+	out, err := svc.ListGames(context.Background(), "", "", 0, 0, "", false, false)
 	if err != nil {
 		t.Fatalf("list games: %v", err)
 	}
@@ -1130,5 +1177,162 @@ func TestOccupyCompletingGameOverEnqueuesGameOverNotification(t *testing.T) {
 	}
 	if capturedWinnerName == "" {
 		t.Error("expected a non-empty winner display name")
+	}
+}
+
+func TestGameVisible(t *testing.T) {
+	cases := []struct {
+		name            string
+		viewerUserID    string
+		viewerIsAdmin   bool
+		viewerSandboxed bool
+		ownerUserID     string
+		gameSandboxed   bool
+		want            bool
+	}{
+		{"admin sees a regular game", "admin1", true, false, "u1", false, true},
+		{"admin sees a sandboxed game", "admin1", true, false, "u1", true, true},
+		{"owner always sees their own sandboxed game", "u1", false, false, "u1", true, true},
+		{"owner always sees their own regular game", "u1", false, false, "u1", false, true},
+		{"regular viewer sees a regular game", "u2", false, false, "u1", false, true},
+		{"regular viewer blocked from a sandboxed game", "u2", false, false, "u1", true, false},
+		{"sandboxed viewer blocked from a regular game", "u2", false, true, "u1", false, false},
+		{"sandboxed viewer blocked from another sandboxed player's game", "u2", false, true, "u1", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gameVisible(tc.viewerUserID, tc.viewerIsAdmin, tc.viewerSandboxed, tc.ownerUserID, tc.gameSandboxed)
+			if got != tc.want {
+				t.Errorf("gameVisible(%q, %v, %v, %q, %v) = %v, want %v",
+					tc.viewerUserID, tc.viewerIsAdmin, tc.viewerSandboxed, tc.ownerUserID, tc.gameSandboxed, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestJoinClassicGame_SandboxedGameBlocksOutsider(t *testing.T) {
+	lobby := json.RawMessage(`{"player_count":3,"player_ids":["u1","u2"]}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", OwnerUserID: "u1", Status: "lobby", State: lobby, IsSandboxed: true}, nil
+		},
+	})
+
+	if _, err := svc.JoinClassicGame(context.Background(), "g1", "outsider", false, false); !errors.Is(err, ErrGameForbidden) {
+		t.Fatalf("expected ErrGameForbidden joining a sandboxed player's game, got %v", err)
+	}
+}
+
+func TestJoinClassicGame_AdminBypassesSandboxedGame(t *testing.T) {
+	lobby := json.RawMessage(`{"player_count":3,"player_ids":["u1","u2"]}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", OwnerUserID: "u1", Status: "lobby", State: lobby, IsSandboxed: true}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(_ context.Context, _ db.Querier, in store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: in.Status, State: in.State}, nil
+		},
+	})
+
+	if _, err := svc.JoinClassicGame(context.Background(), "g1", "admin1", true, false); err != nil {
+		t.Fatalf("expected an admin to join a sandboxed player's game, got %v", err)
+	}
+}
+
+func TestJoinClassicGame_SandboxedJoinerBlockedFromRegularGame(t *testing.T) {
+	lobby := json.RawMessage(`{"player_count":3,"player_ids":["u1","u2"]}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", OwnerUserID: "u1", Status: "lobby", State: lobby}, nil
+		},
+	})
+
+	if _, err := svc.JoinClassicGame(context.Background(), "g1", "sandboxed-u", false, true); !errors.Is(err, ErrGameForbidden) {
+		t.Fatalf("expected ErrGameForbidden for a sandboxed player joining someone else's regular game, got %v", err)
+	}
+}
+
+func TestJoinClassicGame_SandboxedGameSuppressesDiscord(t *testing.T) {
+	lobby := json.RawMessage(`{"player_count":3,"player_ids":["u1","u2"]}`)
+	outboxStore := &fakeDiscordOutboxStore{}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", OwnerUserID: "u1", Status: "lobby", State: lobby, IsSandboxed: true}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(_ context.Context, _ db.Querier, in store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: in.Status, State: in.State, IsSandboxed: true}, nil
+		},
+	})
+	svc.SetDiscordOutboxStore(outboxStore)
+
+	// Only an admin (besides the owner) may join a sandboxed player's lobby
+	// at all -- this isolates the Discord-suppression check from the
+	// separate join-authorization check exercised by the tests above.
+	if _, err := svc.JoinClassicGame(context.Background(), "g1", "admin1", true, false); err != nil {
+		t.Fatalf("join game: %v", err)
+	}
+	if outboxStore.gameStartedCalls != 0 {
+		t.Fatalf("expected no Discord notification for a sandboxed game, got %d EnqueueGameStarted call(s)", outboxStore.gameStartedCalls)
+	}
+}
+
+func TestGetGameBootstrap_SandboxForbidden(t *testing.T) {
+	lobby := json.RawMessage(`{"player_count":4,"player_ids":["u1","u2"]}`)
+	svc := NewGamesService(&fakeDB{}, &fakeGamesStore{
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", OwnerUserID: "u1", Status: "lobby", State: lobby, IsSandboxed: true}, nil
+		},
+	})
+
+	if _, err := svc.GetGameBootstrap(context.Background(), "g1", "outsider", false, false); !errors.Is(err, ErrGameForbidden) {
+		t.Fatalf("expected ErrGameForbidden viewing a sandboxed player's game, got %v", err)
+	}
+
+	if _, err := svc.GetGameBootstrap(context.Background(), "g1", "admin1", true, false); err != nil {
+		t.Fatalf("expected an admin to view a sandboxed player's game, got %v", err)
+	}
+}
+
+func TestCanAccessGame(t *testing.T) {
+	svc := NewGamesService(&fakeDB{q: roleSandboxQuerier{sandboxed: true}}, &fakeGamesStore{
+		getByIDFn: func(_ context.Context, _ db.Querier, gameID string) (store.Game, error) {
+			if gameID != "g1" {
+				return store.Game{}, pgx.ErrNoRows
+			}
+			return store.Game{ID: "g1", OwnerUserID: "u1", Status: "in_progress", IsSandboxed: true}, nil
+		},
+	})
+
+	// roleSandboxQuerier fakes lookupUserFlags' role+is_sandboxed lookup:
+	// sandboxed:true means every looked-up user (here, "viewer") comes back
+	// as a sandboxed, non-admin player.
+	ok, err := svc.CanAccessGame(context.Background(), "g1", "viewer")
+	if err != nil {
+		t.Fatalf("CanAccessGame: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected a sandboxed viewer to be denied access to another sandboxed player's game")
+	}
+
+	ok, err = svc.CanAccessGame(context.Background(), "g1", "u1")
+	if err != nil {
+		t.Fatalf("CanAccessGame: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected the game's own owner to always have access")
+	}
+
+	ok, err = svc.CanAccessGame(context.Background(), "missing-game", "viewer")
+	if err != nil {
+		t.Fatalf("CanAccessGame for a missing game should not error, got %v", err)
+	}
+	if ok {
+		t.Fatalf("expected CanAccessGame to report false for a nonexistent game")
 	}
 }

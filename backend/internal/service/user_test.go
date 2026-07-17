@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nmiano1111/global-conquest/backend/internal/auth"
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type fakeDB struct {
@@ -62,6 +62,10 @@ func (f *fakeStore) UpdateUserAccess(ctx context.Context, q db.Querier, userID, 
 		return store.User{}, nil
 	}
 	return f.updateUserAccessFn(ctx, q, userID, accessStatus)
+}
+
+func (f *fakeStore) SetSandboxed(ctx context.Context, q db.Querier, userID string, sandboxed bool) (store.User, error) {
+	return store.User{ID: userID, IsSandboxed: sandboxed}, nil
 }
 
 func (f *fakeStore) RevokeSessions(ctx context.Context, q db.Querier, userID string) (int64, error) {

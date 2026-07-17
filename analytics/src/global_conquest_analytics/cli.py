@@ -26,12 +26,21 @@ roll-streak-report
     attacking win/loss streaks and droughts, write a Markdown or JSON report.
     Reads data/raw/players.parquet if present (run export-players) to show
     usernames instead of UUIDs. Does NOT query Postgres.
+
+fit-weights
+    Read backend/cmd/traindata's JSONL output (data/raw/traindata/*_train.jsonl
+    by default — run `go run ./cmd/traindata` first, see
+    backend/cmd/traindata/README.md), fit one regularized logistic
+    regression per game phase, and export a bot.Weights-shaped JSON file
+    (reports/generated/weights/<timestamp>.json by default) ready for
+    `cmd/tournament --weights-variant`. Does NOT query Postgres.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -44,6 +53,8 @@ _RAW_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "game_events.parquet
 _GAMES_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "games.parquet"
 _PLAYERS_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "players.parquet"
 _ROLL_STREAK_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "roll_streaks"
+_TRAINDATA_DIR = Path(__file__).parents[2] / "data" / "raw" / "traindata"
+_WEIGHTS_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "weights"
 
 
 def export_events() -> None:
@@ -357,3 +368,78 @@ def _filter_report_by_player(report: RollStreakReport, player_id: str) -> RollSt
             s for s in report.attack_droughts if s.attacker_id == player_id
         ],
     )
+
+
+def fit_weights_command() -> None:
+    """CLI entry point: fit one logistic regression per phase, export weights.json.
+
+    Reads data/raw/traindata/*_train.jsonl by default (run
+    `go run ./cmd/traindata` first, see backend/cmd/traindata/README.md).
+    Does not query Postgres.
+    """
+    parser = argparse.ArgumentParser(
+        prog="fit-weights",
+        description="Fit bot.Weights from cmd/traindata rows via per-phase logistic regression.",
+    )
+    parser.add_argument(
+        "--input",
+        action="append",
+        default=None,
+        help=(
+            "Training JSONL file (repeatable). Default: every "
+            "*_train.jsonl under data/raw/traindata/."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Destination for the fitted weights.json (default: "
+            "reports/generated/weights/<timestamp>.json)."
+        ),
+    )
+    args = parser.parse_args(sys.argv[1:])
+
+    input_paths = (
+        [Path(p) for p in args.input]
+        if args.input
+        else sorted(_TRAINDATA_DIR.glob("*_train.jsonl"))
+    )
+    if not input_paths:
+        print(
+            f"No training files found under {_TRAINDATA_DIR}.\n"
+            "Run `go run ./cmd/traindata` first "
+            "(see backend/cmd/traindata/README.md).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from global_conquest_analytics.fit import PHASE_FEATURES, fit_phase
+    from global_conquest_analytics.training_data import load_training_rows
+    from global_conquest_analytics.weights_export import export_weights
+
+    print(f"Loading {len(input_paths)} training file(s):")
+    for p in input_paths:
+        print(f"  {p}")
+    df = load_training_rows(input_paths)
+    print(f"Loaded {len(df)} rows across {df['GameID'].nunique()} games.\n")
+
+    fits = []
+    for phase in PHASE_FEATURES:
+        phase_fit = fit_phase(df, phase)
+        fits.append(phase_fit)
+        print(
+            f"{phase}: n={phase_fit.n_samples} positive={phase_fit.n_positive} "
+            f"best_C={phase_fit.best_c:.4g}"
+        )
+        for name, coef in sorted(phase_fit.coefficients.items(), key=lambda kv: -abs(kv[1])):
+            print(f"    {name:24s} {coef:+.4f}")
+        print()
+
+    output_path = (
+        Path(args.output)
+        if args.output
+        else _WEIGHTS_REPORT_DIR / f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    export_weights(fits, output_path)
+    print(f"Weights written → {output_path}")

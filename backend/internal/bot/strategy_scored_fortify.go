@@ -29,7 +29,7 @@ func (s *ScoredStrategy) fortify(g *risk.Game, playerID string) (Command, Explan
 		Features: []Feature{{Name: "end_turn_bias", Value: s.weights.FortifyEndTurnBias}},
 	})
 
-	cmd, expl := selectBest(options, 3)
+	cmd, expl := s.selectBest(options, 3)
 	return cmd, expl, nil
 }
 

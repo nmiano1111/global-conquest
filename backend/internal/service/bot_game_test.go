@@ -29,7 +29,7 @@ func fixedBotNames(names ...string) func(count int, exclude []string) []string {
 // status/state a creation call produced.
 func createServiceCapturingGame(t *testing.T, capture *store.NewGame) *GamesService {
 	t.Helper()
-	svc := NewGamesService(&fakeDB{q: countQuerier{count: 1}}, &fakeGamesStore{
+	svc := NewGamesService(&fakeDB{q: countQuerier{}}, &fakeGamesStore{
 		createFn: func(_ context.Context, _ db.Querier, in store.NewGame) (store.Game, error) {
 			*capture = in
 			return store.Game{ID: "g1", OwnerUserID: in.OwnerUserID, Status: in.Status, State: in.State}, nil
@@ -319,7 +319,7 @@ func TestCreateClassicGameBotsCountTowardFilledSlots(t *testing.T) {
 			return store.Game{ID: "g1", Status: in.Status, State: in.State}, nil
 		},
 	})
-	out, err := joinSvc.JoinClassicGame(context.Background(), "g1", "u2")
+	out, err := joinSvc.JoinClassicGame(context.Background(), "g1", "u2", false, false)
 	if err != nil {
 		t.Fatalf("join classic game: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestGetGameBootstrapLobbyReportsBotsAndOpenSlots(t *testing.T) {
 		},
 	})
 
-	out, err := svc.GetGameBootstrap(context.Background(), "g1", "u1")
+	out, err := svc.GetGameBootstrap(context.Background(), "g1", "u1", false, false)
 	if err != nil {
 		t.Fatalf("get game bootstrap: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestJoinClassicGameNotifiesGameStartedHookWhenLastSlotFills(t *testing.T) {
 	var notified []string
 	svc.SetGameStartedHook(func(gameID string) { notified = append(notified, gameID) })
 
-	out, err := svc.JoinClassicGame(context.Background(), "g1", "u3")
+	out, err := svc.JoinClassicGame(context.Background(), "g1", "u3", false, false)
 	if err != nil {
 		t.Fatalf("join game: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestJoinClassicGameDoesNotNotifyWhenLobbyStaysOpen(t *testing.T) {
 	var notified []string
 	svc.SetGameStartedHook(func(gameID string) { notified = append(notified, gameID) })
 
-	if _, err := svc.JoinClassicGame(context.Background(), "g1", "u3"); err != nil {
+	if _, err := svc.JoinClassicGame(context.Background(), "g1", "u3", false, false); err != nil {
 		t.Fatalf("join game: %v", err)
 	}
 	if len(notified) != 0 {
@@ -635,7 +635,7 @@ func TestJoinClassicGameEnqueuesGameStartedWhenLastSlotFills(t *testing.T) {
 	})
 	svc.SetDiscordOutboxStore(outboxStore)
 
-	if _, err := svc.JoinClassicGame(context.Background(), "g1", "u3"); err != nil {
+	if _, err := svc.JoinClassicGame(context.Background(), "g1", "u3", false, false); err != nil {
 		t.Fatalf("join game: %v", err)
 	}
 	if outboxStore.gameStartedCalls != 1 {
@@ -659,7 +659,7 @@ func TestJoinClassicGameDoesNotEnqueueGameStartedWhenLobbyStaysOpen(t *testing.T
 	})
 	svc.SetDiscordOutboxStore(outboxStore)
 
-	if _, err := svc.JoinClassicGame(context.Background(), "g1", "u3"); err != nil {
+	if _, err := svc.JoinClassicGame(context.Background(), "g1", "u3", false, false); err != nil {
 		t.Fatalf("join game: %v", err)
 	}
 	if outboxStore.gameStartedCalls != 0 {

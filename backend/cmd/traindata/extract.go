@@ -27,6 +27,22 @@ type trainingRow struct {
 	Turn         int
 	CommandIndex int
 	Won          bool
+	// Explored is true when this decision came from a random exploration
+	// pick (bot.NewExploringScoredStrategy) that differed from the
+	// highest-scoring candidate -- always false for entries from a
+	// plain-scored or basic strategy, since bot.Explanation.Explored is
+	// only ever set by the exploring strategy. See
+	// bot.StrategyScoredV1Exploring.
+	Explored bool
+	// Chosen is true when this row is the candidate the decision actually
+	// picked, false for every other legal candidate considered at the same
+	// decision (see bot.Explanation.AllCandidates). Always true when the
+	// source strategy didn't record all candidates (e.g. plain scored-v1,
+	// which only ever contributes one row per decision -- its chosen
+	// one). Multiple rows sharing the same GameID/PlayerID/CommandIndex
+	// are all from the same decision; exactly one of them has Chosen ==
+	// true.
+	Chosen bool
 	// Features is the raw (unweighted) signal per named feature -- one key
 	// for every feature phaseFeatures[Phase] knows about, defaulting to 0.0
 	// when that feature wasn't present on this particular candidate (see
@@ -119,12 +135,22 @@ func init() {
 // is empty for a game that didn't complete -- no reliable win/loss label
 // exists for it, so every entry from that game is skipped.
 //
-// An entry produces a row only if at least one of its phase's known
-// features was actually present on the chosen candidate -- this is what
-// naturally excludes basic-v1's always-empty Explanation, card-trade-in
-// entries (an arbitrary "reason" feature name never present in
-// phaseFeatures), and end-phase/end-turn-only entries (only the excluded
-// bias feature), with no need to filter by StrategyID or action type.
+// When an entry's Explanation.AllCandidates is populated (see
+// bot.NewExploringScoredStrategy), this emits one row per legal candidate
+// considered at that decision, not just the chosen one -- avoiding the
+// chosen-only selection bias diagnosed in Next_Phase_Bot_ML_Roadmap.md
+// (restricting to the argmax candidate inflates apparent correlation
+// between features that both drove that argmax). Otherwise (basic-v1, or
+// any strategy that didn't record all candidates) it falls back to a
+// single row built from Explanation.Features, the chosen candidate's own
+// breakdown, exactly as before.
+//
+// A candidate produces a row only if at least one of its phase's known
+// features was actually present on it -- this is what naturally excludes
+// basic-v1's always-empty Explanation, card-trade-in entries (an
+// arbitrary "reason" feature name never present in phaseFeatures), and
+// end-phase/end-turn-only entries (only the excluded bias feature), with
+// no need to filter by StrategyID or action type.
 func rowsFromEntries(seed int64, gameID string, entries []simulation.Entry, winnerPlayerID string) []trainingRow {
 	if winnerPlayerID == "" {
 		return nil
@@ -137,26 +163,7 @@ func rowsFromEntries(seed int64, gameID string, entries []simulation.Entry, winn
 			continue
 		}
 
-		present := make(map[string]float64, len(e.Explanation.Features))
-		for _, f := range e.Explanation.Features {
-			present[f.Name] = f.Value
-		}
-
-		features := make(map[string]float64, len(known))
-		recognized := 0
-		for name, weight := range known {
-			raw := 0.0
-			if v, ok := present[name]; ok {
-				raw = v / weight
-				recognized++
-			}
-			features[name] = raw
-		}
-		if recognized == 0 {
-			continue
-		}
-
-		rows = append(rows, trainingRow{
+		base := trainingRow{
 			GameID:       gameID,
 			Seed:         seed,
 			Phase:        e.Phase,
@@ -166,8 +173,55 @@ func rowsFromEntries(seed int64, gameID string, entries []simulation.Entry, winn
 			Turn:         e.Turn,
 			CommandIndex: e.CommandIndex,
 			Won:          e.PlayerID == winnerPlayerID,
-			Features:     features,
-		})
+			Explored:     e.Explanation.Explored,
+		}
+
+		if len(e.Explanation.AllCandidates) > 0 {
+			for _, c := range e.Explanation.AllCandidates {
+				features, recognized := rawFeatures(known, c.Features)
+				if recognized == 0 {
+					continue
+				}
+				row := base
+				row.Chosen = c.Chosen
+				row.Features = features
+				rows = append(rows, row)
+			}
+			continue
+		}
+
+		features, recognized := rawFeatures(known, e.Explanation.Features)
+		if recognized == 0 {
+			continue
+		}
+		row := base
+		row.Chosen = true // the only recorded candidate for this decision is definitionally the one chosen
+		row.Features = features
+		rows = append(rows, row)
 	}
 	return rows
+}
+
+// rawFeatures inverts one candidate's weighted Features back to raw
+// (unweighted) signal per name known knows about, defaulting to 0.0 for a
+// known feature absent from present (see phaseFeatures). recognized counts
+// how many of known's features were actually present -- callers skip a
+// candidate entirely when this is 0 (nothing informative to record).
+func rawFeatures(known map[string]float64, present []bot.Feature) (map[string]float64, int) {
+	presentByName := make(map[string]float64, len(present))
+	for _, f := range present {
+		presentByName[f.Name] = f.Value
+	}
+
+	features := make(map[string]float64, len(known))
+	recognized := 0
+	for name, weight := range known {
+		raw := 0.0
+		if v, ok := presentByName[name]; ok {
+			raw = v / weight
+			recognized++
+		}
+		features[name] = raw
+	}
+	return features, recognized
 }

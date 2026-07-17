@@ -1,15 +1,15 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"github.com/gin-gonic/gin"
 	"github.com/nmiano1111/global-conquest/backend/internal/auth"
 	"github.com/nmiano1111/global-conquest/backend/internal/game"
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/service"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
-	"context"
-	"encoding/json"
-	"errors"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +22,7 @@ type userService interface {
 	ListAdminUsers(ctx context.Context) ([]store.AdminUser, error)
 	GetUser(ctx context.Context, userName string) (store.User, error)
 	UpdateUserAccess(ctx context.Context, userID, accessStatus string) (store.User, error)
+	SetSandboxed(ctx context.Context, userID string, sandboxed bool) (store.User, error)
 	RevokeUserSessions(ctx context.Context, userID string) (int64, error)
 	AuthenticateSession(ctx context.Context, token string) (store.User, error)
 	Login(ctx context.Context, userName, password string) (service.LoginResult, error)
@@ -29,10 +30,10 @@ type userService interface {
 
 type gameService interface {
 	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error)
-	JoinClassicGame(ctx context.Context, gameID, playerID string) (store.Game, error)
-	GetGame(ctx context.Context, gameID string) (store.Game, error)
-	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
-	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error)
+	JoinClassicGame(ctx context.Context, gameID, playerID string, joinerIsAdmin, joinerIsSandboxed bool) (store.Game, error)
+	GetGameForViewer(ctx context.Context, gameID, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) (store.Game, error)
+	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool) (service.GameBootstrap, error)
+	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) ([]service.GameSummary, error)
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
 	GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error)
 	DeleteGame(ctx context.Context, gameID string) error
@@ -98,6 +99,12 @@ type postLobbyMessageReq struct {
 
 type updateUserAccessReq struct {
 	AccessStatus string `json:"access_status" binding:"required,oneof=active blocked"`
+}
+
+type updateUserSandboxReq struct {
+	// Sandboxed has no "required" binding: false is a valid, meaningful
+	// value (un-sandboxing a user), not a missing field.
+	Sandboxed bool `json:"sandboxed"`
 }
 
 // CreateUser godoc
@@ -297,13 +304,16 @@ func (h *Handler) JoinGame(c *gin.Context) {
 		return
 	}
 
-	g, err := h.games.JoinClassicGame(c.Request.Context(), gameID, authUser.ID)
+	isAdmin := strings.EqualFold(authUser.Role, "admin")
+	g, err := h.games.JoinClassicGame(c.Request.Context(), gameID, authUser.ID, isAdmin, authUser.IsSandboxed)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidGameInput):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		case errors.Is(err, service.ErrGameNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		case errors.Is(err, service.ErrGameForbidden):
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		case errors.Is(err, service.ErrGameNotJoinable), errors.Is(err, service.ErrGamePlayerCountFull):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		default:
@@ -322,16 +332,26 @@ func (h *Handler) JoinGame(c *gin.Context) {
 // @Produce      json
 // @Param        id path string true "Game ID"
 // @Success      200 {object} store.Game
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
 // @Failure      500 {object} map[string]string
 // @Router       /api/games/{id} [get]
 func (h *Handler) GetGame(c *gin.Context) {
 	gameID := c.Param("id")
-	g, err := h.games.GetGame(c.Request.Context(), gameID)
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	isAdmin := strings.EqualFold(authUser.Role, "admin")
+	g, err := h.games.GetGameForViewer(c.Request.Context(), gameID, authUser.ID, isAdmin, authUser.IsSandboxed)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrGameNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		case errors.Is(err, service.ErrGameForbidden):
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch game"})
 		}
@@ -386,7 +406,7 @@ func (h *Handler) GetGameBootstrap(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	out, err := h.games.GetGameBootstrap(c.Request.Context(), gameID, authUser.ID)
+	out, err := h.games.GetGameBootstrap(c.Request.Context(), gameID, authUser.ID, strings.EqualFold(authUser.Role, "admin"), authUser.IsSandboxed)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrGameNotFound):
@@ -420,6 +440,12 @@ func (h *Handler) ListGames(c *gin.Context) {
 	owner := c.Query("owner_user_id")
 	status := c.Query("status")
 
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
 	limit := 0
 	offset := 0
 	var err error
@@ -438,7 +464,7 @@ func (h *Handler) ListGames(c *gin.Context) {
 		}
 	}
 
-	games, err := h.games.ListGames(c.Request.Context(), owner, status, limit, offset)
+	games, err := h.games.ListGames(c.Request.Context(), owner, status, limit, offset, authUser.ID, strings.EqualFold(authUser.Role, "admin"), authUser.IsSandboxed)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidGameInput):
@@ -605,6 +631,29 @@ func (h *Handler) UpdateUserAccess(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update user access"})
 		}
+		return
+	}
+	c.JSON(http.StatusOK, u)
+}
+
+// UpdateUserSandbox sets a user's is_sandboxed flag. Games the user creates
+// after this call are isolated per GamesService's sandbox visibility rule;
+// games they already created are unaffected. Admin only.
+func (h *Handler) UpdateUserSandbox(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user id is required"})
+		return
+	}
+	var req updateUserSandboxReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	u, err := h.users.SetSandboxed(c.Request.Context(), userID, req.Sandboxed)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update user sandbox status"})
 		return
 	}
 	c.JSON(http.StatusOK, u)
