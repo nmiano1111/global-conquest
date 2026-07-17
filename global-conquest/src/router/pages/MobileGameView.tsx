@@ -31,6 +31,7 @@ export interface MobileGameViewProps {
   isMyTurn: boolean;
   canEnterAttack: boolean;
   players: Player[];
+  viewingUserIDs: Set<string>;
   playerColors: string[];
   territoryState: Record<string, unknown> | null;
   myCards: Card[];
@@ -91,7 +92,7 @@ export function MobileGameView(props: MobileGameViewProps) {
     game, loading, error, actionError, chatMessages, eventMessages,
     chatDraft, chatError, wsStatus,
     phase, phaseMode, meIndex, isMyTurn,
-    players, playerColors, territoryState, myCards, selectedCardIndices,
+    players, viewingUserIDs, playerColors, territoryState, myCards, selectedCardIndices,
     mySetupArmies, nextTradeBonus, pendingReinforcements, occupyRequirement,
     diceResult, selectedTerritory, activeFrom, activeTo,
     clampedArmiesInput, clampedAttackerDice,
@@ -718,7 +719,16 @@ export function MobileGameView(props: MobileGameViewProps) {
               >
                 {p.userName}
               </span>
-              {p.isBot && <span title="Computer-controlled">🤖</span>}
+              {p.isBot ? (
+                <span title="Computer-controlled">🤖</span>
+              ) : (
+                <span
+                  title={viewingUserIDs.has(p.userId) ? "Currently viewing" : "Not currently connected"}
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    viewingUserIDs.has(p.userId) ? "bg-emerald-400" : "bg-slate-600"
+                  }`}
+                />
+              )}
               {!p.eliminated && p.cardCount > 0 && (
                 <span className="rounded-full bg-indigo-900/70 px-1.5 py-0.5 text-xs font-semibold text-indigo-300">
                   🃏{p.cardCount}

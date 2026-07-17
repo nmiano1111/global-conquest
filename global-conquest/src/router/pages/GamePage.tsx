@@ -28,6 +28,7 @@ export function GamePage() {
   const [error, setError] = useState("");
   const [game, setGame] = useState<GameBootstrap | null>(null);
   const [chatMessages, setChatMessages] = useState<GameChatMessage[]>([]);
+  const [viewingUserIDs, setViewingUserIDs] = useState<Set<string>>(new Set());
   const [eventMessages, setEventMessages] = useState<GameEventMessage[]>([]);
   const [chatDraft, setChatDraft] = useState("");
   const [chatError, setChatError] = useState("");
@@ -397,6 +398,19 @@ export function GamePage() {
       { game_id: gameID }
     );
   }, [selectedTerritory, selectedFrom, selectedTo, wsStatus, send, gameID]);
+
+  useEffect(() => {
+    const off = on("game_presence", (msg) => {
+      const payload = msg.payload as { game_id?: string; user_ids?: unknown } | undefined;
+      const payloadGameID = typeof payload?.game_id === "string" ? payload.game_id : msg.game_id;
+      if (payloadGameID !== gameID) return;
+      const ids = Array.isArray(payload?.user_ids)
+        ? payload.user_ids.filter((id): id is string => typeof id === "string")
+        : [];
+      setViewingUserIDs(new Set(ids));
+    });
+    return off;
+  }, [gameID, on]);
 
   useEffect(() => {
     const off = on("game_chat_history", (msg) => {
@@ -949,6 +963,7 @@ export function GamePage() {
         isMyTurn={isMyTurn}
         canEnterAttack={canEnterAttack}
         players={players}
+        viewingUserIDs={viewingUserIDs}
         playerColors={playerColors}
         territoryState={territoryState}
         myCards={myCards}
@@ -1236,7 +1251,14 @@ export function GamePage() {
                       >
                         🤖 Computer
                       </span>
-                    ) : null}
+                    ) : (
+                      <span
+                        title={viewingUserIDs.has(p.userId) ? "Currently viewing" : "Not currently connected"}
+                        className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+                          viewingUserIDs.has(p.userId) ? "bg-gc-success" : "bg-gc-muted/40"
+                        }`}
+                      />
+                    )}
                   </span>
                   {game && players[game.currentPlayer]?.userId === p.userId ? (
                     <span className="rounded-full border border-gc-success/40 bg-gc-success/10 px-2 py-0.5 text-[11px] font-medium text-gc-success">

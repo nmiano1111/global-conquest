@@ -61,6 +61,18 @@ func (s *ScoredStrategy) setupReinforce(g *risk.Game, playerID string) (Command,
 
 // reinforceFeatures scores one candidate reinforcement territory, shared
 // by both reinforce and setup_reinforce.
+//
+// enemy_threat and weakness (threat - ownArmies) are highly correlated
+// (0.98, measured across every legal candidate, not just chosen ones --
+// see Next_Phase_Bot_ML_Roadmap.md) and an ML fitting pass could never
+// assign weakness a non-trivial coefficient as a result. Removing
+// enemy_threat entirely to resolve that was tried and reverted: real
+// tournament play got dramatically worse (45% of games failing to hit a
+// conclusion within the turn limit, vs ~5% before) even though the ML fit
+// still couldn't use weakness afterward either -- concrete evidence that
+// this feature earns its keep in actual gameplay dynamics the "regress
+// final game outcome on one decision's features" ML objective doesn't
+// reward, not that it's genuinely redundant. Keep both terms.
 func (s *ScoredStrategy) reinforceFeatures(g *risk.Game, pi int, t risk.Territory) []Feature {
 	w := s.weights
 	threat := adjacentEnemyArmies(g, t, pi)

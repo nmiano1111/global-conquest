@@ -209,9 +209,9 @@ func TestRowsFromEntriesPropagatesExplored(t *testing.T) {
 func TestRowsFromEntriesEmitsOneRowPerCandidateWhenAllCandidatesPopulated(t *testing.T) {
 	w := bot.DefaultWeights
 	e := entryWithCandidates("reinforce", "p0", 1,
-		[]bot.Feature{{Name: "enemy_threat", Value: w.ReinforceEnemyThreat * 2}},
-		[]bot.Feature{{Name: "enemy_threat", Value: w.ReinforceEnemyThreat * 9}},
-		[]bot.Feature{{Name: "enemy_threat", Value: w.ReinforceEnemyThreat * 5}},
+		[]bot.Feature{{Name: "enemy_territory_count", Value: w.ReinforceEnemyTerritoryCount * 2}},
+		[]bot.Feature{{Name: "enemy_territory_count", Value: w.ReinforceEnemyTerritoryCount * 9}},
+		[]bot.Feature{{Name: "enemy_territory_count", Value: w.ReinforceEnemyTerritoryCount * 5}},
 	)
 	rows := rowsFromEntries(1, "test-game", []simulation.Entry{e}, "p0")
 	if len(rows) != 3 {
@@ -221,8 +221,8 @@ func TestRowsFromEntriesEmitsOneRowPerCandidateWhenAllCandidatesPopulated(t *tes
 	wantRaw := map[int]float64{0: 2, 1: 9, 2: 5}
 	chosenCount := 0
 	for i, r := range rows {
-		if got := r.Features["enemy_threat"]; got < wantRaw[i]-1e-9 || got > wantRaw[i]+1e-9 {
-			t.Errorf("candidate %d: enemy_threat raw = %v, want %v", i, got, wantRaw[i])
+		if got := r.Features["enemy_territory_count"]; got < wantRaw[i]-1e-9 || got > wantRaw[i]+1e-9 {
+			t.Errorf("candidate %d: enemy_territory_count raw = %v, want %v", i, got, wantRaw[i])
 		}
 		if r.CommandIndex != e.CommandIndex || r.GameID != "test-game" || r.PlayerID != "p0" {
 			t.Errorf("candidate %d: expected shared decision metadata carried through, got %+v", i, r)

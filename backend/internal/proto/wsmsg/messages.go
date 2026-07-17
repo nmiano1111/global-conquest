@@ -96,6 +96,10 @@ const (
 	// TypeTerritorySelected is broadcast to a game's chat room relaying
 	// another client's live territory selection.
 	TypeTerritorySelected Type = "territory_selected"
+	// TypeGamePresence is broadcast to a game's chat room whenever a client
+	// joins or leaves it (including on disconnect), carrying the full,
+	// current set of connected user IDs -- not a diff.
+	TypeGamePresence Type = "game_presence"
 )
 
 // Envelope is the outer shape of every WebSocket message exchanged between
@@ -372,6 +376,23 @@ type TerritorySelectedPayload struct {
 	// To is the destination territory of the current selection, if the
 	// selection is a from/to pair.
 	To string `json:"to,omitempty"`
+}
+
+// GamePresencePayload is the TypeGamePresence server->client payload
+// broadcast to a game's chat room whenever a client joins or leaves it
+// (including on disconnect). UserIDs is the complete set of currently
+// connected, authenticated clients' user IDs viewing this game -- an
+// anonymous client contributes nothing (it has no UserID), and a bot
+// player never appears here since bots never hold a real WebSocket
+// connection. The frontend cross-references this against its own player
+// roster to render an online/offline indicator; a user ID present here
+// but absent from the roster (e.g. a spectator) is simply ignored.
+type GamePresencePayload struct {
+	// GameID identifies the game (chat room) this presence set belongs to.
+	GameID string `json:"game_id"`
+	// UserIDs lists every currently connected, authenticated viewer's user
+	// ID.
+	UserIDs []string `json:"user_ids"`
 }
 
 // CardPayload describes a single Risk card in a player's hand.

@@ -759,6 +759,7 @@ func (s *Server) joinChatRoom(c *Client, roomID string) {
 	}
 	clients[c.ID] = struct{}{}
 	c.ChatRoom = roomID
+	s.broadcastGamePresence(roomID)
 
 	if s.chatLog == nil {
 		return
@@ -793,6 +794,34 @@ func (s *Server) leaveChatRoom(c *Client) {
 		}
 	}
 	c.ChatRoom = ""
+	s.broadcastGamePresence(roomID)
+}
+
+// broadcastGamePresence sends the complete, current set of connected
+// viewers' user IDs to every client still in roomID's chat room. Called
+// after any change to that room's membership (join, explicit leave, or
+// disconnect) so every member's presence list stays accurate -- this is a
+// full resend of the set, not a diff, matching game_state_updated's own
+// "clients replace state wholesale" convention.
+func (s *Server) broadcastGamePresence(roomID string) {
+	clientIDs := s.chatRooms[roomID]
+	userIDs := make([]string, 0, len(clientIDs))
+	for clientID := range clientIDs {
+		c, ok := s.clients[clientID]
+		if !ok || c.UserID == "" {
+			continue
+		}
+		userIDs = append(userIDs, c.UserID)
+	}
+	ev := envelope(string(wsmsg.TypeGamePresence), newID("s"), "", roomID, wsmsg.GamePresencePayload{
+		GameID:  roomID,
+		UserIDs: userIDs,
+	})
+	for clientID := range clientIDs {
+		if c, ok := s.clients[clientID]; ok {
+			c.Conn.Send(ev)
+		}
+	}
 }
 
 func (s *Server) joinGame(c *Client, gameID string) {
