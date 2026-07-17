@@ -9,6 +9,7 @@ package tournament
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -109,11 +110,58 @@ type StrategyStats struct {
 	// seat only won half of those games from SeatWinRate's point of view.
 	GameWinRate float64
 
+	// GameWinRateCI is a 95% confidence interval around GameWinRate (a
+	// Wilson score interval over the tournament's completed game count --
+	// see wilsonScoreInterval95 for why Wilson rather than a simpler
+	// normal approximation). Answers "how much of this win rate could
+	// plausibly be sampling noise," not just the point estimate -- e.g. a
+	// candidate at 55% GameWinRate over 50 games might have a CI of
+	// [41%, 68%], which comfortably includes 50/50, versus the same 55%
+	// over 2000 games with a CI of [53%, 57%], which doesn't. Zero value
+	// when CompletedGames is 0.
+	GameWinRateCI ConfidenceInterval
+
 	AvgFinishOrder       float64
 	AvgCaptures          float64
 	AvgEliminationsMade  float64
 	AvgCombatLossesTaken float64
 	AvgFinalTerritories  float64
+}
+
+// ConfidenceInterval is a two-sided interval around a point estimate.
+type ConfidenceInterval struct {
+	Low  float64
+	High float64
+}
+
+// wilson95Z is the z-score for a two-sided 95% confidence interval
+// (the 97.5th percentile of the standard normal distribution).
+const wilson95Z = 1.959963984540054
+
+// wilsonScoreInterval95 computes a 95% Wilson score confidence interval
+// for a binomial proportion wins/n. Preferred over the simpler normal
+// (Wald) approximation (p ± z*sqrt(p(1-p)/n)) because Wald intervals can
+// extend outside [0,1] and have poor coverage at small n or p near 0 or
+// 1 -- exactly the regime a "did this candidate actually beat baseline"
+// check often lands in with a modest game count. Returns the zero
+// ConfidenceInterval when n is 0.
+func wilsonScoreInterval95(wins, n int) ConfidenceInterval {
+	if n == 0 {
+		return ConfidenceInterval{}
+	}
+	p := float64(wins) / float64(n)
+	nf := float64(n)
+	z := wilson95Z
+	denom := 1 + z*z/nf
+	center := (p + z*z/(2*nf)) / denom
+	margin := (z / denom) * math.Sqrt(p*(1-p)/nf+z*z/(4*nf*nf))
+	// Clamp: the true interval is always within [0,1], but floating-point
+	// rounding can push a boundary case (e.g. wins=0 or wins=n) a hair
+	// outside it.
+	return ConfidenceInterval{
+		Low:  math.Max(0, center-margin),
+		High: math.Min(1, center+margin),
+	}
 }
 
 // Aggregate is the summarized outcome of an entire tournament.
@@ -252,6 +300,7 @@ func (a *aggregator) finalize() Aggregate {
 		// only coincide when that strategy occupies exactly one seat.
 		if a.completedGames > 0 {
 			stats.GameWinRate = float64(acc.wins) / float64(a.completedGames)
+			stats.GameWinRateCI = wilsonScoreInterval95(acc.wins, a.completedGames)
 		}
 		agg.Strategies = append(agg.Strategies, stats)
 	}

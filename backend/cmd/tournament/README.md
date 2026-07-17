@@ -66,9 +66,9 @@ when at least one game didn't complete), and a per-strategy table:
 tournament: 100 games (98 completed, 2 failed) · seeds 1-100 · avg 79.5 turns, 1861.3 commands · 39.8s elapsed
 failures: duration_limit_reached: 2
 
-strategy   appearances  completed  wins  seat win%  game win%  avg finish  avg captures  avg elims
-basic-v1   98           98         12    12.2%      12.2%      2.60        88.45         0.20
-scored-v1  196          196        86    43.9%      87.8%      1.71        123.67        0.90
+strategy   appearances  completed  wins  seat win%  game win%  95% ci         avg finish  avg captures  avg elims
+basic-v1   98           98         12    12.2%      12.2%      [7.1-20.2]     2.60        88.45         0.20
+scored-v1  196          196        86    43.9%      87.8%      [79.8-92.9]    1.71        123.67        0.90
 ```
 
 A strategy's `appearances` counts every seat that used it across every game
@@ -88,6 +88,16 @@ than one seat:
   example above, `scored-v1` occupies 2 of 3 seats and won 87.8% of all
   games, even though no single one of its seats won more than 43.9% of
   the time.
+- **`95% ci`** — a 95% Wilson score confidence interval around `game
+  win%`, over the tournament's completed game count. Answers "how much of
+  this could plausibly be sampling noise" without doing the arithmetic by
+  hand: `[79.8-92.9]` for `scored-v1` above doesn't come close to
+  overlapping 50%, a real signal even before running it out to a much
+  larger sample. Wilson rather than a simpler normal approximation
+  because Wald-style intervals can extend outside `[0%, 100%]` and have
+  poor coverage at small sample sizes or win rates near 0/100% — exactly
+  the regime a "did this candidate actually beat baseline" check often
+  starts in.
 
 Both `avg *` columns are computed over `completed` games only: a
 stalemate/limit-hit game has no winner and no meaningful finish order for
@@ -208,11 +218,11 @@ tournament: 500 games (498 completed, 2 failed) · seeds 1-500 · avg 74.2 turns
 === baseline-vs-candidate-b ===
 ...
 
-tournament                 strategy     appearances  completed  wins  seat win%  game win%  avg finish  avg captures  avg elims
-baseline-vs-candidate-a    basic-v1     498          498        61    12.2%      12.2%      2.60        88.45         0.20
-baseline-vs-candidate-a    scored-v1    996          996        437   43.9%      87.8%      1.71        123.67        0.90
-baseline-vs-candidate-b    basic-v1     499          499        58    11.6%      11.6%      2.58        90.12         0.19
-baseline-vs-candidate-b    scored-v1    998          998        441   44.2%      88.4%      1.73        125.40        0.91
+tournament                 strategy     appearances  completed  wins  seat win%  game win%  95% ci        avg finish  avg captures  avg elims
+baseline-vs-candidate-a    basic-v1     498          498        61    12.2%      12.2%      [9.7-15.4]    2.60        88.45         0.20
+baseline-vs-candidate-a    scored-v1    996          996        437   43.9%      87.8%      [84.6-90.3]   1.71        123.67        0.90
+baseline-vs-candidate-b    basic-v1     499          499        58    11.6%      11.6%      [9.1-14.7]    2.58        90.12         0.19
+baseline-vs-candidate-b    scored-v1    998          998        441   44.2%      88.4%      [85.3-90.9]   1.73        125.40        0.91
 ```
 
 `--raw-output` (the single-tournament flag) doesn't apply in batch mode —

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 	"github.com/nmiano1111/global-conquest/backend/internal/simulation"
 )
@@ -9,6 +12,13 @@ import (
 // scored-v1 saw for the command it actually chose, plus whether the player
 // who made that decision went on to win the game.
 type trainingRow struct {
+	// GameID identifies which game this row came from, safe to use as a
+	// join/group key even across separate cmd/traindata invocations whose
+	// output files get combined later -- see computeGameID. Seed alone is
+	// NOT safe for that: two different invocations (different --strategies
+	// or --game-mode) can both use seed 1 to produce two entirely
+	// different games.
+	GameID       string
 	Seed         int64
 	Phase        string
 	StrategyID   string
@@ -22,6 +32,24 @@ type trainingRow struct {
 	// when that feature wasn't present on this particular candidate (see
 	// rowsFromEntries), never a missing key.
 	Features map[string]float64
+}
+
+// computeGameID deterministically identifies one game, safe to use across
+// separate cmd/traindata invocations. Composed from exactly the inputs
+// that determine a game's actual trajectory -- the same seed, strategies,
+// and game mode always reproduce an identical game (internal/simulation's
+// own determinism contract) -- so the same config plus the same seed
+// always yields the same GameID, and two different configs sharing a seed
+// never collide.
+//
+// MaxTurns/MaxCommands are deliberately not part of this: two runs
+// differing only in those limits still produce identical decisions up to
+// whichever point the tighter one cuts the game off -- not a genuinely
+// different game, just a shorter look at the same one. Rows from both
+// would legitimately describe the same decisions if ever combined, not
+// colliding data from unrelated games.
+func computeGameID(strategies []string, gameMode string, seed int64) string {
+	return fmt.Sprintf("%s@%s@%d", strings.Join(strategies, ","), gameMode, seed)
 }
 
 // phaseFeatures lists, per phase, every feature name this tool knows how to
@@ -87,8 +115,9 @@ func init() {
 }
 
 // rowsFromEntries converts one game's decision trace into training rows.
-// winnerPlayerID is empty for a game that didn't complete -- no reliable
-// win/loss label exists for it, so every entry from that game is skipped.
+// gameID should come from computeGameID for the same seed/config. winnerPlayerID
+// is empty for a game that didn't complete -- no reliable win/loss label
+// exists for it, so every entry from that game is skipped.
 //
 // An entry produces a row only if at least one of its phase's known
 // features was actually present on the chosen candidate -- this is what
@@ -96,7 +125,7 @@ func init() {
 // entries (an arbitrary "reason" feature name never present in
 // phaseFeatures), and end-phase/end-turn-only entries (only the excluded
 // bias feature), with no need to filter by StrategyID or action type.
-func rowsFromEntries(seed int64, entries []simulation.Entry, winnerPlayerID string) []trainingRow {
+func rowsFromEntries(seed int64, gameID string, entries []simulation.Entry, winnerPlayerID string) []trainingRow {
 	if winnerPlayerID == "" {
 		return nil
 	}
@@ -128,6 +157,7 @@ func rowsFromEntries(seed int64, entries []simulation.Entry, winnerPlayerID stri
 		}
 
 		rows = append(rows, trainingRow{
+			GameID:       gameID,
 			Seed:         seed,
 			Phase:        e.Phase,
 			StrategyID:   e.StrategyID,

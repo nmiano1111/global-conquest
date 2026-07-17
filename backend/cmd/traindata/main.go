@@ -124,7 +124,8 @@ func run(args []string) (completed bool, err error) {
 				if result.Completed {
 					winner = result.WinnerPlayerID
 				}
-				rows := rowsFromEntries(seed, recorder.Entries(), winner)
+				id := computeGameID(baseCfg.Strategies, string(baseCfg.GameMode), seed)
+				rows := rowsFromEntries(seed, id, recorder.Entries(), winner)
 				outcomes <- gameOutcome{rows: rows, completed: result.Completed}
 			}
 		}()

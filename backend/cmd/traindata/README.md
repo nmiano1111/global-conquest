@@ -30,7 +30,7 @@ go run ./cmd/traindata --strategies basic-v1,scored-v1,scored-v1 --games 500 --o
 | `--games` | yes | — | How many games to run. |
 | `--seed-start` | no | `1` | Seeds used are `seed-start .. seed-start+games-1`. |
 | `--parallel` | no | number of CPUs | How many games run concurrently. |
-| `--game-mode` | no | `auto_start` | `auto_start` or `manual` — same as `cmd/simulate`/`cmd/tournament`. Run this tool again with `--game-mode manual` (and a different `--output`) to also cover `setup_reinforce` decisions, which `auto_start` games never enter. |
+| `--game-mode` | no | `auto_start` | `auto_start` or `manual` — same as `cmd/simulate`/`cmd/tournament`. Leave at the default: `manual` setup mode is out of scope for training data — it's admin-only, effectively unused in real play, and likely being removed from the game entirely. Don't spend generation time covering `setup_reinforce` decisions for it. |
 | `--max-turns` | no | 2000 | Override the per-game turn safety limit. |
 | `--max-commands` | no | 20000 | Override the per-game command safety limit. |
 | `--output` | **yes** | — | JSONL destination for the generated rows. |
@@ -60,13 +60,23 @@ baseline, not an arbitrary candidate (see `extract.go`).
 One compact JSON object per line:
 
 ```json
-{"Seed":42,"Phase":"attack","StrategyID":"scored-v1","PlayerID":"p1","Seat":1,"Turn":12,"CommandIndex":87,"Won":true,"Features":{"army_advantage":3,"capture_probability":0.62,"expected_loss_cost":-1.1,"completes_continent":0,"breaks_enemy_continent":0,"card_opportunity":0,"eliminates_player":0,"exposure_penalty":-2}}
+{"GameID":"basic-v1,scored-v1,scored-v1@auto_start@42","Seed":42,"Phase":"attack","StrategyID":"scored-v1","PlayerID":"p1","Seat":1,"Turn":12,"CommandIndex":87,"Won":true,"Features":{"army_advantage":3,"capture_probability":0.62,"expected_loss_cost":-1.1,"completes_continent":0,"breaks_enemy_continent":0,"card_opportunity":0,"eliminates_player":0,"exposure_penalty":-2}}
 ```
 
 `Features` always has one key per that `Phase`'s full known feature set —
 a feature the engine didn't append to this particular candidate (e.g.
 `completes_continent` when the move doesn't complete one) is present with
 value `0`, never a missing key.
+
+**`GameID`, not `Seed`, is the safe join/group key once you combine output
+from more than one invocation.** `Seed` alone collides: two separate runs
+with different `--strategies` or `--game-mode` can both use seed 1 to
+produce two entirely different games. `GameID` is deterministic —
+`<strategies>@<game-mode>@<seed>` — so it's stable across re-runs of the
+*same* config, but never collides across a *different* one. (`--max-turns`/
+`--max-commands` are deliberately not part of it: two runs differing only
+in those limits still describe the same underlying game, just cut off at
+a different point, not a genuinely different one.)
 
 Loading it in pandas — `Features` needs flattening into its own columns:
 

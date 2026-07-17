@@ -34,7 +34,7 @@ func TestRowsFromEntriesRecoversRawSignalPerPhase(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.phase, func(t *testing.T) {
-			rows := rowsFromEntries(1, []simulation.Entry{entry(tc.phase, "p0", tc.feature)}, "p0")
+			rows := rowsFromEntries(1, "test-game", []simulation.Entry{entry(tc.phase, "p0", tc.feature)}, "p0")
 			if len(rows) != 1 {
 				t.Fatalf("expected 1 row, got %d", len(rows))
 			}
@@ -58,7 +58,7 @@ func TestRowsFromEntriesDefaultsAbsentBooleanFeatureToZero(t *testing.T) {
 		bot.Feature{Name: "army_advantage", Value: w.ArmyAdvantage * 2},
 		bot.Feature{Name: "capture_probability", Value: w.CaptureProbability * 0.5},
 	)
-	rows := rowsFromEntries(1, []simulation.Entry{e}, "p0")
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{e}, "p0")
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
@@ -78,7 +78,7 @@ func TestRowsFromEntriesContinentValueUsesCorrectWeightPerPhase(t *testing.T) {
 	reinforceE := entry("reinforce", "p0", bot.Feature{Name: "continent_value", Value: w.ReinforceContinentValue * 3})
 	fortifyE := entry("fortify", "p0", bot.Feature{Name: "continent_value", Value: w.FortifyContinentValue * 3})
 
-	rows := rowsFromEntries(1, []simulation.Entry{reinforceE, fortifyE}, "p0")
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{reinforceE, fortifyE}, "p0")
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -94,7 +94,7 @@ func TestRowsFromEntriesSkipsEndPhaseAndEndTurnOnlyEntries(t *testing.T) {
 	attackEnd := entry("attack", "p0", bot.Feature{Name: "end_phase_bias", Value: 0})
 	fortifyEnd := entry("fortify", "p0", bot.Feature{Name: "end_turn_bias", Value: 0})
 
-	rows := rowsFromEntries(1, []simulation.Entry{attackEnd, fortifyEnd}, "p0")
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{attackEnd, fortifyEnd}, "p0")
 	if len(rows) != 0 {
 		t.Fatalf("expected 0 rows for end-phase/end-turn-only entries, got %d: %+v", len(rows), rows)
 	}
@@ -107,7 +107,7 @@ func TestRowsFromEntriesSkipsBasicV1EmptyExplanation(t *testing.T) {
 		Phase:       "attack",
 		Explanation: bot.Explanation{}, // basic-v1 always returns the zero value
 	}
-	rows := rowsFromEntries(1, []simulation.Entry{e}, "p0")
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{e}, "p0")
 	if len(rows) != 0 {
 		t.Fatalf("expected 0 rows for an empty Explanation, got %d", len(rows))
 	}
@@ -118,7 +118,7 @@ func TestRowsFromEntriesSkipsCardTurnInEntries(t *testing.T) {
 	// []Feature{{Name: reason, Value: 1}}} -- an arbitrary reason string,
 	// never one of phaseFeatures' known names.
 	e := entry("reinforce", "p0", bot.Feature{Name: "mandatory_trade", Value: 1})
-	rows := rowsFromEntries(1, []simulation.Entry{e}, "p0")
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{e}, "p0")
 	if len(rows) != 0 {
 		t.Fatalf("expected 0 rows for a card-trade-in-shaped entry, got %d", len(rows))
 	}
@@ -127,7 +127,7 @@ func TestRowsFromEntriesSkipsCardTurnInEntries(t *testing.T) {
 func TestRowsFromEntriesSkipsIncompleteGames(t *testing.T) {
 	w := bot.DefaultWeights
 	e := entry("attack", "p0", bot.Feature{Name: "army_advantage", Value: w.ArmyAdvantage})
-	rows := rowsFromEntries(1, []simulation.Entry{e}, "") // no winner -- game didn't complete
+	rows := rowsFromEntries(1, "test-game", []simulation.Entry{e}, "") // no winner -- game didn't complete
 	if len(rows) != 0 {
 		t.Fatalf("expected 0 rows when winnerPlayerID is empty, got %d", len(rows))
 	}
@@ -138,7 +138,7 @@ func TestRowsFromEntriesLabelsWinLoss(t *testing.T) {
 	winner := entry("attack", "p0", bot.Feature{Name: "army_advantage", Value: w.ArmyAdvantage})
 	loser := entry("attack", "p1", bot.Feature{Name: "army_advantage", Value: w.ArmyAdvantage})
 
-	rows := rowsFromEntries(7, []simulation.Entry{winner, loser}, "p0")
+	rows := rowsFromEntries(7, "test-game-7", []simulation.Entry{winner, loser}, "p0")
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -150,5 +150,26 @@ func TestRowsFromEntriesLabelsWinLoss(t *testing.T) {
 	}
 	if rows[0].Seed != 7 || rows[1].Seed != 7 {
 		t.Errorf("expected Seed to be carried through onto every row")
+	}
+	if rows[0].GameID != "test-game-7" || rows[1].GameID != "test-game-7" {
+		t.Errorf("expected GameID to be carried through onto every row, got %q and %q", rows[0].GameID, rows[1].GameID)
+	}
+}
+
+func TestComputeGameIDDeterministicAndCollisionFree(t *testing.T) {
+	a := computeGameID([]string{"basic-v1", "scored-v1"}, "auto_start", 1)
+	aAgain := computeGameID([]string{"basic-v1", "scored-v1"}, "auto_start", 1)
+	if a != aAgain {
+		t.Errorf("expected the same config+seed to always produce the same GameID, got %q vs %q", a, aAgain)
+	}
+
+	differentStrategies := computeGameID([]string{"scored-v1", "scored-v1"}, "auto_start", 1)
+	differentMode := computeGameID([]string{"basic-v1", "scored-v1"}, "manual", 1)
+	differentSeed := computeGameID([]string{"basic-v1", "scored-v1"}, "auto_start", 2)
+
+	for _, other := range []string{differentStrategies, differentMode, differentSeed} {
+		if a == other {
+			t.Errorf("expected a different strategies/game-mode/seed to produce a different GameID, both were %q", a)
+		}
 	}
 }

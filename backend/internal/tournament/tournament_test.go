@@ -3,6 +3,7 @@ package tournament
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -416,5 +417,76 @@ func TestRunContextCancellationStopsIssuingNewGames(t *testing.T) {
 	}
 	if agg.TotalGames >= cfg.Games {
 		t.Fatalf("TotalGames = %d, expected fewer than %d after cancellation", agg.TotalGames, cfg.Games)
+	}
+}
+
+// --- wilsonScoreInterval95 ---
+
+// Reference values independently computed in Python (not derived from this
+// same formula, to avoid a tautological test):
+//
+//	import math
+//	def wilson(wins, n, z=1.959963984540054):
+//	    p = wins / n
+//	    denom = 1 + z*z/n
+//	    center = (p + z*z/(2*n)) / denom
+//	    margin = (z / denom) * math.sqrt(p*(1-p)/n + z*z/(4*n*n))
+//	    return (center - margin, center + margin)
+func TestWilsonScoreInterval95MatchesReferenceValues(t *testing.T) {
+	const tol = 1e-6
+	cases := []struct {
+		wins, n int
+		lo, hi  float64
+	}{
+		{50, 100, 0.403832, 0.596168},
+		{10, 20, 0.299298, 0.700702},
+		{0, 10, 0.000000, 0.277533},
+		{10, 10, 0.722467, 1.000000},
+		{3, 300, 0.003407, 0.028983},
+	}
+	for _, tc := range cases {
+		ci := wilsonScoreInterval95(tc.wins, tc.n)
+		if math.Abs(ci.Low-tc.lo) > tol || math.Abs(ci.High-tc.hi) > tol {
+			t.Errorf("wilsonScoreInterval95(%d, %d) = [%.6f, %.6f], want [%.6f, %.6f]",
+				tc.wins, tc.n, ci.Low, ci.High, tc.lo, tc.hi)
+		}
+	}
+}
+
+func TestWilsonScoreInterval95ZeroN(t *testing.T) {
+	ci := wilsonScoreInterval95(0, 0)
+	if ci != (ConfidenceInterval{}) {
+		t.Errorf("expected the zero ConfidenceInterval for n=0, got %+v", ci)
+	}
+}
+
+func TestWilsonScoreInterval95BoundsWithinZeroOne(t *testing.T) {
+	for _, wins := range []int{0, 1, 5, 10} {
+		ci := wilsonScoreInterval95(wins, 10)
+		if ci.Low < 0 || ci.Low > 1 || ci.High < 0 || ci.High > 1 {
+			t.Errorf("wilsonScoreInterval95(%d, 10) = %+v, expected both bounds within [0,1]", wins, ci)
+		}
+		if ci.Low > ci.High {
+			t.Errorf("wilsonScoreInterval95(%d, 10) = %+v, Low should never exceed High", wins, ci)
+		}
+	}
+}
+
+func TestAggregatorPopulatesGameWinRateCI(t *testing.T) {
+	strategies := []string{bot.StrategyBasicV1, bot.StrategyScoredV1}
+	agg := newAggregator()
+	// scored-v1 (seat 1) wins both completed games -- Wins=2, CompletedGames=2.
+	agg.absorb(completedResult(1, 2, strategies, 1, 10, 100))
+	agg.absorb(completedResult(2, 2, strategies, 1, 20, 200))
+
+	result := agg.finalize()
+	want := wilsonScoreInterval95(2, 2)
+	for _, s := range result.Strategies {
+		if s.StrategyID != bot.StrategyScoredV1 {
+			continue
+		}
+		if s.GameWinRateCI != want {
+			t.Errorf("scored-v1 GameWinRateCI = %+v, want %+v", s.GameWinRateCI, want)
+		}
 	}
 }

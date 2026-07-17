@@ -67,6 +67,13 @@ func rankByGameWinRate(stats []tournament.StrategyStats) (best, worst string) {
 	return best, worst
 }
 
+// formatCI renders a GameWinRate confidence interval compactly for the
+// terminal table, e.g. "[40.4-59.6]" -- the surrounding "game win%" column
+// already supplies the "%" context, so this omits it to save width.
+func formatCI(ci tournament.ConfidenceInterval) string {
+	return fmt.Sprintf("[%.1f-%.1f]", ci.Low*100, ci.High*100)
+}
+
 // writeAggregateText renders a compact human-readable summary: a header
 // line, a failures breakdown (if any), and a per-strategy table -- with the
 // best/worst strategy by GameWinRate highlighted when color is enabled.
@@ -123,11 +130,11 @@ func writeAggregateText(w io.Writer, cfg tournament.Config, agg tournament.Aggre
 
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "strategy\tappearances\tcompleted\twins\tseat win%\tgame win%\tavg finish\tavg captures\tavg elims")
+	fmt.Fprintln(tw, "strategy\tappearances\tcompleted\twins\tseat win%\tgame win%\t95% ci\tavg finish\tavg captures\tavg elims")
 	for _, s := range agg.Strategies {
-		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%.1f%%\t%.1f%%\t%.2f\t%.2f\t%.2f\n",
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%.1f%%\t%.1f%%\t%s\t%.2f\t%.2f\t%.2f\n",
 			s.StrategyID, s.Appearances, s.CompletedAppearances, s.Wins, s.SeatWinRate*100, s.GameWinRate*100,
-			s.AvgFinishOrder, s.AvgCaptures, s.AvgEliminationsMade)
+			formatCI(s.GameWinRateCI), s.AvgFinishOrder, s.AvgCaptures, s.AvgEliminationsMade)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -201,17 +208,17 @@ func writeComparisonTable(w io.Writer, results []batchResult) error {
 
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "tournament\tstrategy\tappearances\tcompleted\twins\tseat win%\tgame win%\tavg finish\tavg captures\tavg elims")
+	fmt.Fprintln(tw, "tournament\tstrategy\tappearances\tcompleted\twins\tseat win%\tgame win%\t95% ci\tavg finish\tavg captures\tavg elims")
 	for _, r := range results {
 		if r.err != nil {
 			msg := strings.ReplaceAll(r.err.Error(), "\n", " ")
-			fmt.Fprintf(tw, "%s\t(did not complete: %s)\t\t\t\t\t\t\t\t\n", r.name, msg)
+			fmt.Fprintf(tw, "%s\t(did not complete: %s)\t\t\t\t\t\t\t\t\t\n", r.name, msg)
 			continue
 		}
 		for _, s := range r.agg.Strategies {
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%.1f%%\t%.1f%%\t%.2f\t%.2f\t%.2f\n",
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%.1f%%\t%.1f%%\t%s\t%.2f\t%.2f\t%.2f\n",
 				r.name, s.StrategyID, s.Appearances, s.CompletedAppearances, s.Wins,
-				s.SeatWinRate*100, s.GameWinRate*100, s.AvgFinishOrder, s.AvgCaptures, s.AvgEliminationsMade)
+				s.SeatWinRate*100, s.GameWinRate*100, formatCI(s.GameWinRateCI), s.AvgFinishOrder, s.AvgCaptures, s.AvgEliminationsMade)
 		}
 	}
 	if err := tw.Flush(); err != nil {
