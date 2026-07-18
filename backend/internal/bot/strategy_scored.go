@@ -162,33 +162,75 @@ func (s *ScoredStrategy) attack(g *risk.Game, playerID string) (Command, Explana
 	return cmd, expl, nil
 }
 
+// attackSignals holds attackFeatures' raw (unweighted) per-candidate
+// signal, computed once and shared by two consumers that turn it into a
+// score differently: ScoredStrategy.attackFeatures (weighted linear sum)
+// and GBTStrategy (fed straight into a tree ensemble, no weighting at
+// all -- see strategy_gbt.go). A nil pointer field means that feature is
+// omitted for this candidate (mirrors attackFeatures' previous
+// conditional-append behavior) rather than zeroed.
+type attackSignals struct {
+	ArmyAdvantage        float64
+	CaptureProbability   float64
+	ExpectedLossCost     float64
+	CompletesContinent   bool
+	BreaksEnemyContinent bool
+	CardOpportunity      *float64
+	EliminatesPlayer     bool
+	ExposurePenalty      *float64
+}
+
+// computeAttackSignals computes one legal attack's raw signal, independent
+// of any Weights value.
+func computeAttackSignals(g *risk.Game, pi int, a risk.AttackAction) attackSignals {
+	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
+	targetOwner := g.Territories[a.To].Owner
+
+	sig := attackSignals{
+		ArmyAdvantage:        float64(a.SourceArmies - a.TargetArmies),
+		CaptureProbability:   forecast.WinProbability,
+		ExpectedLossCost:     forecast.ExpectedAttackerLosses,
+		CompletesContinent:   wouldCompleteContinent(g, pi, a.To),
+		BreaksEnemyContinent: breaksEnemyContinent(g, targetOwner, a.To),
+		EliminatesPlayer:     isLastTerritory(g, targetOwner, a.To),
+	}
+	if !g.ConqueredThisTurn {
+		v := forecast.WinProbability
+		sig.CardOpportunity = &v
+	}
+	if exposure := adjacentEnemyArmies(g, a.From, pi); exposure > 0 {
+		v := float64(exposure)
+		sig.ExposurePenalty = &v
+	}
+	return sig
+}
+
 // attackFeatures scores one legal attack. Every feature besides the first
 // three is conditional (omitted, not zeroed) so an Explanation only lists
 // what actually applied to this candidate.
 func (s *ScoredStrategy) attackFeatures(g *risk.Game, pi int, a risk.AttackAction) []Feature {
 	w := s.weights
-	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
-	targetOwner := g.Territories[a.To].Owner
+	sig := computeAttackSignals(g, pi, a)
 
 	features := []Feature{
-		{Name: "army_advantage", Value: w.ArmyAdvantage * float64(a.SourceArmies-a.TargetArmies)},
-		{Name: "capture_probability", Value: w.CaptureProbability * forecast.WinProbability},
-		{Name: "expected_loss_cost", Value: w.ExpectedLossCost * forecast.ExpectedAttackerLosses},
+		{Name: "army_advantage", Value: w.ArmyAdvantage * sig.ArmyAdvantage},
+		{Name: "capture_probability", Value: w.CaptureProbability * sig.CaptureProbability},
+		{Name: "expected_loss_cost", Value: w.ExpectedLossCost * sig.ExpectedLossCost},
 	}
-	if wouldCompleteContinent(g, pi, a.To) {
+	if sig.CompletesContinent {
 		features = append(features, Feature{Name: "completes_continent", Value: w.CompletesContinent})
 	}
-	if breaksEnemyContinent(g, targetOwner, a.To) {
+	if sig.BreaksEnemyContinent {
 		features = append(features, Feature{Name: "breaks_enemy_continent", Value: w.BreaksEnemyContinent})
 	}
-	if !g.ConqueredThisTurn {
-		features = append(features, Feature{Name: "card_opportunity", Value: w.CardOpportunity * forecast.WinProbability})
+	if sig.CardOpportunity != nil {
+		features = append(features, Feature{Name: "card_opportunity", Value: w.CardOpportunity * *sig.CardOpportunity})
 	}
-	if isLastTerritory(g, targetOwner, a.To) {
+	if sig.EliminatesPlayer {
 		features = append(features, Feature{Name: "eliminates_player", Value: w.EliminatesPlayer})
 	}
-	if exposure := adjacentEnemyArmies(g, a.From, pi); exposure > 0 {
-		features = append(features, Feature{Name: "exposure_penalty", Value: w.ExposurePenalty * float64(exposure)})
+	if sig.ExposurePenalty != nil {
+		features = append(features, Feature{Name: "exposure_penalty", Value: w.ExposurePenalty * *sig.ExposurePenalty})
 	}
 	return features
 }

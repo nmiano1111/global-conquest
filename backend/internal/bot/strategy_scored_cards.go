@@ -22,7 +22,11 @@ const (
 // eliminating a weak opponent — that the incoming armies could tip into
 // favorable); otherwise delay and let reinforce's normal per-territory
 // scoring run on whatever base reinforcements the player already has.
-func (s *ScoredStrategy) scoredCardTurnIn(g *risk.Game, playerID string) (Command, Explanation, bool) {
+//
+// A free function, not a ScoredStrategy method -- card-timing policy
+// doesn't depend on any Weights value, so both ScoredStrategy and
+// GBTStrategy (see strategy_gbt.go) share this exact decision unchanged.
+func scoredCardTurnIn(g *risk.Game, playerID string) (Command, Explanation, bool) {
 	sets := risk.LegalCardTurnIns(g, playerID)
 	if len(sets) == 0 {
 		return Command{}, Explanation{}, false

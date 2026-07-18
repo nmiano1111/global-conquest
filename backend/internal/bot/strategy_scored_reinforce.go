@@ -16,7 +16,7 @@ import (
 // first stops being the clear top pick — see ReinforceConcentrationPenalty
 // and ReinforceWeakness.
 func (s *ScoredStrategy) reinforce(g *risk.Game, playerID string) (Command, Explanation, error) {
-	if cmd, expl, ok := s.scoredCardTurnIn(g, playerID); ok {
+	if cmd, expl, ok := scoredCardTurnIn(g, playerID); ok {
 		return cmd, expl, nil
 	}
 
@@ -59,8 +59,12 @@ func (s *ScoredStrategy) setupReinforce(g *risk.Game, playerID string) (Command,
 	return cmd, expl, nil
 }
 
-// reinforceFeatures scores one candidate reinforcement territory, shared
-// by both reinforce and setup_reinforce.
+// reinforceSignals holds reinforceFeatures' raw (unweighted) per-candidate
+// signal, computed once and shared by two consumers that turn it into a
+// score differently: ScoredStrategy.reinforceFeatures (weighted linear
+// sum) and GBTStrategy (fed straight into a tree ensemble, no weighting
+// at all -- see strategy_gbt.go). Every field is always populated (unlike
+// attackSignals, reinforce has no conditional features).
 //
 // enemy_threat and weakness (threat - ownArmies) are highly correlated
 // (0.98, measured across every legal candidate, not just chosen ones --
@@ -73,17 +77,41 @@ func (s *ScoredStrategy) setupReinforce(g *risk.Game, playerID string) (Command,
 // this feature earns its keep in actual gameplay dynamics the "regress
 // final game outcome on one decision's features" ML objective doesn't
 // reward, not that it's genuinely redundant. Keep both terms.
-func (s *ScoredStrategy) reinforceFeatures(g *risk.Game, pi int, t risk.Territory) []Feature {
-	w := s.weights
+type reinforceSignals struct {
+	EnemyThreat          float64
+	EnemyTerritoryCount  float64
+	Weakness             float64
+	ContinentValue       float64
+	ConcentrationPenalty float64
+}
+
+// computeReinforceSignals computes one candidate reinforcement
+// territory's raw signal, independent of any Weights value. Shared by
+// both reinforce and setup_reinforce.
+func computeReinforceSignals(g *risk.Game, pi int, t risk.Territory) reinforceSignals {
 	threat := adjacentEnemyArmies(g, t, pi)
 	ownArmies := g.Territories[t].Armies
+	return reinforceSignals{
+		EnemyThreat:          float64(threat),
+		EnemyTerritoryCount:  float64(adjacentEnemyTerritoryCount(g, t, pi)),
+		Weakness:             float64(threat - ownArmies),
+		ContinentValue:       continentReinforceValue(g, pi, t),
+		ConcentrationPenalty: float64(ownArmies),
+	}
+}
+
+// reinforceFeatures scores one candidate reinforcement territory, shared
+// by both reinforce and setup_reinforce.
+func (s *ScoredStrategy) reinforceFeatures(g *risk.Game, pi int, t risk.Territory) []Feature {
+	w := s.weights
+	sig := computeReinforceSignals(g, pi, t)
 
 	return []Feature{
-		{Name: "enemy_threat", Value: w.ReinforceEnemyThreat * float64(threat)},
-		{Name: "enemy_territory_count", Value: w.ReinforceEnemyTerritoryCount * float64(adjacentEnemyTerritoryCount(g, t, pi))},
-		{Name: "weakness", Value: w.ReinforceWeakness * float64(threat-ownArmies)},
-		{Name: "continent_value", Value: w.ReinforceContinentValue * continentReinforceValue(g, pi, t)},
-		{Name: "concentration_penalty", Value: w.ReinforceConcentrationPenalty * float64(ownArmies)},
+		{Name: "enemy_threat", Value: w.ReinforceEnemyThreat * sig.EnemyThreat},
+		{Name: "enemy_territory_count", Value: w.ReinforceEnemyTerritoryCount * sig.EnemyTerritoryCount},
+		{Name: "weakness", Value: w.ReinforceWeakness * sig.Weakness},
+		{Name: "continent_value", Value: w.ReinforceContinentValue * sig.ContinentValue},
+		{Name: "concentration_penalty", Value: w.ReinforceConcentrationPenalty * sig.ConcentrationPenalty},
 	}
 }
 

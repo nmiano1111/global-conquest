@@ -33,20 +33,40 @@ func (s *ScoredStrategy) occupy(g *risk.Game, playerID string) (Command, Explana
 	return cmd, expl, nil
 }
 
-// occupyFeatures scores one candidate armies-to-move count. Both coverage
-// terms are capped at what's actually needed (min(..., threat)) so
-// covering the threat twice over earns no extra credit; the small
+// occupySignals holds occupyFeatures' raw (unweighted) per-candidate
+// signal, computed once and shared by two consumers that turn it into a
+// score differently: ScoredStrategy.occupyFeatures (weighted linear sum)
+// and GBTStrategy (fed straight into a tree ensemble, no weighting at
+// all -- see strategy_gbt.go).
+type occupySignals struct {
+	DefenseCoverage float64
+	Momentum        float64
+	MomentumSurplus float64
+}
+
+// computeOccupySignals computes one candidate armies-to-move count's raw
+// signal, independent of any Weights value. Both coverage terms are
+// capped at what's actually needed (min(..., threat)) so covering the
+// threat twice over earns no extra credit.
+func computeOccupySignals(armies, sourceArmies, sourceThreat, destThreat int) occupySignals {
+	remaining := sourceArmies - armies
+	return occupySignals{
+		DefenseCoverage: float64(min(remaining, sourceThreat)),
+		Momentum:        float64(min(armies, destThreat)),
+		MomentumSurplus: float64(armies),
+	}
+}
+
+// occupyFeatures scores one candidate armies-to-move count; the small
 // unconditional surplus term only exists to break ties in favor of
 // pushing more forward once both coverage needs are already met.
 func (s *ScoredStrategy) occupyFeatures(armies, sourceArmies, sourceThreat, destThreat int) []Feature {
 	w := s.weights
-	remaining := sourceArmies - armies
-	defenseCoverage := min(remaining, sourceThreat)
-	momentum := min(armies, destThreat)
+	sig := computeOccupySignals(armies, sourceArmies, sourceThreat, destThreat)
 
 	return []Feature{
-		{Name: "defense_coverage", Value: w.OccupyDefenseCoverage * float64(defenseCoverage)},
-		{Name: "momentum", Value: w.OccupyMomentum * float64(momentum)},
-		{Name: "momentum_surplus", Value: w.OccupyMomentumSurplus * float64(armies)},
+		{Name: "defense_coverage", Value: w.OccupyDefenseCoverage * sig.DefenseCoverage},
+		{Name: "momentum", Value: w.OccupyMomentum * sig.Momentum},
+		{Name: "momentum_surplus", Value: w.OccupyMomentumSurplus * sig.MomentumSurplus},
 	}
 }

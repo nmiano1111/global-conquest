@@ -33,18 +33,38 @@ func (s *ScoredStrategy) fortify(g *risk.Game, playerID string) (Command, Explan
 	return cmd, expl, nil
 }
 
+// fortifySignals holds fortifyFeatures' raw (unweighted) per-candidate
+// signal, computed once and shared by two consumers that turn it into a
+// score differently: ScoredStrategy.fortifyFeatures (weighted linear sum)
+// and GBTStrategy (fed straight into a tree ensemble, no weighting at
+// all -- see strategy_gbt.go).
+type fortifySignals struct {
+	DestinationThreat  float64
+	ContinentValue     float64
+	SourceExposureCost float64
+}
+
+// computeFortifySignals computes one candidate fortification move's raw
+// signal, independent of any Weights value (reusing continentReinforceValue,
+// the same helper reinforce uses).
+func computeFortifySignals(g *risk.Game, pi int, a risk.FortificationAction) fortifySignals {
+	return fortifySignals{
+		DestinationThreat:  float64(adjacentEnemyArmies(g, a.To, pi)),
+		ContinentValue:     continentReinforceValue(g, pi, a.To),
+		SourceExposureCost: float64(adjacentEnemyArmies(g, a.From, pi)),
+	}
+}
+
 // fortifyFeatures scores one candidate fortification move: reward
-// reinforcing a threatened or continent-valuable destination (reusing
-// continentReinforceValue, the same helper reinforce uses), penalize
+// reinforcing a threatened or continent-valuable destination, penalize
 // weakening a source that's itself under threat.
 func (s *ScoredStrategy) fortifyFeatures(g *risk.Game, pi int, a risk.FortificationAction) []Feature {
 	w := s.weights
-	destThreat := adjacentEnemyArmies(g, a.To, pi)
-	sourceThreat := adjacentEnemyArmies(g, a.From, pi)
+	sig := computeFortifySignals(g, pi, a)
 
 	return []Feature{
-		{Name: "destination_threat", Value: w.FortifyDestinationThreat * float64(destThreat)},
-		{Name: "continent_value", Value: w.FortifyContinentValue * continentReinforceValue(g, pi, a.To)},
-		{Name: "source_exposure_cost", Value: w.FortifySourceExposureCost * float64(sourceThreat)},
+		{Name: "destination_threat", Value: w.FortifyDestinationThreat * sig.DestinationThreat},
+		{Name: "continent_value", Value: w.FortifyContinentValue * sig.ContinentValue},
+		{Name: "source_exposure_cost", Value: w.FortifySourceExposureCost * sig.SourceExposureCost},
 	}
 }
