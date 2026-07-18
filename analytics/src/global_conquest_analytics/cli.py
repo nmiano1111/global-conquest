@@ -41,6 +41,13 @@ fit-gbt
     directory of dump_model() JSON files (reports/generated/gbt/<timestamp>/
     by default) ready for `cmd/tournament --gbt-variant`. Does NOT query
     Postgres.
+
+fit-board-value
+    Read backend/cmd/tdtraindata's JSONL output (data/raw/tdtraindata/*_train.jsonl
+    by default — run `go run ./cmd/tdtraindata` first), fit a single whole-board
+    linear value function via logistic regression, and export a weights JSON
+    file (reports/generated/board_value/<timestamp>.json by default) ready
+    for `cmd/tournament --board-value-variant`. Does NOT query Postgres.
 """
 
 from __future__ import annotations
@@ -61,8 +68,10 @@ _GAMES_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "games.parquet"
 _PLAYERS_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "players.parquet"
 _ROLL_STREAK_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "roll_streaks"
 _TRAINDATA_DIR = Path(__file__).parents[2] / "data" / "raw" / "traindata"
+_TDTRAINDATA_DIR = Path(__file__).parents[2] / "data" / "raw" / "tdtraindata"
 _WEIGHTS_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "weights"
 _GBT_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "gbt"
+_BOARD_VALUE_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "board_value"
 
 
 def export_events() -> None:
@@ -533,3 +542,74 @@ def fit_gbt_command() -> None:
     )
     export_gbt(boosters, output_dir)
     print(f"Models written → {output_dir}")
+
+
+def fit_board_value_command() -> None:
+    """CLI entry point: fit a whole-board linear value function, export weights.json.
+
+    Reads data/raw/tdtraindata/*_train.jsonl by default (run
+    `go run ./cmd/tdtraindata` first). Does not query Postgres.
+    """
+    parser = argparse.ArgumentParser(
+        prog="fit-board-value",
+        description="Fit a whole-board value function from cmd/tdtraindata rows.",
+    )
+    parser.add_argument(
+        "--input",
+        action="append",
+        default=None,
+        help=(
+            "Training JSONL file (repeatable). Default: every "
+            "*_train.jsonl under data/raw/tdtraindata/."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Destination for the fitted value JSON (default: "
+            "reports/generated/board_value/<timestamp>.json)."
+        ),
+    )
+    args = parser.parse_args(sys.argv[1:])
+
+    input_paths = (
+        [Path(p) for p in args.input]
+        if args.input
+        else sorted(_TDTRAINDATA_DIR.glob("*_train.jsonl"))
+    )
+    if not input_paths:
+        print(
+            f"No training files found under {_TDTRAINDATA_DIR}.\n"
+            "Run `go run ./cmd/tdtraindata` first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from global_conquest_analytics.board_fit import export_board_value, fit_board_value
+    from global_conquest_analytics.td_fit import load_episodes, load_feature_names
+
+    print(f"Loading {len(input_paths)} training file(s):")
+    for p in input_paths:
+        print(f"  {p}")
+    episodes = load_episodes(input_paths)
+    # Feature names are identical across every input file (one board, the
+    # classic map -- see cmd/tdtraindata's featureNamesPath/writeFeatureNames
+    # doc comment), so any one file's sidecar suffices.
+    feature_names = load_feature_names(input_paths[0].with_suffix(".featurenames.json"))
+    n_pairs = len({(ep.game_id, ep.player_id) for ep in episodes})
+    print(
+        f"Loaded {len(episodes)} episodes ({n_pairs} game/player pairs), "
+        f"{len(feature_names)} features.\n"
+    )
+
+    fit = fit_board_value(episodes, feature_names)
+    print(f"Fitted {len(fit.weights)} weights, intercept={fit.intercept:.4f}")
+
+    output_path = (
+        Path(args.output)
+        if args.output
+        else _BOARD_VALUE_REPORT_DIR / f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    export_board_value(fit, output_path)
+    print(f"Board value written → {output_path}")
