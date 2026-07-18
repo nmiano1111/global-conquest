@@ -1,0 +1,51 @@
+{
+  "tree_info": [
+    {
+      "tree_index": 0,
+      "tree_structure": {
+        "split_index": 0,
+        "split_feature": 0,
+        "threshold": 1.5000000000000002,
+        "decision_type": "<=",
+        "default_left": true,
+        "left_child": {
+          "leaf_index": 0,
+          "leaf_value": -0.19999999999999996
+        },
+        "right_child": {
+          "leaf_index": 1,
+          "leaf_value": 0.2
+        }
+      }
+    },
+    {
+      "tree_index": 1,
+      "tree_structure": {
+        "split_index": 0,
+        "split_feature": 0,
+        "threshold": 1.5000000000000002,
+        "decision_type": "<=",
+        "default_left": true,
+        "left_child": {
+          "leaf_index": 0,
+          "leaf_value": -0.18187308119005766
+        },
+        "right_child": {
+          "split_index": 1,
+          "split_feature": 0,
+          "threshold": 2.7500000000000004,
+          "decision_type": "<=",
+          "default_left": true,
+          "left_child": {
+            "leaf_index": 1,
+            "leaf_value": 0.1818730811900577
+          },
+          "right_child": {
+            "leaf_index": 2,
+            "leaf_value": 0.1818730811900577
+          }
+        }
+      }
+    }
+  ]
+}

@@ -32,22 +32,26 @@ from global_conquest_analytics.training_data import phase_matrix
 # setup_reinforce is excluded entirely: out of scope for training data per
 # 10_Bot_Weight_Tuning.md's Coverage section (manual game mode).
 #
-# A prior version of this table dropped "exposure_penalty" (attack) and
-# "enemy_threat" (reinforce) entirely, diagnosed as collinear with other
-# features (0.65 and 0.98 correlation respectively) and crushed to
-# near-zero coefficients by ridge regression on chosen-only training data.
-# That fix backfired badly in practice: dropping a feature from fitting
-# means weights_export.py leaves it unset, so LoadWeights falls back to
-# bot.DefaultWeights' hand-tuned value for it -- but that hand-tuned
+# "enemy_threat" and "weakness" (threat - ownArmies) are 0.98 correlated
+# across every legal candidate, not just chosen ones -- ridge regression
+# can never assign weakness a non-trivial coefficient as a result (see
+# Next_Phase_Bot_ML_Roadmap.md). Two fixes were tried and reverted: (1)
+# dropping enemy_threat from this table alone, relying on
+# weights_export.py to leave it unset and LoadWeights to fall back to
+# bot.DefaultWeights' hand-tuned value -- backfired because that hand-tuned
 # magnitude isn't on the same scale as this pipeline's fitted,
 # standardized-then-rescaled coefficients, and mixing the two within one
 # phase's score let the untouched weight dominate the ranking (0% win
-# rate, 43% of games failing to complete in tournament eval). The real fix
-# is on the data side instead -- see cmd/traindata's rowsFromEntries,
-# which now emits one row per legal candidate per decision (not just the
-# chosen one), addressing the collinearity's likely root cause (chosen-only
-# rows selection-biased toward whatever combination of correlated features
-# jointly produced the highest score) without dropping any feature here.
+# rate, 43% of games failing to complete). (2) removing enemy_threat
+# directly from strategy_scored_reinforce.go's formula (so nothing was
+# left unfitted) -- weakness *still* couldn't get a non-trivial
+# coefficient afterward (the model apparently doesn't need it to predict
+# Won, regardless of what else competes with it), and real tournament play
+# got dramatically worse (45% of games failing to complete, vs ~5%
+# before) -- concrete evidence the feature earns its keep in actual
+# gameplay dynamics the "regress final game outcome on one decision's
+# features" ML objective doesn't reward. Both features stay, in the
+# formula and in this table, even though the ML fit can't use one of them.
 PHASE_FEATURES: dict[str, list[str]] = {
     "attack": [
         "army_advantage",

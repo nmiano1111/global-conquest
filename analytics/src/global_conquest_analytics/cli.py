@@ -34,6 +34,13 @@ fit-weights
     regression per game phase, and export a bot.Weights-shaped JSON file
     (reports/generated/weights/<timestamp>.json by default) ready for
     `cmd/tournament --weights-variant`. Does NOT query Postgres.
+
+fit-gbt
+    Same input as fit-weights, but fits one LightGBM gradient-boosted-trees
+    model per phase instead of a logistic regression, and exports a
+    directory of dump_model() JSON files (reports/generated/gbt/<timestamp>/
+    by default) ready for `cmd/tournament --gbt-variant`. Does NOT query
+    Postgres.
 """
 
 from __future__ import annotations
@@ -55,6 +62,7 @@ _PLAYERS_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "players.parquet
 _ROLL_STREAK_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "roll_streaks"
 _TRAINDATA_DIR = Path(__file__).parents[2] / "data" / "raw" / "traindata"
 _WEIGHTS_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "weights"
+_GBT_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "gbt"
 
 
 def export_events() -> None:
@@ -443,3 +451,85 @@ def fit_weights_command() -> None:
     )
     export_weights(fits, output_path)
     print(f"Weights written → {output_path}")
+
+
+def fit_gbt_command() -> None:
+    """CLI entry point: fit one LightGBM model per phase, export a model directory.
+
+    Reads data/raw/traindata/*_train.jsonl by default (run
+    `go run ./cmd/traindata` first, see backend/cmd/traindata/README.md).
+    Does not query Postgres.
+    """
+    parser = argparse.ArgumentParser(
+        prog="fit-gbt",
+        description="Fit a gradient-boosted-trees model per phase from cmd/traindata rows.",
+    )
+    parser.add_argument(
+        "--input",
+        action="append",
+        default=None,
+        help=(
+            "Training JSONL file (repeatable). Default: every "
+            "*_train.jsonl under data/raw/traindata/."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Destination directory for the per-phase dump_model() JSON "
+            "files (default: reports/generated/gbt/<timestamp>/)."
+        ),
+    )
+    parser.add_argument(
+        "--num-boost-round",
+        type=int,
+        default=None,
+        help="Number of boosting rounds per phase (default: gbt_fit.DEFAULT_NUM_BOOST_ROUND).",
+    )
+    args = parser.parse_args(sys.argv[1:])
+
+    input_paths = (
+        [Path(p) for p in args.input]
+        if args.input
+        else sorted(_TRAINDATA_DIR.glob("*_train.jsonl"))
+    )
+    if not input_paths:
+        print(
+            f"No training files found under {_TRAINDATA_DIR}.\n"
+            "Run `go run ./cmd/traindata` first "
+            "(see backend/cmd/traindata/README.md).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from global_conquest_analytics.fit import PHASE_FEATURES
+    from global_conquest_analytics.gbt_fit import (
+        DEFAULT_NUM_BOOST_ROUND,
+        export_gbt,
+        fit_phase_gbt,
+    )
+    from global_conquest_analytics.training_data import load_training_rows
+
+    print(f"Loading {len(input_paths)} training file(s):")
+    for p in input_paths:
+        print(f"  {p}")
+    df = load_training_rows(input_paths)
+    print(f"Loaded {len(df)} rows across {df['GameID'].nunique()} games.\n")
+
+    num_boost_round = args.num_boost_round or DEFAULT_NUM_BOOST_ROUND
+    boosters = {}
+    for phase in PHASE_FEATURES:
+        print(f"Fitting {phase} ({num_boost_round} rounds)...")
+        fit = fit_phase_gbt(df, phase, num_boost_round=num_boost_round)
+        boosters[phase] = fit
+        if fit.end_phase_threshold is not None:
+            print(f"    end_phase_threshold={fit.end_phase_threshold:.4f}")
+
+    output_dir = (
+        Path(args.output)
+        if args.output
+        else _GBT_REPORT_DIR / datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    )
+    export_gbt(boosters, output_dir)
+    print(f"Models written → {output_dir}")

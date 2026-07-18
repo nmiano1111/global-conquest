@@ -55,6 +55,8 @@ func run(args []string) (completed bool, err error) {
 	rawOutput := fs.String("raw-output", "", "If set, write one JSON-encoded simulation.Result per line (JSONL) to this path as each game completes")
 	var weightsVariants weightsVariantFlag
 	fs.Var(&weightsVariants, "weights-variant", "Register a custom-weighted scored-v1 variant as <strategy-id>=<path> (repeatable) -- see internal/bot.LoadWeights")
+	var gbtVariants gbtVariantFlag
+	fs.Var(&gbtVariants, "gbt-variant", "Register a gradient-boosted-trees strategy variant as <strategy-id>=<model-dir> (repeatable) -- see internal/bot.LoadGBTModels")
 	if err := fs.Parse(args); err != nil {
 		return false, err
 	}
@@ -79,6 +81,9 @@ func run(args []string) (completed bool, err error) {
 		bot.StrategyScoredV1: bot.NewScoredStrategy(bot.DefaultWeights),
 	}
 	if err := registerWeightsVariants(registry, weightsVariants); err != nil {
+		return false, err
+	}
+	if err := registerGBTVariants(registry, gbtVariants); err != nil {
 		return false, err
 	}
 	sim := simulation.NewSimulator(registry)
