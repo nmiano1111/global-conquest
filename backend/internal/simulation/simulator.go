@@ -278,6 +278,18 @@ func (s *Simulator) RunOne(ctx context.Context, cfg Config, onProgress func(Prog
 			})
 		}
 
+		// A turn boundary is either the common case (an end_turn just
+		// dispatched) or, less commonly, any other action that ended the
+		// game directly -- a conquering attack/occupation eliminating the
+		// second-to-last player checks for a winner immediately, without
+		// ever reaching another end_turn (risk.Game.Attack/OccupyTerritory).
+		// The `||` (not two separate ifs) guarantees a single call even
+		// when both are true at once (an end_turn whose own internal
+		// checkWinner ends the game).
+		if cfg.OnTurnBoundary != nil && (cmd.Action == bot.ActionEndTurn || g.Phase == risk.PhaseGameOver) {
+			cfg.OnTurnBoundary(TurnBoundary{Game: g, Seat: seat, PlayerID: current.ID, Turn: g.TurnNumber})
+		}
+
 		if g.Phase == risk.PhaseGameOver {
 			break
 		}

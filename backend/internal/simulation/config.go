@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
 
 // TraceLevel controls how much detail a simulation records beyond its
@@ -112,11 +113,39 @@ func (l Limits) Validate() error {
 	return nil
 }
 
+// TurnBoundary describes one completed player turn, passed to
+// Config.OnTurnBoundary (if set) right after the corresponding
+// command dispatches -- either a normal end_turn, or, less commonly, any
+// other action that ends the game directly (a conquering attack or
+// occupation that eliminates the second-to-last player checks for a
+// winner immediately, without ever reaching another end_turn -- see
+// risk.Game.OccupyTerritory/Attack). Game reflects the resulting board:
+// the start of the next player's turn, or the final PhaseGameOver state.
+//
+// Game is the simulation's own live, mutable *risk.Game -- valid only for
+// the duration of the callback. A caller that needs to retain anything
+// must copy/encode what it needs synchronously within the callback (e.g.
+// via internal/tdstate.Encode, which never aliases back into Game); it
+// must not store the pointer itself for later use.
+type TurnBoundary struct {
+	Game     *risk.Game
+	Seat     int
+	PlayerID string
+	Turn     int
+}
+
 // Config fully specifies one reproducible simulation: the same Config
 // (same Seed, same Strategies, same GameMode) against the same strategy
 // registry must always produce the same game.
 type Config struct {
 	Seed int64
+
+	// OnTurnBoundary, if set, is called once per completed player turn
+	// (see TurnBoundary) -- purely an observation side-channel like
+	// onProgress in RunOne, never influencing the game or its
+	// determinism. Left nil, it costs nothing: RunOne only ever calls it
+	// when non-nil.
+	OnTurnBoundary func(TurnBoundary)
 
 	// Strategies holds one strategy ID per seat, in seat order; its
 	// length is the player count (risk.NewClassicGame requires 3-6). Seat

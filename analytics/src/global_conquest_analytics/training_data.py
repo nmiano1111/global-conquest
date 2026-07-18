@@ -54,8 +54,11 @@ def sample_weights(df: pd.DataFrame) -> pd.Series:
     weight, and within that budget every *decision* (not every row) still
     gets equal weight regardless of how many candidates it had.
     """
-    candidates_per_decision = df.groupby(["GameID", "PlayerID", "CommandIndex"])["PlayerID"].transform("size")
-    decisions_per_game_player = df.groupby(["GameID", "PlayerID"])["CommandIndex"].transform("nunique")
+    decision_key = ["GameID", "PlayerID", "CommandIndex"]
+    candidates_per_decision = df.groupby(decision_key)["PlayerID"].transform("size")
+    decisions_per_game_player = df.groupby(["GameID", "PlayerID"])["CommandIndex"].transform(
+        "nunique"
+    )
     return 1.0 / (candidates_per_decision * decisions_per_game_player)
 
 
