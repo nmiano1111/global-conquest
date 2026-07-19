@@ -12,6 +12,7 @@ export type GameRecord = {
   playerIds: string[];
   phase: string;
   currentPlayerName: string;
+  viewerEliminated: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -95,6 +96,7 @@ function normalizeGame(value: unknown): GameRecord {
       playerIds: [],
       phase: "",
       currentPlayerName: "",
+      viewerEliminated: false,
       createdAt: "",
       updatedAt: "",
     };
@@ -132,9 +134,14 @@ function normalizeGame(value: unknown): GameRecord {
     playerIds,
     phase: readString(record.phase ?? record.Phase),
     currentPlayerName: readString(record.current_player_name ?? record.currentPlayerName),
+    viewerEliminated: readBoolean(record.viewer_eliminated ?? record.viewerEliminated),
     createdAt: readString(record.created_at ?? record.CreatedAt),
     updatedAt: readString(record.updated_at ?? record.UpdatedAt),
   };
+}
+
+function readBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function readNumber(value: unknown, fallback = 0): number {

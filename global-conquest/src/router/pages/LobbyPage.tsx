@@ -503,7 +503,11 @@ export function LobbyPage() {
                 <li
                   key={g.id}
                   className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3 transition-colors hover:border-gc-border/80 ${
-                    hasJoined ? "border-gc-accent/40 bg-gc-accent/5" : "border-gc-border bg-gc-surface-2"
+                    g.viewerEliminated
+                      ? "border-gc-danger/40 bg-gc-danger/5"
+                      : hasJoined
+                        ? "border-gc-accent/40 bg-gc-accent/5"
+                        : "border-gc-border bg-gc-surface-2"
                   }`}
                 >
                   <div className="grid gap-1 min-w-0">
@@ -514,6 +518,11 @@ export function LobbyPage() {
                       >
                         {statusLabel}
                       </span>
+                      {g.viewerEliminated ? (
+                        <span className="rounded-full border border-gc-danger/40 bg-gc-danger/10 px-2 py-0.5 text-[11px] font-medium text-gc-danger">
+                          Eliminated
+                        </span>
+                      ) : null}
                     </div>
                     <p className="text-xs text-gc-muted">
                       <span className="text-gc-text/70">Players</span>{" "}
