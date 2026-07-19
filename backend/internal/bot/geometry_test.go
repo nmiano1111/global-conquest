@@ -451,3 +451,172 @@ func TestCheapestRouteToContinentWithCostReturnsAccumulatedCost(t *testing.T) {
 		t.Fatalf("expected cost 7, got %d", cost)
 	}
 }
+
+func TestNextTradeValueBoundaries(t *testing.T) {
+	cases := []struct{ setsTraded, want int }{
+		{0, 4},
+		{4, 12},
+		{5, 15},
+		{6, 20},
+	}
+	for _, c := range cases {
+		if got := nextTradeValue(c.setsTraded); got != c.want {
+			t.Errorf("nextTradeValue(%d) = %d, want %d", c.setsTraded, got, c.want)
+		}
+	}
+}
+
+func TestBiggestArmyTerritoryWithEnemyNeighborExcludesInteriorTerritory(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Argentina(10 armies) is interior (both neighbors Peru/Brazil
+	// owned); Alaska(5 armies) borders an enemy (Kamchatka, default).
+	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 10}
+	g.Territories["Peru"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Brazil"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Northwest Territory"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Alberta"] = risk.TerritoryState{Owner: 0, Armies: 1}
+
+	got, ok := biggestArmyTerritoryWithEnemyNeighbor(g, 0)
+	if !ok || got != "Alaska" {
+		t.Fatalf("expected Alaska (interior Argentina excluded despite higher armies), got %s (ok=%v)", got, ok)
+	}
+}
+
+func TestPlayerTotalArmiesSums(t *testing.T) {
+	g, _ := newTestGame(t)
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 3}
+	if got := playerTotalArmies(g, 0); got != 8 {
+		t.Fatalf("expected 8, got %d", got)
+	}
+}
+
+func TestCheapestAttackHopToPlayerTwoHopScenario(t *testing.T) {
+	g, _ := newTestGame(t)
+	for _, terr := range g.Board.Order {
+		g.Territories[terr] = risk.TerritoryState{Owner: 1, Armies: 1000}
+	}
+	g.Territories["Venezuela"] = risk.TerritoryState{Owner: 2, Armies: 1000}
+	g.Territories["Central America"] = risk.TerritoryState{Owner: 1, Armies: 3}
+	g.Territories["Western United States"] = risk.TerritoryState{Owner: 0, Armies: 20}
+
+	from, to, cost, ok := cheapestAttackHopToPlayer(g, 0, 2)
+	if !ok {
+		t.Fatalf("expected a route to be found")
+	}
+	if from != "Western United States" || to != "Central America" {
+		t.Fatalf("expected Western United States -> Central America, got %s -> %s", from, to)
+	}
+	if cost != 3 {
+		t.Fatalf("expected cost 3, got %d", cost)
+	}
+}
+
+func TestCheapestAttackHopToPlayerFalseWhenNothingOwned(t *testing.T) {
+	g, _ := newTestGame(t)
+	g.Territories["Venezuela"] = risk.TerritoryState{Owner: 2, Armies: 1}
+	if _, _, _, ok := cheapestAttackHopToPlayer(g, 0, 2); ok {
+		t.Fatalf("expected ok=false when pi owns nothing")
+	}
+}
+
+func TestKillTargetSelectsReachableWeakestRival(t *testing.T) {
+	g, _ := newTestGame(t)
+	for _, terr := range g.Board.Order {
+		if terr != "Kamchatka" {
+			g.Territories[terr] = risk.TerritoryState{Owner: 0, Armies: 1}
+		}
+	}
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 100}
+	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 1}
+
+	target, ok := killTarget(g, 0)
+	if !ok {
+		t.Fatalf("expected a kill target to be found")
+	}
+	if target != 1 {
+		t.Fatalf("expected player 1, got %d", target)
+	}
+}
+
+func TestKillTargetExcludesRivalFailingFeasibilityDespiteFewerArmies(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Player 1: fewer total armies (24) but so many territories that
+	// pi's strongest stack can't plausibly beat armies+territories.
+	rivalATerritories := g.Board.Order[:25]
+	for _, terr := range rivalATerritories {
+		g.Territories[terr] = risk.TerritoryState{Owner: 1, Armies: 1}
+	}
+	// Player 2: more total armies (40) but few enough territories to
+	// pass the feasibility gate.
+	g.Territories["Ural"] = risk.TerritoryState{Owner: 2, Armies: 20}
+	g.Territories["Siberia"] = risk.TerritoryState{Owner: 2, Armies: 20}
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 45}
+	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 40}
+
+	target, ok := killTarget(g, 0)
+	if !ok {
+		t.Fatalf("expected a kill target to be found")
+	}
+	if target != 2 {
+		t.Fatalf("expected player 2 (player 1 excluded by the feasibility gate despite fewer total armies), got %d", target)
+	}
+}
+
+func TestKillTargetFalseWhenNotYetTwiceAsStrong(t *testing.T) {
+	g, _ := newTestGame(t)
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 27}
+	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 25}
+	// Player 1 owns only Kamchatka: armies=25, territories=1, so the
+	// feasibility gate passes (27 > 25+1=26), but pi's own total armies
+	// (27, from Alaska alone) don't reach 2x player 1's 25 (needs > 50).
+	// Everything else goes to a third player so player 1's totals stay
+	// exactly as intended.
+	for _, terr := range g.Board.Order {
+		if terr != "Alaska" && terr != "Kamchatka" {
+			g.Territories[terr] = risk.TerritoryState{Owner: 2, Armies: 1}
+		}
+	}
+
+	if _, ok := killTarget(g, 0); ok {
+		t.Fatalf("expected no kill target: pi isn't yet twice as strong as the weakest reachable rival")
+	}
+}
+
+func TestKillTargetCardAdjustmentChangesSelection(t *testing.T) {
+	g, _ := newTestGame(t)
+	sentinels := map[risk.Territory]bool{
+		"Northwest Territory": true, "Alberta": true,
+		"Greenland": true, "Ontario": true,
+	}
+	for _, terr := range g.Board.Order {
+		if !sentinels[terr] {
+			g.Territories[terr] = risk.TerritoryState{Owner: 0, Armies: 1}
+		}
+	}
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 100}
+	g.Territories["Northwest Territory"] = risk.TerritoryState{Owner: 1, Armies: 5}
+	g.Territories["Alberta"] = risk.TerritoryState{Owner: 1, Armies: 5}
+	g.Territories["Greenland"] = risk.TerritoryState{Owner: 2, Armies: 5}
+	g.Territories["Ontario"] = risk.TerritoryState{Owner: 2, Armies: 5}
+	// Players 1 and 2 tie on raw armies (10 each); without the card
+	// discount, player 1 (checked first) would remain the tie-break
+	// "lowest so far" by default (strict < never replaces a tie). Giving
+	// player 2 a full card set discounts their adjusted armies below
+	// player 1's, proving the discount is what actually flips the
+	// selection to player 2.
+	g.Players[2].Cards = []risk.Card{
+		{Territory: "Alaska", Symbol: risk.Infantry},
+		{Territory: "Peru", Symbol: risk.Cavalry},
+		{Territory: "Egypt", Symbol: risk.Artillery},
+	}
+
+	target, ok := killTarget(g, 0)
+	if !ok {
+		t.Fatalf("expected a kill target to be found")
+	}
+	if target != 2 {
+		t.Fatalf("expected player 2 (card discount lowers their adjusted armies below player 1's, despite tying on raw armies and being checked second), got %d", target)
+	}
+}

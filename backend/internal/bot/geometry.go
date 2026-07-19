@@ -182,6 +182,32 @@ func biggestArmyTerritory(g *risk.Game, pi int) (best risk.Territory, ok bool) {
 	return best, ok
 }
 
+// biggestArmyTerritoryWithEnemyNeighbor is biggestArmyTerritory restricted
+// to territories bordering at least one enemy -- Lux's
+// getPlayersBiggestArmyWithEnemyNeighbor, used by killTarget as a rough
+// gauge of pi's strongest currently-attacking-capable stack.
+func biggestArmyTerritoryWithEnemyNeighbor(g *risk.Game, pi int) (best risk.Territory, ok bool) {
+	bestArmies := -1
+	for _, t := range g.Board.Order {
+		ts := g.Territories[t]
+		if ts.Owner == pi && ts.Armies > bestArmies && enemyNeighborCount(g, t, pi) > 0 {
+			best, bestArmies, ok = t, ts.Armies, true
+		}
+	}
+	return best, ok
+}
+
+// playerTotalArmies sums pi's armies board-wide.
+func playerTotalArmies(g *risk.Game, pi int) int {
+	total := 0
+	for _, t := range g.Board.Order {
+		if g.Territories[t].Owner == pi {
+			total += g.Territories[t].Armies
+		}
+	}
+	return total
+}
+
 // playerIncome mirrors risk.Game's own unexported reinforcementsFor
 // exactly: max(3, territoryCount/3) plus the bonus of every continent pi
 // fully owns (no positivity filter -- this is the real per-turn
@@ -390,24 +416,26 @@ type routeSearchResult struct {
 	hasHop  bool
 }
 
-// cheapestRouteSearch runs a Dijkstra search outward from cont's border
-// territories, with the cost of stepping into a territory equal to its
-// army count unless it's owned by pi (a free, terminal node) -- Lux's
-// BoardHelper.cheapestRouteFromOwnerToCont. It is the shared search both
-// cheapestRouteToContinent (a placement fallback) and
-// cheapestAttackHopToContinent (an attack-routing helper, added for
-// BoscoeStrategy -- see Lux_Port_Notes.md) build on. ok is false if pi
-// owns no territory reachable from cont at all.
-func cheapestRouteSearch(g *risk.Game, pi int, cont risk.Continent) (routeSearchResult, bool) {
-	borders := continentBorders(g, cont)
-	if len(borders) == 0 {
+// cheapestRouteSearch runs a Dijkstra search outward from starts, with
+// the cost of stepping into a territory equal to its army count unless
+// it's owned by pi (a free, terminal node) -- Lux's
+// BoardHelper.cheapestRouteFromOwnerToCont. It is the shared search
+// cheapestRouteToContinent/cheapestRouteToContinentWithCost/
+// cheapestAttackHopToContinent (starts = continentBorders(g, cont)) and
+// cheapestAttackHopToPlayer (starts = ownedTerritories(g, target), added
+// for KillbotStrategy) all build on -- generalized from a continent-only
+// starting set once a second, structurally different caller needed the
+// identical algorithm (see Lux_Port_Notes.md's Killbot addendum). ok is
+// false if pi owns no territory reachable from starts at all.
+func cheapestRouteSearch(g *risk.Game, pi int, starts []risk.Territory) (routeSearchResult, bool) {
+	if len(starts) == 0 {
 		return routeSearchResult{}, false
 	}
 	order := orderIndex(g)
 
 	visited := make(map[risk.Territory]bool)
 	h := &routeHeap{}
-	for _, b := range borders {
+	for _, b := range starts {
 		heap.Push(h, routeNode{t: b, from: "", cost: 0, order: order[b]})
 	}
 
@@ -438,7 +466,7 @@ func cheapestRouteSearch(g *risk.Game, pi int, cont risk.Continent) (routeSearch
 // cont's border at the lowest weighted cost, used as a placement fallback
 // when pi owns nothing in cont itself.
 func cheapestRouteToContinent(g *risk.Game, pi int, cont risk.Continent) (risk.Territory, bool) {
-	res, ok := cheapestRouteSearch(g, pi, cont)
+	res, ok := cheapestRouteSearch(g, pi, continentBorders(g, cont))
 	if !ok {
 		return "", false
 	}
@@ -450,7 +478,7 @@ func cheapestRouteToContinent(g *risk.Game, pi int, cont risk.Continent) (risk.T
 // to compare routes across several of a target player's owned continents
 // and place toward the globally cheapest.
 func cheapestRouteToContinentWithCost(g *risk.Game, pi int, cont risk.Continent) (t risk.Territory, cost int, ok bool) {
-	res, ok := cheapestRouteSearch(g, pi, cont)
+	res, ok := cheapestRouteSearch(g, pi, continentBorders(g, cont))
 	if !ok {
 		return "", 0, false
 	}
@@ -469,7 +497,45 @@ func cheapestRouteToContinentWithCost(g *risk.Game, pi int, cont risk.Continent)
 // territory already borders cont directly (no intermediate hop exists to
 // attack into).
 func cheapestAttackHopToContinent(g *risk.Game, pi int, cont risk.Continent) (from, to risk.Territory, cost int, ok bool) {
-	res, ok := cheapestRouteSearch(g, pi, cont)
+	res, ok := cheapestRouteSearch(g, pi, continentBorders(g, cont))
+	if !ok || !res.hasHop {
+		return "", "", 0, false
+	}
+	return res.found, res.nextHop, res.cost, true
+}
+
+// ownedTerritories returns pi's owned territories in canonical board
+// order -- used as cheapestRouteSearch's starting set for
+// cheapestAttackHopToPlayer (unlike the continent-scoped wrappers above,
+// which start from continentBorders instead).
+func ownedTerritories(g *risk.Game, pi int) []risk.Territory {
+	var out []risk.Territory
+	for _, t := range g.Board.Order {
+		if g.Territories[t].Owner == pi {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// cheapestAttackHopToPlayer finds the cheapest attack route from pi's own
+// territory toward any territory owned by target, returning the (from,
+// to) attack pair one hop closer plus the route's cost -- Lux's
+// Vulture/Killbot cluster-Hamiltonian-path precomputation
+// (placeToKill/attackAlongRoute), replaced by the same clean single-hop
+// router cheapestAttackHopToContinent already uses (see
+// Lux_Port_Notes.md's Killbot addendum): rather than precomputing a route
+// through target's entire connected territory cluster and committing to
+// attack all the way through in one turn, this finds the cheapest single
+// hop toward any of target's territory; once it lands, subsequent
+// NextCommand calls recompute fresh and naturally continue eating into
+// target's holdings. Unlike cheapestAttackHopToContinent, hasHop is
+// always true whenever a route is found at all: the search starts from
+// target's own territories (never pi's, since target != pi), so the
+// found pi-owned territory always has a real predecessor. ok is false
+// only if pi owns nothing reachable from target's territory.
+func cheapestAttackHopToPlayer(g *risk.Game, pi, target int) (from, to risk.Territory, cost int, ok bool) {
+	res, ok := cheapestRouteSearch(g, pi, ownedTerritories(g, target))
 	if !ok || !res.hasHop {
 		return "", "", 0, false
 	}
@@ -498,4 +564,71 @@ func bestFortifyDestination(g *risk.Game, pi int, actions []risk.FortificationAc
 		}
 	}
 	return best, bestScore, true
+}
+
+// nextTradeValue duplicates risk.Game's own unexported nextTradeValue
+// exactly (internal/risk/engine.go): the reinforcement value of the next
+// card set cashed, given setsTraded sets already traded so far this
+// game.
+func nextTradeValue(setsTraded int) int {
+	setNumber := setsTraded + 1
+	if setNumber <= 5 {
+		return 2*setNumber + 2
+	}
+	if setNumber == 6 {
+		return 15
+	}
+	return 15 + (setNumber-6)*5
+}
+
+// killTarget identifies which living rival, if any, pi should try to
+// eliminate outright -- Lux's Vulture.setToKillPlayer. Among rivals still
+// in the game whose total armies+territories a real attack from pi's own
+// strongest attacking stack (biggestArmyTerritoryWithEnemyNeighbor)
+// plausibly beats, picks the one with the lowest card-adjusted armies
+// (discounting the value of the next card set they could cash, since
+// they'll effectively be stronger once they do); only returns it if pi's
+// own total armies exceed twice that adjusted figure. Recomputed fresh
+// from both a placement and an attack decision -- this engine has no
+// equivalent to Lux's turn-scoped toKillPlayer field (see
+// Lux_Port_Notes.md's Killbot addendum), and Lux's own placement-time
+// slack (+ numberOfArmies, since more armies are about to land) is
+// dropped for the same reason pixieWantedContinents' was: no
+// "about-to-be-placed" figure exists outside the reinforce call itself.
+func killTarget(g *risk.Game, pi int) (target int, ok bool) {
+	strongest, hasStrongest := biggestArmyTerritoryWithEnemyNeighbor(g, pi)
+	if !hasStrongest {
+		return 0, false
+	}
+	strongestArmies := float64(g.Territories[strongest].Armies)
+	nextSetValue := float64(nextTradeValue(g.SetsTraded))
+
+	lowest := 0.0
+	found := false
+	for i, p := range g.Players {
+		if i == pi || p.Eliminated {
+			continue
+		}
+		armies := float64(playerTotalArmies(g, i))
+		territories := 0
+		for _, t := range g.Board.Order {
+			if g.Territories[t].Owner == i {
+				territories++
+			}
+		}
+		if territories == 0 || strongestArmies <= armies+float64(territories) {
+			continue
+		}
+		adjusted := armies - nextSetValue*float64(len(p.Cards))/3.0
+		if !found || adjusted < lowest {
+			lowest, target, found = adjusted, i, true
+		}
+	}
+	if !found {
+		return 0, false
+	}
+	if float64(playerTotalArmies(g, pi)) <= lowest*2 {
+		return 0, false
+	}
+	return target, true
 }
