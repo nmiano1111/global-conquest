@@ -397,17 +397,26 @@ func (c *ClusterStrategy) occupy(g *risk.Game, playerID string) (Command, error)
 		return Command{}, fmt.Errorf("bot: no legal occupation for player %s", playerID)
 	}
 	pi := playerIndex(g, playerID)
+	armies := clusterOccupyDecision(g, pi, g.Occupy, actions)
+	return Command{Action: ActionOccupy, Armies: armies}, nil
+}
 
+// clusterOccupyDecision is Cluster.moveArmiesIn's port (see occupy's own
+// doc comment for the goalCont/moveInMemory substitutions), extracted to a
+// package-level function since QuoStrategy needs the identical logic --
+// Lux's Quo/Shaft don't override moveArmiesIn either, inheriting Cluster's
+// exact behavior.
+func clusterOccupyDecision(g *risk.Game, pi int, occupy *risk.OccupyState, actions []risk.OccupationAction) int {
 	armies := actions[len(actions)-1].Armies // default: maximum
 	if root, ok := clusterRoot(g, pi); ok {
 		cont := territoryContinent(g)[root]
-		aWeakest, aOk := weakestEnemyNeighborInContinent(g, g.Occupy.From, pi, cont)
-		dWeakest, dOk := weakestEnemyNeighborInContinent(g, g.Occupy.To, pi, cont)
+		aWeakest, aOk := weakestEnemyNeighborInContinent(g, occupy.From, pi, cont)
+		dWeakest, dOk := weakestEnemyNeighborInContinent(g, occupy.To, pi, cont)
 		if !dOk || (aOk && g.Territories[aWeakest].Armies < g.Territories[dWeakest].Armies) {
 			armies = actions[0].Armies // minimum: From still has the better matchup
 		}
 	}
-	return Command{Action: ActionOccupy, Armies: armies}, nil
+	return armies
 }
 
 // fortify uses bestFortifyDestination (shared with AngryStrategy) -- see
