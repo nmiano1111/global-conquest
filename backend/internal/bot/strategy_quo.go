@@ -61,23 +61,24 @@ func voluntaryCardTurnIn(g *risk.Game, playerID string) (Command, bool) {
 	return Command{Action: ActionTradeCards, CardIndices: sets[0].Indices}, true
 }
 
-// setupReinforce places the one initial army via clusterPlacementTerritory
-// -- Lux's Quo/Shaft don't override placeArmies, so this is identical to
-// ClusterStrategy's own setupReinforce.
+// setupReinforce places the one initial army via
+// clusterOrTakeContinentPlacement -- Lux's Quo/Shaft don't override
+// placeArmies, so this is identical to ClusterStrategy's own
+// setupReinforce.
 func (q *QuoStrategy) setupReinforce(g *risk.Game, playerID string) (Command, error) {
 	actions := risk.LegalSetupReinforcements(g, playerID)
 	if len(actions) == 0 {
 		return Command{}, fmt.Errorf("bot: no legal setup reinforcement for player %s", playerID)
 	}
 	pi := playerIndex(g, playerID)
-	best := clusterPlacementTerritory(g, pi, actions, func(a risk.SetupReinforcementAction) risk.Territory { return a.Territory })
+	best := clusterOrTakeContinentPlacement(g, pi, setupReinforceActionsAsReinforcements(actions))
 	return Command{Action: ActionPlaceInitialArmy, Territory: string(best)}, nil
 }
 
 // reinforce trades cards whenever a legal set exists (voluntaryCardTurnIn,
 // not the forced-only gate Angry/Cluster/Pixie use), then places via
-// clusterPlacementTerritory -- again identical to ClusterStrategy's own
-// placement logic, since Lux's Quo/Shaft don't override placeArmies.
+// clusterOrTakeContinentPlacement -- again identical to ClusterStrategy's
+// own placement logic, since Lux's Quo/Shaft don't override placeArmies.
 func (q *QuoStrategy) reinforce(g *risk.Game, playerID string) (Command, error) {
 	if cmd, ok := voluntaryCardTurnIn(g, playerID); ok {
 		return cmd, nil
@@ -88,7 +89,7 @@ func (q *QuoStrategy) reinforce(g *risk.Game, playerID string) (Command, error) 
 		return Command{}, fmt.Errorf("bot: no legal reinforcement for player %s", playerID)
 	}
 	pi := playerIndex(g, playerID)
-	best := clusterPlacementTerritory(g, pi, actions, func(a risk.ReinforcementAction) risk.Territory { return a.Territory })
+	best := clusterOrTakeContinentPlacement(g, pi, actions)
 	return Command{Action: ActionPlaceReinforcement, Territory: string(best), Armies: g.PendingReinforcements}, nil
 }
 

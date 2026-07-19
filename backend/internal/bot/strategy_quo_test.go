@@ -248,3 +248,26 @@ func TestQuoStrategyFortifyPrefersMostEnemyNeighborDestination(t *testing.T) {
 		t.Fatalf("expected South Africa -> East Africa, got %s -> %s", cmd.From, cmd.To)
 	}
 }
+
+func TestQuoStrategyReinforceRoutesTowardEasiestContinentWhenNoneOwned(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseReinforce
+	g.PendingReinforcements = 5
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 3}
+	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 1}
+
+	strat := NewQuoStrategy()
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionPlaceReinforcement {
+		t.Fatalf("expected place_reinforcement, got %s", cmd.Action)
+	}
+	if cmd.Territory != "Alaska" {
+		t.Fatalf("expected Alaska (routes toward north_america, the easiest continent to take -- the fix for the gap clusterOrTakeContinentPlacement closes), got %s", cmd.Territory)
+	}
+	if cmd.Armies != 5 {
+		t.Fatalf("expected every pending reinforcement dumped in one command, got %d", cmd.Armies)
+	}
+}

@@ -182,6 +182,73 @@ func biggestArmyTerritory(g *risk.Game, pi int) (best risk.Territory, ok bool) {
 	return best, ok
 }
 
+// playerIncome mirrors risk.Game's own unexported reinforcementsFor
+// exactly: max(3, territoryCount/3) plus the bonus of every continent pi
+// fully owns (no positivity filter -- this is the real per-turn
+// reinforcement rule, not an AI heuristic threshold like
+// ownsAnyPositiveContinent's). Duplicated here since reinforcementsFor
+// isn't exported and dominantPlayerToKill needs every player's income,
+// not just the acting one's.
+func playerIncome(g *risk.Game, pi int) int {
+	count := 0
+	for _, t := range g.Board.Order {
+		if g.Territories[t].Owner == pi {
+			count++
+		}
+	}
+	income := max(3, count/3)
+	for _, cont := range continentOrder(g) {
+		if ownsContinent(g, pi, cont) {
+			income += g.Board.Continents[cont].Bonus
+		}
+	}
+	return income
+}
+
+// dominantPlayerToKill reports the player (other than pi) that must be
+// stopped: one who holds at least half of all armies, all income, or all
+// territories on the board -- Lux's
+// SmartAgentBase.placeArmiesToKillDominantPlayer's detection logic,
+// factored out so it can be recomputed fresh from both a placement and an
+// attack decision (this engine has no equivalent to Lux's turn-scoped
+// mustKillPlayer field -- see Lux_Port_Notes.md's Boscoe addendum). If
+// multiple players qualify, the highest player index wins -- the same
+// last-write-wins result Lux's own unconditional-overwrite loop produces.
+// ok is false if no player meets any threshold.
+func dominantPlayerToKill(g *risk.Game, pi int) (target int, ok bool) {
+	armies := make([]int, len(g.Players))
+	territories := make([]int, len(g.Players))
+	totalArmies, totalTerritories := 0, len(g.Board.Order)
+	for _, t := range g.Board.Order {
+		ts := g.Territories[t]
+		if ts.Owner < 0 {
+			continue
+		}
+		armies[ts.Owner] += ts.Armies
+		territories[ts.Owner]++
+		totalArmies += ts.Armies
+	}
+
+	income := make([]int, len(g.Players))
+	totalIncome := 0
+	for i := range g.Players {
+		income[i] = playerIncome(g, i)
+		totalIncome += income[i]
+	}
+
+	for i := range g.Players {
+		if i == pi {
+			continue
+		}
+		if float64(armies[i]) >= float64(totalArmies)*0.5 ||
+			float64(income[i]) >= float64(totalIncome)*0.5 ||
+			float64(territories[i]) >= float64(totalTerritories)*0.5 {
+			target, ok = i, true
+		}
+	}
+	return target, ok
+}
+
 // weakestEnemyNeighborInContinent is weakestEnemyNeighbor restricted to
 // neighbors of t that lie within cont.
 func weakestEnemyNeighborInContinent(g *risk.Game, t risk.Territory, pi int, cont risk.Continent) (weakest risk.Territory, ok bool) {
@@ -280,11 +347,13 @@ func playerArmiesAdjoiningContinent(g *risk.Game, pi int, cont risk.Continent) i
 	return total
 }
 
-// routeNode is one entry in cheapestRouteToContinent's priority queue: a
-// territory reached at accumulated cost, with order recorded purely to
-// keep the search deterministic when costs tie.
+// routeNode is one entry in cheapestRouteSearch's priority queue: a
+// territory reached at accumulated cost from its predecessor (from -- ""
+// for a cont-border starting node), with order recorded purely to keep
+// the search deterministic when costs tie.
 type routeNode struct {
 	t     risk.Territory
+	from  risk.Territory
 	cost  int
 	order int
 }
@@ -308,24 +377,38 @@ func (h *routeHeap) Pop() any {
 	return item
 }
 
-// cheapestRouteToContinent runs a Dijkstra search outward from cont's
-// border territories, with the cost of stepping into a territory equal to
-// its army count unless it's owned by pi (a free, terminal node) --
-// Lux's BoardHelper.cheapestRouteFromOwnerToCont. It returns the pi-owned
-// territory reachable at the lowest accumulated enemy-army cost, used as a
-// placement fallback when pi owns nothing in cont itself. ok is false if
-// pi owns no territory reachable from cont at all.
-func cheapestRouteToContinent(g *risk.Game, pi int, cont risk.Continent) (risk.Territory, bool) {
+// routeSearchResult is cheapestRouteSearch's outcome: the pi-owned
+// territory reached at the lowest accumulated enemy-army cost from cont's
+// border, that cost, and (if found is reached via at least one
+// intermediate hop, rather than being a border territory of cont itself)
+// nextHop, the adjacent territory one step closer to cont -- the natural
+// next attack target when routing toward cont.
+type routeSearchResult struct {
+	found   risk.Territory
+	cost    int
+	nextHop risk.Territory
+	hasHop  bool
+}
+
+// cheapestRouteSearch runs a Dijkstra search outward from cont's border
+// territories, with the cost of stepping into a territory equal to its
+// army count unless it's owned by pi (a free, terminal node) -- Lux's
+// BoardHelper.cheapestRouteFromOwnerToCont. It is the shared search both
+// cheapestRouteToContinent (a placement fallback) and
+// cheapestAttackHopToContinent (an attack-routing helper, added for
+// BoscoeStrategy -- see Lux_Port_Notes.md) build on. ok is false if pi
+// owns no territory reachable from cont at all.
+func cheapestRouteSearch(g *risk.Game, pi int, cont risk.Continent) (routeSearchResult, bool) {
 	borders := continentBorders(g, cont)
 	if len(borders) == 0 {
-		return "", false
+		return routeSearchResult{}, false
 	}
 	order := orderIndex(g)
 
 	visited := make(map[risk.Territory]bool)
 	h := &routeHeap{}
 	for _, b := range borders {
-		heap.Push(h, routeNode{t: b, cost: 0, order: order[b]})
+		heap.Push(h, routeNode{t: b, from: "", cost: 0, order: order[b]})
 	}
 
 	for h.Len() > 0 {
@@ -335,7 +418,7 @@ func cheapestRouteToContinent(g *risk.Game, pi int, cont risk.Continent) (risk.T
 		}
 		visited[cur.t] = true
 		if g.Territories[cur.t].Owner == pi {
-			return cur.t, true
+			return routeSearchResult{found: cur.t, cost: cur.cost, nextHop: cur.from, hasHop: cur.from != ""}, true
 		}
 		for _, neighbor := range g.Board.Order {
 			if visited[neighbor] || !g.Board.IsAdjacent(cur.t, neighbor) {
@@ -345,10 +428,52 @@ func cheapestRouteToContinent(g *risk.Game, pi int, cont risk.Continent) (risk.T
 			if g.Territories[neighbor].Owner != pi {
 				cost += g.Territories[neighbor].Armies
 			}
-			heap.Push(h, routeNode{t: neighbor, cost: cost, order: order[neighbor]})
+			heap.Push(h, routeNode{t: neighbor, from: cur.t, cost: cost, order: order[neighbor]})
 		}
 	}
-	return "", false
+	return routeSearchResult{}, false
+}
+
+// cheapestRouteToContinent returns the pi-owned territory reachable from
+// cont's border at the lowest weighted cost, used as a placement fallback
+// when pi owns nothing in cont itself.
+func cheapestRouteToContinent(g *risk.Game, pi int, cont risk.Continent) (risk.Territory, bool) {
+	res, ok := cheapestRouteSearch(g, pi, cont)
+	if !ok {
+		return "", false
+	}
+	return res.found, true
+}
+
+// cheapestRouteToContinentWithCost is cheapestRouteToContinent plus the
+// route's accumulated cost, used by BoscoeStrategy's placementToKillPlayer
+// to compare routes across several of a target player's owned continents
+// and place toward the globally cheapest.
+func cheapestRouteToContinentWithCost(g *risk.Game, pi int, cont risk.Continent) (t risk.Territory, cost int, ok bool) {
+	res, ok := cheapestRouteSearch(g, pi, cont)
+	if !ok {
+		return "", 0, false
+	}
+	return res.found, res.cost, true
+}
+
+// cheapestAttackHopToContinent finds the same cheapest route as
+// cheapestRouteToContinent, but returns the (from, to) attack pair one hop
+// closer to cont from the found owned territory, plus the route's total
+// remaining cost -- Lux's BoardHelper.easyCostFromCountryToContinent,
+// reused here via the same global search rather than Lux's own per-origin
+// iteration over every owned territory (see Lux_Port_Notes.md's Boscoe
+// addendum: a deliberate, principled simplification -- the global search
+// always finds a route at least as good as trying each owned territory in
+// turn). ok is false if pi owns nothing reachable, or if the found
+// territory already borders cont directly (no intermediate hop exists to
+// attack into).
+func cheapestAttackHopToContinent(g *risk.Game, pi int, cont risk.Continent) (from, to risk.Territory, cost int, ok bool) {
+	res, ok := cheapestRouteSearch(g, pi, cont)
+	if !ok || !res.hasHop {
+		return "", "", 0, false
+	}
+	return res.found, res.nextHop, res.cost, true
 }
 
 // bestFortifyDestination picks the action from actions whose To has the

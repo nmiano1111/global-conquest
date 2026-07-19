@@ -347,3 +347,28 @@ func TestClusterStrategyFortifyEndsTurnWhenNoDestinationFacesAnEnemy(t *testing.
 		t.Fatalf("expected end_turn when no fortification destination faces a threat, got %s", cmd.Action)
 	}
 }
+
+func TestClusterStrategySetupReinforceRoutesTowardEasiestContinentWhenNoneOwned(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseSetupReinforce
+	g.SetupReserves[0] = 5
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 3}
+	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 1}
+
+	strat := NewClusterStrategy()
+	cmd, _, err := strat.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionPlaceInitialArmy {
+		t.Fatalf("expected place_initial_army, got %s", cmd.Action)
+	}
+	// Neither continent is owned outright; placeToTakeContinent picks
+	// north_america as easiest (Alaska's 3 armies vs 8 enemy beats
+	// Argentina's 1 vs south_america's 3), landing on Alaska, its only
+	// owned member -- the fix for the gap clusterOrTakeContinentPlacement
+	// closes (setupReinforce previously never reached this branch).
+	if cmd.Territory != "Alaska" {
+		t.Fatalf("expected Alaska, got %s", cmd.Territory)
+	}
+}

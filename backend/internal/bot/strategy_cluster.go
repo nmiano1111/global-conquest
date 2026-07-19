@@ -147,14 +147,43 @@ func placeToTakeSpecificContinent(g *risk.Game, pi int, actions []risk.Reinforce
 	return best
 }
 
-// setupReinforce places the one initial army via clusterPlacementTerritory.
+// clusterOrTakeContinentPlacement picks a placement territory the way
+// Cluster's own placeArmies does: clusterPlacementTerritory if pi owns any
+// positive-bonus continent outright, else placeToTakeContinent. Shared by
+// ClusterStrategy and QuoStrategy's placement (both inherit Cluster's
+// placeArmies unchanged in Lux) and by BoscoeStrategy's own fallback
+// placement (Yakool's placeArmies falls through to this same logic once
+// its "kill the dominant player" branch doesn't apply -- see
+// strategy_boscoe.go).
+func clusterOrTakeContinentPlacement(g *risk.Game, pi int, actions []risk.ReinforcementAction) risk.Territory {
+	if ownsAnyPositiveContinent(g, pi) {
+		return clusterPlacementTerritory(g, pi, actions, func(a risk.ReinforcementAction) risk.Territory { return a.Territory })
+	}
+	return placeToTakeContinent(g, pi, actions)
+}
+
+// setupReinforceActionsAsReinforcements converts LegalSetupReinforcements'
+// action type to LegalReinforcements' so setup and mid-game placement can
+// share one placement function -- the same conversion PixieStrategy.
+// setupReinforce already uses.
+func setupReinforceActionsAsReinforcements(actions []risk.SetupReinforcementAction) []risk.ReinforcementAction {
+	out := make([]risk.ReinforcementAction, len(actions))
+	for i, a := range actions {
+		out[i] = risk.ReinforcementAction{Territory: a.Territory}
+	}
+	return out
+}
+
+// setupReinforce places the one initial army via
+// clusterOrTakeContinentPlacement -- the same placement logic reinforce
+// uses, since Lux's placeInitialArmies delegates straight to placeArmies.
 func (c *ClusterStrategy) setupReinforce(g *risk.Game, playerID string) (Command, error) {
 	actions := risk.LegalSetupReinforcements(g, playerID)
 	if len(actions) == 0 {
 		return Command{}, fmt.Errorf("bot: no legal setup reinforcement for player %s", playerID)
 	}
 	pi := playerIndex(g, playerID)
-	best := clusterPlacementTerritory(g, pi, actions, func(a risk.SetupReinforcementAction) risk.Territory { return a.Territory })
+	best := clusterOrTakeContinentPlacement(g, pi, setupReinforceActionsAsReinforcements(actions))
 	return Command{Action: ActionPlaceInitialArmy, Territory: string(best)}, nil
 }
 
@@ -162,9 +191,8 @@ func (c *ClusterStrategy) setupReinforce(g *risk.Game, playerID string) (Command
 // cardsPhase is SmartAgentBase's untouched empty default, same as
 // AngryStrategy. Placement dumps every pending reinforcement in one
 // command (see clusterPlacementTerritory's doc comment on why per-call
-// re-evaluation substitutes for Lux's chunked placement) at
-// clusterPlacementTerritory if pi owns a positive continent outright, or
-// placeToTakeContinent otherwise.
+// re-evaluation substitutes for Lux's chunked placement) via
+// clusterOrTakeContinentPlacement.
 func (c *ClusterStrategy) reinforce(g *risk.Game, playerID string) (Command, error) {
 	if risk.CardTurnInRequired(g, playerID) {
 		if sets := risk.LegalCardTurnIns(g, playerID); len(sets) > 0 {
@@ -177,13 +205,7 @@ func (c *ClusterStrategy) reinforce(g *risk.Game, playerID string) (Command, err
 		return Command{}, fmt.Errorf("bot: no legal reinforcement for player %s", playerID)
 	}
 	pi := playerIndex(g, playerID)
-
-	var best risk.Territory
-	if ownsAnyPositiveContinent(g, pi) {
-		best = clusterPlacementTerritory(g, pi, actions, func(a risk.ReinforcementAction) risk.Territory { return a.Territory })
-	} else {
-		best = placeToTakeContinent(g, pi, actions)
-	}
+	best := clusterOrTakeContinentPlacement(g, pi, actions)
 	return Command{Action: ActionPlaceReinforcement, Territory: string(best), Armies: g.PendingReinforcements}, nil
 }
 

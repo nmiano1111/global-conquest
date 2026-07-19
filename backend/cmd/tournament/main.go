@@ -85,6 +85,7 @@ func run(args []string) (completed bool, err error) {
 		bot.StrategyClusterV1: bot.NewClusterStrategy(),
 		bot.StrategyPixieV1:   bot.NewPixieStrategy(),
 		bot.StrategyQuoV1:     bot.NewQuoStrategy(),
+		bot.StrategyBoscoeV1:  bot.NewBoscoeStrategy(),
 	}
 	if err := registerWeightsVariants(registry, weightsVariants); err != nil {
 		return false, err

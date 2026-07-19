@@ -306,3 +306,148 @@ func TestContinentNeedsHelpTrueWhenBorderIsWeak(t *testing.T) {
 		t.Fatalf("expected help needed: Venezuela is a weak border")
 	}
 }
+
+func TestPlayerIncomeBaseFormula(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Own exactly 9 territories, no full continent: base = max(3, 9/3) = 3.
+	owned := []risk.Territory{
+		"Alaska", "Northwest Territory", "Greenland", "Alberta", "Ontario",
+		"Quebec", "Western United States", "Eastern United States", "Iceland",
+	}
+	for _, terr := range owned {
+		g.Territories[terr] = risk.TerritoryState{Owner: 0, Armies: 1}
+	}
+	if got := playerIncome(g, 0); got != 3 {
+		t.Fatalf("expected base income 3 (max(3, 9/3)), got %d", got)
+	}
+}
+
+func TestPlayerIncomeAddsFullyOwnedContinentBonus(t *testing.T) {
+	g, _ := newTestGame(t)
+	for _, terr := range g.Board.Continents["south_america"].Territories {
+		g.Territories[terr] = risk.TerritoryState{Owner: 0, Armies: 1}
+	}
+	// 4 territories: base = max(3, 4/3=1) = 3; + south_america bonus 2 = 5.
+	if got := playerIncome(g, 0); got != 5 {
+		t.Fatalf("expected income 5 (base 3 + south_america bonus 2), got %d", got)
+	}
+}
+
+func TestDominantPlayerToKillDetectsDefaultFullBoardOwnership(t *testing.T) {
+	g, _ := newTestGame(t)
+	// newTestGame's own baseline already has player index 1 owning every
+	// territory -- the simplest possible "must be stopped" scenario.
+	target, ok := dominantPlayerToKill(g, 0)
+	if !ok {
+		t.Fatalf("expected player 1 (owns literally everything by default) to be flagged dominant")
+	}
+	if target != 1 {
+		t.Fatalf("expected target player 1, got %d", target)
+	}
+}
+
+func TestDominantPlayerToKillFalseWhenNobodyDominates(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Give player 0 the bulk of the board (excluded from the check
+	// entirely) so neither player 1 nor player 2 crosses 50% of
+	// anything: one sentinel territory per continent stays at the
+	// default owner (1); player 2 owns nothing.
+	sentinels := map[risk.Territory]bool{
+		"Alaska": true, "Venezuela": true, "Iceland": true,
+		"North Africa": true, "Ural": true, "Indonesia": true,
+	}
+	for _, terr := range g.Board.Order {
+		if !sentinels[terr] {
+			g.Territories[terr] = risk.TerritoryState{Owner: 0, Armies: 1}
+		}
+	}
+	if _, ok := dominantPlayerToKill(g, 0); ok {
+		t.Fatalf("expected no dominant player: ownership is spread thin enough that nobody crosses 50%% of anything")
+	}
+}
+
+func TestDominantPlayerToKillTieBreaksToHighestIndexAmongMultipleQualifiers(t *testing.T) {
+	g, _ := newTestGame(t)
+	for _, terr := range g.Board.Order {
+		g.Territories[terr] = risk.TerritoryState{Owner: 0, Armies: 1}
+	}
+	// Player 1 crosses the armies threshold via one huge stack.
+	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 1000}
+	// Player 2 crosses the territory-count threshold via exactly half the
+	// board (21 of 42 territories), each with 1 army.
+	for _, terr := range g.Board.Order[:21] {
+		g.Territories[terr] = risk.TerritoryState{Owner: 2, Armies: 1}
+	}
+
+	target, ok := dominantPlayerToKill(g, 0)
+	if !ok {
+		t.Fatalf("expected a dominant player to be found")
+	}
+	if target != 2 {
+		t.Fatalf("expected player 2 (higher index, independently qualifies via territory share) to win the tie-break, got %d", target)
+	}
+}
+
+func TestCheapestAttackHopToContinentTwoHopScenario(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Same alternate-route hazard as
+	// TestCheapestRouteToContinentWithCostReturnsAccumulatedCost -- block
+	// everything else so only the intended path is cheap.
+	for _, terr := range g.Board.Order {
+		g.Territories[terr] = risk.TerritoryState{Owner: 1, Armies: 1000}
+	}
+	g.Territories["Western United States"] = risk.TerritoryState{Owner: 0, Armies: 20}
+	g.Territories["Central America"] = risk.TerritoryState{Owner: 1, Armies: 3}
+
+	from, to, cost, ok := cheapestAttackHopToContinent(g, 0, "south_america")
+	if !ok {
+		t.Fatalf("expected a route to be found")
+	}
+	if from != "Western United States" {
+		t.Fatalf("expected from=Western United States, got %s", from)
+	}
+	if to != "Central America" {
+		t.Fatalf("expected to=Central America (the intermediate hop), got %s", to)
+	}
+	if cost != 3 {
+		t.Fatalf("expected cost 3 (Central America's armies), got %d", cost)
+	}
+}
+
+func TestCheapestAttackHopToContinentFalseWhenAlreadyOwningABorderTerritory(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Venezuela is itself one of south_america's own border territories;
+	// owning it directly means the search finds it immediately with no
+	// predecessor to report.
+	g.Territories["Venezuela"] = risk.TerritoryState{Owner: 0, Armies: 5}
+
+	if _, _, _, ok := cheapestAttackHopToContinent(g, 0, "south_america"); ok {
+		t.Fatalf("expected ok=false: Venezuela is already a south_america border territory, no hop to report")
+	}
+}
+
+func TestCheapestRouteToContinentWithCostReturnsAccumulatedCost(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Block every other path with a prohibitive army count, leaving only
+	// the intended Venezuela -> Central America -> Western United States
+	// route cheap -- on the real board, a long enough chain of
+	// default-armies(1) hops can otherwise beat a single moderately
+	// defended hop, so a bare "set Central America's armies" setup isn't
+	// safe against alternate routes.
+	for _, terr := range g.Board.Order {
+		g.Territories[terr] = risk.TerritoryState{Owner: 1, Armies: 1000}
+	}
+	g.Territories["Western United States"] = risk.TerritoryState{Owner: 0, Armies: 20}
+	g.Territories["Central America"] = risk.TerritoryState{Owner: 1, Armies: 7}
+
+	got, cost, ok := cheapestRouteToContinentWithCost(g, 0, "south_america")
+	if !ok {
+		t.Fatalf("expected a route to be found")
+	}
+	if got != "Western United States" {
+		t.Fatalf("expected Western United States, got %s", got)
+	}
+	if cost != 7 {
+		t.Fatalf("expected cost 7, got %d", cost)
+	}
+}
