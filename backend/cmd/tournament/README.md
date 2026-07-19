@@ -25,7 +25,7 @@ go run ./cmd/tournament --strategies basic-v1,scored-v1,scored-v1 --games 100
 
 | Flag | Required | Default | Description |
 |---|---|---|---|
-| `--strategies` | yes | — | Comma-separated strategy ID per seat, e.g. `basic-v1,scored-v1,scored-v1`. Fixed for every game in the tournament. Available IDs: `basic-v1`, `scored-v1`. |
+| `--strategies` | yes | — | Comma-separated strategy ID per seat, e.g. `basic-v1,scored-v1,scored-v1`. Fixed for every game in the tournament. Available IDs: `basic-v1`, `scored-v1`, `angry-v1` (a Lux Delux-inspired persona — see [`project-docs/bot_player/proposals/Lux_Delux_AI_Research_Notes.md`](../../../project-docs/bot_player/proposals/Lux_Delux_AI_Research_Notes.md)). |
 | `--games` | yes | — | How many games to run. |
 | `--seed-start` | no | `1` | Seeds used are `seed-start .. seed-start+games-1`. Same `seed-start` + `games` + `strategies` always reproduces the same batch of games. |
 | `--parallel` | no | number of CPUs | How many games run concurrently. |
