@@ -240,3 +240,69 @@ func TestBestFortifyDestinationFalseWhenNoActions(t *testing.T) {
 		t.Fatalf("expected ok=false for empty actions")
 	}
 }
+
+func TestPlayerArmiesAdjoiningContinentSumsOwnedNeighborsOutsideContinent(t *testing.T) {
+	g, _ := newTestGame(t)
+	// South America's continent borders are Venezuela (-> Central America)
+	// and Brazil (-> North Africa).
+	g.Territories["Central America"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["North Africa"] = risk.TerritoryState{Owner: 0, Armies: 3}
+
+	got := playerArmiesAdjoiningContinent(g, 0, "south_america")
+	if got != 8 {
+		t.Fatalf("expected 8 (Central America 5 + North Africa 3), got %d", got)
+	}
+}
+
+func TestPlayerArmiesAdjoiningContinentExcludesTerritoriesInsideContinent(t *testing.T) {
+	g, _ := newTestGame(t)
+	g.Territories["Venezuela"] = risk.TerritoryState{Owner: 0, Armies: 5} // inside south_america itself
+
+	got := playerArmiesAdjoiningContinent(g, 0, "south_america")
+	if got != 0 {
+		t.Fatalf("expected 0 (Venezuela is inside south_america, not adjoining it), got %d", got)
+	}
+}
+
+func TestPixieWantedContinentsIncludesContinentWonPurelyByAdjoiningStrength(t *testing.T) {
+	g, _ := newTestGame(t)
+	g.Territories["Central America"] = risk.TerritoryState{Owner: 0, Armies: 20}
+
+	wanted := pixieWantedContinents(g, 0)
+	if !wanted["south_america"] {
+		t.Fatalf("expected south_america to be wanted purely from Central America's adjoining strength")
+	}
+	if !continentNeedsHelp(g, 0, "south_america") {
+		t.Fatalf("expected south_america to need help: player owns nothing inside it yet")
+	}
+}
+
+func TestPixieWantedContinentsExcludesWeaklyContestedContinent(t *testing.T) {
+	g, _ := newTestGame(t)
+	wanted := pixieWantedContinents(g, 0)
+	if wanted["south_america"] {
+		t.Fatalf("expected south_america not to be wanted with no owned presence in or near it")
+	}
+}
+
+func TestContinentNeedsHelpFalseWhenFullyOwnedWithStrongBorders(t *testing.T) {
+	g, _ := newTestGame(t)
+	for _, terr := range g.Board.Continents["south_america"].Territories {
+		g.Territories[terr] = risk.TerritoryState{Owner: 0, Armies: 50} // well above pixieBorderForce
+	}
+	if continentNeedsHelp(g, 0, "south_america") {
+		t.Fatalf("expected no help needed: fully owned with strong borders")
+	}
+}
+
+func TestContinentNeedsHelpTrueWhenBorderIsWeak(t *testing.T) {
+	g, _ := newTestGame(t)
+	for _, terr := range g.Board.Continents["south_america"].Territories {
+		g.Territories[terr] = risk.TerritoryState{Owner: 0, Armies: 50}
+	}
+	g.Territories["Venezuela"] = risk.TerritoryState{Owner: 0, Armies: 5} // a border, below pixieBorderForce(20)
+
+	if !continentNeedsHelp(g, 0, "south_america") {
+		t.Fatalf("expected help needed: Venezuela is a weak border")
+	}
+}

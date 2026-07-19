@@ -257,6 +257,29 @@ func sortTerritoriesByOrder(ts []risk.Territory, order map[risk.Territory]int) {
 	sort.Slice(ts, func(i, j int) bool { return order[ts[i]] < order[ts[j]] })
 }
 
+// playerArmiesAdjoiningContinent sums pi's armies in territories outside
+// cont that are adjacent to one of cont's own border territories
+// (deduplicated) -- Lux's BoardHelper.getPlayerArmiesAdjoiningContinent,
+// used to judge whether pi has enough nearby strength to contest cont
+// without owning anything inside it yet.
+func playerArmiesAdjoiningContinent(g *risk.Game, pi int, cont risk.Continent) int {
+	tc := territoryContinent(g)
+	seen := make(map[risk.Territory]bool)
+	total := 0
+	for _, border := range continentBorders(g, cont) {
+		for other := range g.Board.Adjacent[border] {
+			if tc[other] == cont || seen[other] {
+				continue
+			}
+			if g.Territories[other].Owner == pi {
+				seen[other] = true
+				total += g.Territories[other].Armies
+			}
+		}
+	}
+	return total
+}
+
 // routeNode is one entry in cheapestRouteToContinent's priority queue: a
 // territory reached at accumulated cost, with order recorded purely to
 // keep the search deterministic when costs tie.

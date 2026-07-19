@@ -103,11 +103,19 @@ func clusterPlacementTerritory[T any](g *risk.Game, pi int, actions []T, get fun
 // presence left in them.
 func placeToTakeContinent(g *risk.Game, pi int, actions []risk.ReinforcementAction) risk.Territory {
 	get := func(a risk.ReinforcementAction) risk.Territory { return a.Territory }
-
-	cont, ok := easiestContinentToTake(g, pi)
-	if !ok {
-		return bestByEnemyNeighborCount(g, pi, actions, get)
+	if cont, ok := easiestContinentToTake(g, pi); ok {
+		return placeToTakeSpecificContinent(g, pi, actions, cont)
 	}
+	return bestByEnemyNeighborCount(g, pi, actions, get)
+}
+
+// placeToTakeSpecificContinent is placeToTakeContinent's logic generalized
+// to an already-chosen target continent, rather than deriving one via
+// easiestContinentToTake -- PixieStrategy calls this directly with a
+// continent it has already decided it wants (see pixiePlacementTerritory),
+// where ClusterStrategy always wants "whichever is easiest."
+func placeToTakeSpecificContinent(g *risk.Game, pi int, actions []risk.ReinforcementAction, cont risk.Continent) risk.Territory {
+	get := func(a risk.ReinforcementAction) risk.Territory { return a.Territory }
 
 	var owned []risk.Territory
 	for _, t := range g.Board.Continents[cont].Territories {
