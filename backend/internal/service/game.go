@@ -900,6 +900,13 @@ type GameSummary struct {
 	// is, resolved server-side (username lookup for humans, assigned name
 	// for bots), populated only for games with status "in_progress".
 	CurrentPlayerName string `json:"current_player_name,omitempty"`
+	// ViewerEliminated reports whether the requesting viewer (the
+	// ListGames caller's own viewerUserID, not any other player) has been
+	// eliminated in this game. Populated for "in_progress" and
+	// "completed" games whose state decodes successfully and lists the
+	// viewer as a player; always false for a "lobby" game, since
+	// elimination cannot happen before the engine starts.
+	ViewerEliminated bool `json:"viewer_eliminated,omitempty"`
 }
 
 // ListGames returns a page of GameSummary projections matching the given
@@ -908,8 +915,10 @@ type GameSummary struct {
 // restricted to games visible to viewerUserID under the sandbox visibility
 // rule (see gameVisible) unless viewerIsAdmin. For each in_progress game
 // whose state decodes successfully, it also resolves and attaches the
-// current player's phase and display name via batched username lookups. It
-// returns ErrInvalidGameInput if limit or offset is negative.
+// current player's phase and display name via batched username lookups,
+// and for each in_progress or completed game, whether viewerUserID has
+// been eliminated (GameSummary.ViewerEliminated). It returns
+// ErrInvalidGameInput if limit or offset is negative.
 func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) ([]GameSummary, error) {
 	if limit < 0 || offset < 0 {
 		return nil, ErrInvalidGameInput
@@ -934,11 +943,22 @@ func (s *GamesService) ListGames(ctx context.Context, ownerUserID, status string
 	botNames := make(map[string]string, len(games))
 	for i, g := range games {
 		out[i] = GameSummary{Game: g}
-		if g.Status != "in_progress" {
+		if g.Status != "in_progress" && g.Status != "completed" {
 			continue
 		}
 		var engine risk.Game
 		if err := json.Unmarshal(g.State, &engine); err != nil {
+			continue
+		}
+		if viewerUserID != "" {
+			for _, p := range engine.Players {
+				if p.ID == viewerUserID {
+					out[i].ViewerEliminated = p.Eliminated
+					break
+				}
+			}
+		}
+		if g.Status != "in_progress" {
 			continue
 		}
 		if engine.CurrentPlayer < 0 || engine.CurrentPlayer >= len(engine.Players) {

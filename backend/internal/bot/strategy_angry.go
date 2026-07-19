@@ -145,24 +145,9 @@ func (a *AngryStrategy) occupy(g *risk.Game, playerID string) (Command, error) {
 // --seed-start reproducible).
 func (a *AngryStrategy) fortify(g *risk.Game, playerID string) (Command, error) {
 	actions := risk.LegalFortifications(g, playerID)
-	if len(actions) == 0 {
-		return Command{Action: ActionEndTurn}, nil
-	}
 	pi := playerIndex(g, playerID)
-	order := orderIndex(g)
-
-	best := actions[0]
-	bestScore := enemyNeighborCount(g, best.To, pi)
-	for _, cand := range actions[1:] {
-		score := enemyNeighborCount(g, cand.To, pi)
-		if score > bestScore ||
-			(score == bestScore && (order[cand.From] < order[best.From] ||
-				(order[cand.From] == order[best.From] && order[cand.To] < order[best.To]))) {
-			best, bestScore = cand, score
-		}
-	}
-
-	if bestScore == 0 {
+	best, bestScore, ok := bestFortifyDestination(g, pi, actions)
+	if !ok || bestScore == 0 {
 		return Command{Action: ActionEndTurn}, nil
 	}
 	return Command{Action: ActionFortify, From: string(best.From), To: string(best.To), Armies: best.MaxArmies}, nil

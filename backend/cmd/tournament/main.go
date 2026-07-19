@@ -79,9 +79,10 @@ func run(args []string) (completed bool, err error) {
 	}
 
 	registry := bot.StrategyRegistry{
-		bot.StrategyBasicV1:  bot.NewBasicStrategy(),
-		bot.StrategyScoredV1: bot.NewScoredStrategy(bot.DefaultWeights),
-		bot.StrategyAngryV1:  bot.NewAngryStrategy(),
+		bot.StrategyBasicV1:   bot.NewBasicStrategy(),
+		bot.StrategyScoredV1:  bot.NewScoredStrategy(bot.DefaultWeights),
+		bot.StrategyAngryV1:   bot.NewAngryStrategy(),
+		bot.StrategyClusterV1: bot.NewClusterStrategy(),
 	}
 	if err := registerWeightsVariants(registry, weightsVariants); err != nil {
 		return false, err
