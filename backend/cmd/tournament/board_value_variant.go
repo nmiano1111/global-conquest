@@ -9,7 +9,7 @@ import (
 
 // boardValueVariantFlag collects repeated --board-value-variant
 // <strategy-id>=<weights-path> pairs into a flag.Value -- mirrors
-// gbtVariantFlag/weightsVariantFlag exactly.
+// weightsVariantFlag exactly.
 type boardValueVariantFlag []boardValueVariantEntry
 
 type boardValueVariantEntry struct {
@@ -35,11 +35,11 @@ func (f *boardValueVariantFlag) Set(value string) error {
 }
 
 // registerBoardValueVariants loads each entry's board_fit.py-exported
-// weights file (bot.LoadBoardValue) and adds a bot.BoardValueStrategy to
+// weights file (bot.LoadBoardValue) and adds a bot.ValueStrategy to
 // registry under its given ID. Rejects any ID that collides with an
-// already-registered strategy -- a built-in, a --weights-variant, a
-// --gbt-variant, or a repeated --board-value-variant ID -- same rationale
-// as registerGBTVariants/registerWeightsVariants.
+// already-registered strategy -- a built-in, a --weights-variant, or a
+// repeated --board-value-variant ID -- same rationale as
+// registerWeightsVariants.
 func registerBoardValueVariants(registry bot.StrategyRegistry, variants boardValueVariantFlag) error {
 	for _, v := range variants {
 		if _, exists := registry[v.StrategyID]; exists {

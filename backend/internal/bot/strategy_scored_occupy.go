@@ -29,15 +29,13 @@ func (s *ScoredStrategy) occupy(g *risk.Game, playerID string) (Command, Explana
 			Features: s.occupyFeatures(a.Armies, sourceArmies, sourceThreat, destThreat),
 		})
 	}
-	cmd, expl := s.selectBest(options, 3)
+	cmd, expl := selectBest(options, 3)
 	return cmd, expl, nil
 }
 
 // occupySignals holds occupyFeatures' raw (unweighted) per-candidate
-// signal, computed once and shared by two consumers that turn it into a
-// score differently: ScoredStrategy.occupyFeatures (weighted linear sum)
-// and GBTStrategy (fed straight into a tree ensemble, no weighting at
-// all -- see strategy_gbt.go).
+// signal, computed once by computeOccupySignals and turned into a score
+// by ScoredStrategy.occupyFeatures (weighted linear sum).
 type occupySignals struct {
 	DefenseCoverage float64
 	Momentum        float64

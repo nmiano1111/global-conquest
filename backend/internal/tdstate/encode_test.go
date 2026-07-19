@@ -127,6 +127,98 @@ func TestEncodeGlobalFeatures(t *testing.T) {
 	}
 }
 
+func TestEncodeEnemyThreatFractionSumsAdjacentEnemyArmiesOnly(t *testing.T) {
+	g := newTestGame(t)
+	// Alaska's neighbors are Northwest Territory, Alberta, Kamchatka
+	// (board.go). Mine (own, shouldn't count), an enemy (should count),
+	// and unowned/vacated (Owner < 0, shouldn't count).
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Northwest Territory"] = risk.TerritoryState{Owner: 0, Armies: 9} // mine
+	g.Territories["Alberta"] = risk.TerritoryState{Owner: 1, Armies: 7}             // enemy
+	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: -1, Armies: 0}          // unowned
+
+	f := Encode(g, 0)
+	alaskaIdx := indexOf(t, g.Board.Order, "Alaska")
+
+	totalArmies := 0
+	for _, ts := range g.Territories {
+		totalArmies += ts.Armies
+	}
+	want := 7.0 / float64(totalArmies)
+	got := f.Territories[alaskaIdx].EnemyThreatFraction
+	if diff := got - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("Alaska EnemyThreatFraction = %v, want %v (only Alberta's 7 armies should count)", got, want)
+	}
+}
+
+func TestEncodeDefenceZeroWhenNoContinentOwned(t *testing.T) {
+	g := newTestGame(t)
+	// newTestGame's default owner (1) everywhere means p0 owns nothing.
+	f := Encode(g, 0)
+	if f.Global.Defence != 0 {
+		t.Errorf("Defence = %v, want 0 (p0 owns no continent)", f.Global.Defence)
+	}
+}
+
+func TestEncodeDefenceUsesWeakestFrontierTerritory(t *testing.T) {
+	g := newTestGame(t)
+	// Australia's only external link is Indonesia -> Siam (board.go); the
+	// other 3 Australia territories only border each other. Owning all of
+	// Australia while Siam stays enemy-owned makes Indonesia the sole
+	// frontier territory for that continent.
+	g.Territories["Indonesia"] = risk.TerritoryState{Owner: 0, Armies: 3}
+	g.Territories["New Guinea"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Western Australia"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Eastern Australia"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	// Siam left at newTestGame's default: Owner 1, Armies 1.
+
+	f := Encode(g, 0)
+
+	totalArmies := 0
+	for _, ts := range g.Territories {
+		totalArmies += ts.Armies
+	}
+	want := 3.0 / float64(totalArmies)
+	if diff := f.Global.Defence - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("Defence = %v, want %v (Indonesia's 3 armies is the sole frontier)", f.Global.Defence, want)
+	}
+}
+
+func TestEncodeDefenceZeroWhenContinentHasNoFrontier(t *testing.T) {
+	g := newTestGame(t)
+	// Same Australia setup, but Siam is ALSO mine now -- no external
+	// enemy border anywhere in the continent, so it contributes nothing
+	// despite being fully owned.
+	g.Territories["Indonesia"] = risk.TerritoryState{Owner: 0, Armies: 3}
+	g.Territories["New Guinea"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Western Australia"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Eastern Australia"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Siam"] = risk.TerritoryState{Owner: 0, Armies: 2}
+
+	f := Encode(g, 0)
+	if f.Global.Defence != 0 {
+		t.Errorf("Defence = %v, want 0 (Australia has no frontier once Siam is also mine)", f.Global.Defence)
+	}
+}
+
+func TestEncodeDefenceCapsAtDefenceCap(t *testing.T) {
+	g := newTestGame(t)
+	// Shrink the rest of the board so Indonesia's own armies dominate the
+	// total, pushing the raw ratio above defenceCap (0.2).
+	for _, terr := range g.Board.Order {
+		g.Territories[terr] = risk.TerritoryState{Owner: 1, Armies: 1}
+	}
+	g.Territories["Indonesia"] = risk.TerritoryState{Owner: 0, Armies: 20}
+	g.Territories["New Guinea"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Western Australia"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["Eastern Australia"] = risk.TerritoryState{Owner: 0, Armies: 5}
+
+	f := Encode(g, 0)
+	if f.Global.Defence != defenceCap {
+		t.Errorf("Defence = %v, want the cap %v", f.Global.Defence, defenceCap)
+	}
+}
+
 func TestEncodeStrongestEnemyIgnoresEliminatedAndSelf(t *testing.T) {
 	g := newTestGame(t)
 	g.Territories["Alaska"] = risk.TerritoryState{Owner: 1, Armies: 20} // strong

@@ -58,3 +58,28 @@ func writeFeatureNames(output string) error {
 	}
 	return os.WriteFile(featureNamesPath(output), data, 0o644)
 }
+
+// boardSchemaPath derives the sidecar path for the board's static
+// topology -- e.g. "data.jsonl" -> "data.boardschema.json". Same
+// once-per-run rationale as featureNamesPath: the classic board's
+// adjacency never changes, but writing it alongside every output file
+// keeps each dataset a self-contained artifact, matching that sidecar's
+// existing precedent.
+func boardSchemaPath(output string) string {
+	if idx := strings.LastIndex(output, "."); idx > 0 {
+		return output[:idx] + ".boardschema.json"
+	}
+	return output + ".boardschema.json"
+}
+
+// writeBoardSchema writes the classic board's static topology (used by a
+// GCN's training/inference to build an identical graph-propagation
+// matrix on both sides) to boardSchemaPath(output).
+func writeBoardSchema(output string) error {
+	schema := tdstate.NewBoardSchema(risk.ClassicBoard())
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(boardSchemaPath(output), data, 0o644)
+}

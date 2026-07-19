@@ -135,7 +135,7 @@ func TestAttackAfterstateBlendWeightsByWinProbability(t *testing.T) {
 	blended := attackAfterstateBlend(g, 0, a)
 
 	conquered := copyGameState(g)
-	conquered.Territories[a.From] = risk.TerritoryState{Owner: 0, Armies: maxInt(1, 30-round(forecast.ExpectedAttackerLosses)-a.MaxAttackerDice)}
+	conquered.Territories[a.From] = risk.TerritoryState{Owner: 0, Armies: max(1, 30-round(forecast.ExpectedAttackerLosses)-a.MaxAttackerDice)}
 	conquered.Territories[a.To] = risk.TerritoryState{Owner: 0, Armies: a.MaxAttackerDice}
 	wantClose := tdstate.Encode(conquered, 0).Flatten()
 

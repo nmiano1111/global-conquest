@@ -1,23 +1,27 @@
-// Command bvcalibrate fits BoardValueStrategy's AttackMargin/FortifyMargin
-// empirically: it runs many headless games with a *zero-margin* copy of a
-// given board_fit.py-exported weights file (so the strategy acts on any
+// Command bvcalibrate fits ValueStrategy's AttackMargin/FortifyMargin
+// empirically against any bot.ValueFunction (a linear BoardValue or a GCN
+// gcnmodel.Model): it runs many headless games with a *zero-margin*
+// wrapper around a given weights file (so the strategy acts on any
 // positive-delta candidate, observing the natural, unfiltered score-delta
-// distribution for each phase via BoardValueStrategy.Observer), then writes
-// a copy of the input file with attack_margin/fortify_margin set to a
-// chosen percentile of each phase's *positive* observed deltas.
+// distribution for each phase via ValueStrategy.Observer), then
+// writes a copy of the input file with attack_margin/fortify_margin set
+// to a chosen percentile of each phase's *positive* observed deltas.
 //
 // This exists because a first live tournament eval found attack and
 // fortify move BoardValue's score on completely different scales (attack
 // changes ownership -- many features at once; fortify only reallocates
 // armies between the acting player's own territories -- at most two
 // per-territory army_fraction coefficients) -- see
-// internal/bot/strategy_boardvalue.go's BoardValue.AttackMargin/
-// FortifyMargin doc comment. A single shared margin calibrated to
-// attack's scale suppressed fortify almost entirely.
+// internal/bot/linear_value.go's BoardValue.AttackMargin/FortifyMargin
+// doc comment. A single shared margin calibrated to attack's scale
+// suppressed fortify almost entirely. The same reasoning applies
+// regardless of model class, so this tool works identically for
+// gcn_fit.py's exported GCN weights.
 //
 // Usage:
 //
 //	go run ./cmd/bvcalibrate --input value.json --output calibrated.json --games 200
+//	go run ./cmd/bvcalibrate --input gcn.json --model-type gcn --output calibrated.json --games 200
 package main
 
 import (
@@ -33,8 +37,33 @@ import (
 	"sync"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
+	"github.com/nmiano1111/global-conquest/backend/internal/bot/gcnmodel"
 	"github.com/nmiano1111/global-conquest/backend/internal/simulation"
 )
+
+// zeroMarginValueFunction wraps a bot.ValueFunction, always reporting
+// zero margins while delegating Score unchanged -- lets ValueStrategy
+// act on any positive-delta candidate during calibration's observation
+// pass, regardless of the wrapped value function's concrete type.
+type zeroMarginValueFunction struct {
+	bot.ValueFunction
+}
+
+func (zeroMarginValueFunction) AttackMargin() float64  { return 0 }
+func (zeroMarginValueFunction) FortifyMargin() float64 { return 0 }
+
+// loadValueFunction loads path as either a linear BoardValue or a GCN
+// model, per modelType ("linear" or "gcn").
+func loadValueFunction(path, modelType string) (bot.ValueFunction, error) {
+	switch modelType {
+	case "linear":
+		return bot.LoadBoardValue(path)
+	case "gcn":
+		return gcnmodel.LoadModel(path)
+	default:
+		return nil, fmt.Errorf("unknown --model-type %q (want linear or gcn)", modelType)
+	}
+}
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -54,6 +83,7 @@ func run(args []string) error {
 	gameMode := fs.String("game-mode", "auto_start", "Game construction mode: auto_start|manual")
 	maxTurns := fs.Int("max-turns", 0, "Override the default turn safety limit per game (0 = use the default)")
 	percentile := fs.Float64("percentile", 50, "Percentile (0-100) of each phase's positive score-delta distribution to use as its margin")
+	modelType := fs.String("model-type", "linear", "Value function model type to calibrate: linear|gcn")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -64,16 +94,14 @@ func run(args []string) error {
 		return fmt.Errorf("--games must be positive")
 	}
 
-	value, err := bot.LoadBoardValue(*input)
+	value, err := loadValueFunction(*input, *modelType)
 	if err != nil {
 		return err
 	}
-	// Observation copy: zero margins, so the strategy acts on any
-	// positive-delta candidate, letting the Observer see the full natural
-	// distribution rather than one already filtered by a margin.
-	observedValue := *value
-	observedValue.AttackMargin = 0
-	observedValue.FortifyMargin = 0
+	// Zero-margin wrapper: lets the strategy act on any positive-delta
+	// candidate, so the Observer sees the full natural distribution
+	// rather than one already filtered by a margin.
+	observedValue := zeroMarginValueFunction{value}
 
 	seatStrategies := strings.Split(*strategies, ",")
 	boardValueSeat := -1
@@ -101,7 +129,7 @@ func run(args []string) error {
 
 	sem := make(chan struct{}, *parallel)
 	var wg sync.WaitGroup
-	for g := 0; g < *games; g++ {
+	for g := range *games {
 		seed := *seedStart + int64(g)
 		wg.Add(1)
 		sem <- struct{}{}
@@ -109,7 +137,7 @@ func run(args []string) error {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			bvs := bot.NewBoardValueStrategy(&observedValue)
+			bvs := bot.NewBoardValueStrategy(observedValue)
 			bvs.Observer = observe
 			registry := bot.StrategyRegistry{
 				bot.StrategyBasicV1:     bot.NewBasicStrategy(),

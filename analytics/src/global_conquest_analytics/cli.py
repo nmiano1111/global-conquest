@@ -27,27 +27,22 @@ roll-streak-report
     Reads data/raw/players.parquet if present (run export-players) to show
     usernames instead of UUIDs. Does NOT query Postgres.
 
-fit-weights
-    Read backend/cmd/traindata's JSONL output (data/raw/traindata/*_train.jsonl
-    by default — run `go run ./cmd/traindata` first, see
-    backend/cmd/traindata/README.md), fit one regularized logistic
-    regression per game phase, and export a bot.Weights-shaped JSON file
-    (reports/generated/weights/<timestamp>.json by default) ready for
-    `cmd/tournament --weights-variant`. Does NOT query Postgres.
-
-fit-gbt
-    Same input as fit-weights, but fits one LightGBM gradient-boosted-trees
-    model per phase instead of a logistic regression, and exports a
-    directory of dump_model() JSON files (reports/generated/gbt/<timestamp>/
-    by default) ready for `cmd/tournament --gbt-variant`. Does NOT query
-    Postgres.
-
 fit-board-value
     Read backend/cmd/tdtraindata's JSONL output (data/raw/tdtraindata/*_train.jsonl
     by default — run `go run ./cmd/tdtraindata` first), fit a single whole-board
     linear value function via logistic regression, and export a weights JSON
     file (reports/generated/board_value/<timestamp>.json by default) ready
     for `cmd/tournament --board-value-variant`. Does NOT query Postgres.
+
+fit-gcn
+    Same input as fit-board-value, but fits a supervised Graph
+    Convolutional Network (see gcn_fit.py's module docstring) instead of
+    a linear model, and exports a weights JSON file
+    (reports/generated/gcn/<timestamp>.json by default) ready for
+    `cmd/tournament --gcn-variant`. Run `go run ./cmd/bvcalibrate
+    --model-type gcn` against the output before live use (margins are
+    0.0 placeholders here, same as fit-board-value). Does NOT query
+    Postgres.
 """
 
 from __future__ import annotations
@@ -62,16 +57,15 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from global_conquest_analytics.streaks import RollStreakReport
+    from global_conquest_analytics.td_fit import Episode
 
 _RAW_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "game_events.parquet"
 _GAMES_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "games.parquet"
 _PLAYERS_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "players.parquet"
 _ROLL_STREAK_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "roll_streaks"
-_TRAINDATA_DIR = Path(__file__).parents[2] / "data" / "raw" / "traindata"
 _TDTRAINDATA_DIR = Path(__file__).parents[2] / "data" / "raw" / "tdtraindata"
-_WEIGHTS_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "weights"
-_GBT_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "gbt"
 _BOARD_VALUE_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "board_value"
+_GCN_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "gcn"
 
 
 def export_events() -> None:
@@ -387,161 +381,44 @@ def _filter_report_by_player(report: RollStreakReport, player_id: str) -> RollSt
     )
 
 
-def fit_weights_command() -> None:
-    """CLI entry point: fit one logistic regression per phase, export weights.json.
-
-    Reads data/raw/traindata/*_train.jsonl by default (run
-    `go run ./cmd/traindata` first, see backend/cmd/traindata/README.md).
-    Does not query Postgres.
+def _resolve_tdtraindata_inputs(args_input: list[str] | None) -> list[Path]:
+    """Shared --input resolution for fit-board-value/fit-gcn: explicit
+    paths, or every *_train.jsonl under data/raw/tdtraindata/. Exits with
+    an error (matching both commands' prior behavior) if neither yields
+    anything.
     """
-    parser = argparse.ArgumentParser(
-        prog="fit-weights",
-        description="Fit bot.Weights from cmd/traindata rows via per-phase logistic regression.",
-    )
-    parser.add_argument(
-        "--input",
-        action="append",
-        default=None,
-        help=(
-            "Training JSONL file (repeatable). Default: every "
-            "*_train.jsonl under data/raw/traindata/."
-        ),
-    )
-    parser.add_argument(
-        "--output",
-        default=None,
-        help=(
-            "Destination for the fitted weights.json (default: "
-            "reports/generated/weights/<timestamp>.json)."
-        ),
-    )
-    args = parser.parse_args(sys.argv[1:])
-
     input_paths = (
-        [Path(p) for p in args.input]
-        if args.input
-        else sorted(_TRAINDATA_DIR.glob("*_train.jsonl"))
+        [Path(p) for p in args_input]
+        if args_input
+        else sorted(_TDTRAINDATA_DIR.glob("*_train.jsonl"))
     )
     if not input_paths:
         print(
-            f"No training files found under {_TRAINDATA_DIR}.\n"
-            "Run `go run ./cmd/traindata` first "
-            "(see backend/cmd/traindata/README.md).",
+            f"No training files found under {_TDTRAINDATA_DIR}.\n"
+            "Run `go run ./cmd/tdtraindata` first.",
             file=sys.stderr,
         )
         sys.exit(1)
+    return input_paths
 
-    from global_conquest_analytics.fit import PHASE_FEATURES, fit_phase
-    from global_conquest_analytics.training_data import load_training_rows
-    from global_conquest_analytics.weights_export import export_weights
+
+def _load_tdtraindata_episodes(input_paths: list[Path]) -> tuple[list[Episode], list[str]]:
+    """Shared episode + feature-name loading for fit-board-value/fit-gcn,
+    printing the same "loading N files" summary both commands already
+    did. Callers still print their own final "loaded M episodes..." line
+    since fit-gcn's also reports the board's node count.
+    """
+    from global_conquest_analytics.td_fit import load_episodes, load_feature_names
 
     print(f"Loading {len(input_paths)} training file(s):")
     for p in input_paths:
         print(f"  {p}")
-    df = load_training_rows(input_paths)
-    print(f"Loaded {len(df)} rows across {df['GameID'].nunique()} games.\n")
-
-    fits = []
-    for phase in PHASE_FEATURES:
-        phase_fit = fit_phase(df, phase)
-        fits.append(phase_fit)
-        print(
-            f"{phase}: n={phase_fit.n_samples} positive={phase_fit.n_positive} "
-            f"best_C={phase_fit.best_c:.4g}"
-        )
-        for name, coef in sorted(phase_fit.coefficients.items(), key=lambda kv: -abs(kv[1])):
-            print(f"    {name:24s} {coef:+.4f}")
-        print()
-
-    output_path = (
-        Path(args.output)
-        if args.output
-        else _WEIGHTS_REPORT_DIR / f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
-    )
-    export_weights(fits, output_path)
-    print(f"Weights written → {output_path}")
-
-
-def fit_gbt_command() -> None:
-    """CLI entry point: fit one LightGBM model per phase, export a model directory.
-
-    Reads data/raw/traindata/*_train.jsonl by default (run
-    `go run ./cmd/traindata` first, see backend/cmd/traindata/README.md).
-    Does not query Postgres.
-    """
-    parser = argparse.ArgumentParser(
-        prog="fit-gbt",
-        description="Fit a gradient-boosted-trees model per phase from cmd/traindata rows.",
-    )
-    parser.add_argument(
-        "--input",
-        action="append",
-        default=None,
-        help=(
-            "Training JSONL file (repeatable). Default: every "
-            "*_train.jsonl under data/raw/traindata/."
-        ),
-    )
-    parser.add_argument(
-        "--output",
-        default=None,
-        help=(
-            "Destination directory for the per-phase dump_model() JSON "
-            "files (default: reports/generated/gbt/<timestamp>/)."
-        ),
-    )
-    parser.add_argument(
-        "--num-boost-round",
-        type=int,
-        default=None,
-        help="Number of boosting rounds per phase (default: gbt_fit.DEFAULT_NUM_BOOST_ROUND).",
-    )
-    args = parser.parse_args(sys.argv[1:])
-
-    input_paths = (
-        [Path(p) for p in args.input]
-        if args.input
-        else sorted(_TRAINDATA_DIR.glob("*_train.jsonl"))
-    )
-    if not input_paths:
-        print(
-            f"No training files found under {_TRAINDATA_DIR}.\n"
-            "Run `go run ./cmd/traindata` first "
-            "(see backend/cmd/traindata/README.md).",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    from global_conquest_analytics.fit import PHASE_FEATURES
-    from global_conquest_analytics.gbt_fit import (
-        DEFAULT_NUM_BOOST_ROUND,
-        export_gbt,
-        fit_phase_gbt,
-    )
-    from global_conquest_analytics.training_data import load_training_rows
-
-    print(f"Loading {len(input_paths)} training file(s):")
-    for p in input_paths:
-        print(f"  {p}")
-    df = load_training_rows(input_paths)
-    print(f"Loaded {len(df)} rows across {df['GameID'].nunique()} games.\n")
-
-    num_boost_round = args.num_boost_round or DEFAULT_NUM_BOOST_ROUND
-    boosters = {}
-    for phase in PHASE_FEATURES:
-        print(f"Fitting {phase} ({num_boost_round} rounds)...")
-        fit = fit_phase_gbt(df, phase, num_boost_round=num_boost_round)
-        boosters[phase] = fit
-        if fit.end_phase_threshold is not None:
-            print(f"    end_phase_threshold={fit.end_phase_threshold:.4f}")
-
-    output_dir = (
-        Path(args.output)
-        if args.output
-        else _GBT_REPORT_DIR / datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    )
-    export_gbt(boosters, output_dir)
-    print(f"Models written → {output_dir}")
+    episodes = load_episodes(input_paths)
+    # Feature names are identical across every input file (one board, the
+    # classic map -- see cmd/tdtraindata's featureNamesPath/writeFeatureNames
+    # doc comment), so any one file's sidecar suffices.
+    feature_names = load_feature_names(input_paths[0].with_suffix(".featurenames.json"))
+    return episodes, feature_names
 
 
 def fit_board_value_command() -> None:
@@ -573,30 +450,11 @@ def fit_board_value_command() -> None:
     )
     args = parser.parse_args(sys.argv[1:])
 
-    input_paths = (
-        [Path(p) for p in args.input]
-        if args.input
-        else sorted(_TDTRAINDATA_DIR.glob("*_train.jsonl"))
-    )
-    if not input_paths:
-        print(
-            f"No training files found under {_TDTRAINDATA_DIR}.\n"
-            "Run `go run ./cmd/tdtraindata` first.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    input_paths = _resolve_tdtraindata_inputs(args.input)
 
     from global_conquest_analytics.board_fit import export_board_value, fit_board_value
-    from global_conquest_analytics.td_fit import load_episodes, load_feature_names
 
-    print(f"Loading {len(input_paths)} training file(s):")
-    for p in input_paths:
-        print(f"  {p}")
-    episodes = load_episodes(input_paths)
-    # Feature names are identical across every input file (one board, the
-    # classic map -- see cmd/tdtraindata's featureNamesPath/writeFeatureNames
-    # doc comment), so any one file's sidecar suffices.
-    feature_names = load_feature_names(input_paths[0].with_suffix(".featurenames.json"))
+    episodes, feature_names = _load_tdtraindata_episodes(input_paths)
     n_pairs = len({(ep.game_id, ep.player_id) for ep in episodes})
     print(
         f"Loaded {len(episodes)} episodes ({n_pairs} game/player pairs), "
@@ -613,3 +471,61 @@ def fit_board_value_command() -> None:
     )
     export_board_value(fit, output_path)
     print(f"Board value written → {output_path}")
+
+
+def fit_gcn_command() -> None:
+    """CLI entry point: fit a supervised GCN value function, export weights.json.
+
+    Reads data/raw/tdtraindata/*_train.jsonl by default (run
+    `go run ./cmd/tdtraindata` first). Does not query Postgres.
+    """
+    parser = argparse.ArgumentParser(
+        prog="fit-gcn",
+        description="Fit a supervised GCN value function from cmd/tdtraindata rows.",
+    )
+    parser.add_argument(
+        "--input",
+        action="append",
+        default=None,
+        help=(
+            "Training JSONL file (repeatable). Default: every "
+            "*_train.jsonl under data/raw/tdtraindata/."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Destination for the fitted GCN weights JSON (default: "
+            "reports/generated/gcn/<timestamp>.json)."
+        ),
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=20, help="Training epochs (default: 20)."
+    )
+    args = parser.parse_args(sys.argv[1:])
+
+    input_paths = _resolve_tdtraindata_inputs(args.input)
+
+    from global_conquest_analytics.gcn_fit import export_gcn, fit_gcn, load_board_schema
+
+    episodes, feature_names = _load_tdtraindata_episodes(input_paths)
+    # Board topology is identical across every input file (one board, the
+    # classic map), so any one file's sidecar suffices.
+    schema = load_board_schema(input_paths[0].with_suffix(".boardschema.json"))
+    n_pairs = len({(ep.game_id, ep.player_id) for ep in episodes})
+    print(
+        f"Loaded {len(episodes)} episodes ({n_pairs} game/player pairs), "
+        f"{len(feature_names)} features, {len(schema.order)}-node board.\n"
+    )
+
+    fit = fit_gcn(episodes, feature_names, schema, epochs=args.epochs)
+    print(f"Fitted GCN after {args.epochs} epochs")
+
+    output_path = (
+        Path(args.output)
+        if args.output
+        else _GCN_REPORT_DIR / f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    export_gcn(fit, output_path)
+    print(f"GCN weights written → {output_path}")

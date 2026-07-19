@@ -62,3 +62,30 @@ func TestWriteFeatureNamesProducesValidJSON(t *testing.T) {
 		t.Fatal("expected a non-empty feature name list")
 	}
 }
+
+func TestWriteBoardSchemaProducesValidJSON(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "data.jsonl")
+
+	if err := writeBoardSchema(output); err != nil {
+		t.Fatalf("writeBoardSchema: %v", err)
+	}
+
+	data, err := os.ReadFile(boardSchemaPath(output))
+	if err != nil {
+		t.Fatalf("read board schema file: %v", err)
+	}
+	var schema struct {
+		Order []string `json:"order"`
+		Edges [][2]int `json:"edges"`
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatalf("unmarshal board schema: %v", err)
+	}
+	if len(schema.Order) == 0 {
+		t.Fatal("expected a non-empty Order list")
+	}
+	if len(schema.Edges) == 0 {
+		t.Fatal("expected a non-empty Edges list")
+	}
+}

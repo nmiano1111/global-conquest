@@ -12,8 +12,8 @@ import (
 // by any risk.Game method) and is shared, not copied. The unexported rng
 // field is carried over as-is by the struct copy -- callers must never
 // exercise a code path on the copy that consumes it (see this file's
-// package-level doc note in strategy_boardvalue.go for why that's a real
-// constraint, and how BoardValueStrategy's design avoids it entirely).
+// package-level doc note in strategy_value.go for why that's a real
+// constraint, and how ValueStrategy's design avoids it entirely).
 func copyGameState(g *risk.Game) *risk.Game {
 	g2 := *g
 
@@ -92,11 +92,11 @@ func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 
 	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
 	targetOwner := g.Territories[a.To].Owner
 
-	attackerRemaining := maxInt(1, a.SourceArmies-round(forecast.ExpectedAttackerLosses))
-	defenderRemaining := maxInt(1, a.TargetArmies-round(forecast.ExpectedDefenderLosses))
+	attackerRemaining := max(1, a.SourceArmies-round(forecast.ExpectedAttackerLosses))
+	defenderRemaining := max(1, a.TargetArmies-round(forecast.ExpectedDefenderLosses))
 
 	conquered := copyGameState(g)
-	conquered.Territories[a.From] = risk.TerritoryState{Owner: pi, Armies: maxInt(1, attackerRemaining-a.MaxAttackerDice)}
+	conquered.Territories[a.From] = risk.TerritoryState{Owner: pi, Armies: max(1, attackerRemaining-a.MaxAttackerDice)}
 	conquered.Territories[a.To] = risk.TerritoryState{Owner: pi, Armies: a.MaxAttackerDice}
 
 	held := copyGameState(g)
@@ -112,13 +112,6 @@ func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 
 		blended[i] = p*conqueredFeatures[i] + (1-p)*heldFeatures[i]
 	}
 	return blended
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func round(f float64) int {

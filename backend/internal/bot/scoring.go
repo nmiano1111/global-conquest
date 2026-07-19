@@ -26,21 +26,6 @@ type ScoredCommand struct {
 	Score float64
 }
 
-// Candidate is one legal option considered at a decision, including its
-// full feature breakdown -- the uncapped counterpart to ScoredCommand
-// (which only records a score). Only ever populated when the deciding
-// ScoredStrategy was built with recordCandidates=true (see
-// NewExploringScoredStrategy); nil for every strategy used in real
-// gameplay or tournament eval.
-type Candidate struct {
-	Command  Command
-	Features []Feature
-	// Chosen is true for the single candidate this decision actually
-	// picked -- may not be index 0 among ranked candidates when
-	// exploration fired (see Explanation.Explored).
-	Chosen bool
-}
-
 // Explanation records why a strategy chose the command it did: the winning
 // score broken into its named contributions, plus the top runner-up
 // candidates. A strategy with no scoring model (basic-v1) returns a
@@ -52,26 +37,6 @@ type Explanation struct {
 	Features []Feature
 	// Alternatives lists the top runner-up candidates that were not chosen.
 	Alternatives []ScoredCommand
-	// Explored is true when this decision was a random exploration pick
-	// (see ScoredStrategy.selectBest / NewExploringScoredStrategy) that
-	// differs from what the highest-scoring candidate would have been --
-	// false whenever exploration wasn't triggered, or coincidentally
-	// landed on the actual best option anyway. Only ever set by a
-	// strategy built with NewExploringScoredStrategy, used to generate
-	// training data with real action-outcome contrast; never true for
-	// real gameplay.
-	Explored bool
-	// AllCandidates lists every legal candidate considered at this
-	// decision (including the chosen one), each with its own full
-	// feature breakdown -- unlike Alternatives (capped at
-	// maxAlternatives, scores only), this is uncapped. Only populated
-	// when the deciding ScoredStrategy was built with
-	// recordCandidates=true (see NewExploringScoredStrategy); nil
-	// otherwise, including for every strategy used in real gameplay.
-	// Lets cmd/traindata build one training row per legal candidate
-	// instead of just the chosen one, avoiding the chosen-only selection
-	// bias diagnosed in Next_Phase_Bot_ML_Roadmap.md.
-	AllCandidates []Candidate
 }
 
 // String renders a compact single-line form suitable for a log line, e.g.
@@ -129,42 +94,24 @@ func rankOptions(options []scoredOption) []ranked {
 	return all
 }
 
-// explanationFor builds the (Command, Explanation) pair for choosing
-// all[chosenIdx] -- every other entry, in rank order, becomes a candidate
-// alternative up to maxAlternatives. Shared by selectBest (chosenIdx
-// always 0) and ScoredStrategy.selectBest's exploration path (chosenIdx
-// may be any index) so the two never duplicate this logic.
-//
-// When recordAll is true, every entry in all (not just the top
-// maxAlternatives runner-ups) is also copied into Explanation.AllCandidates
-// -- no extra feature computation, since all is already fully scored.
-func explanationFor(all []ranked, chosenIdx, maxAlternatives int, explored, recordAll bool) (Command, Explanation) {
-	chosen := all[chosenIdx]
+// explanationFor builds the (Command, Explanation) pair for choosing the
+// highest-scoring entry in all (index 0, since rankOptions already sorted
+// best-first) -- every other entry, in rank order, becomes a candidate
+// alternative up to maxAlternatives.
+func explanationFor(all []ranked, maxAlternatives int) (Command, Explanation) {
+	chosen := all[0]
 	alternatives := make([]ScoredCommand, 0, min(maxAlternatives, len(all)-1))
-	for i, r := range all {
-		if i == chosenIdx {
-			continue
-		}
+	for _, r := range all[1:] {
 		if len(alternatives) >= maxAlternatives {
 			break
 		}
 		alternatives = append(alternatives, ScoredCommand{Command: r.option.Command, Score: r.score})
 	}
 
-	var allCandidates []Candidate
-	if recordAll {
-		allCandidates = make([]Candidate, len(all))
-		for i, r := range all {
-			allCandidates[i] = Candidate{Command: r.option.Command, Features: r.option.Features, Chosen: i == chosenIdx}
-		}
-	}
-
 	return chosen.option.Command, Explanation{
-		Score:         chosen.score,
-		Features:      chosen.option.Features,
-		Alternatives:  alternatives,
-		Explored:      explored,
-		AllCandidates: allCandidates,
+		Score:        chosen.score,
+		Features:     chosen.option.Features,
+		Alternatives: alternatives,
 	}
 }
 
@@ -174,5 +121,5 @@ func explanationFor(all []ranked, chosenIdx, maxAlternatives int, explored, reco
 // options must be non-empty; every phase that calls this always includes
 // at least a "end this phase" sentinel candidate.
 func selectBest(options []scoredOption, maxAlternatives int) (Command, Explanation) {
-	return explanationFor(rankOptions(options), 0, maxAlternatives, false, false)
+	return explanationFor(rankOptions(options), maxAlternatives)
 }

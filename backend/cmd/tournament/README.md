@@ -134,11 +134,13 @@ df = pd.read_json("/tmp/tournament.jsonl", lines=True)
 
 ## Custom weights (`--weights-variant`)
 
-Evaluates a fitted or hand-edited `bot.Weights` candidate against baseline
-— the endpoint of the loop described in
-[`project-docs/bot_player/phase_3_continuous_improvement/10_Bot_Weight_Tuning.md`](../../../project-docs/bot_player/phase_3_continuous_improvement/10_Bot_Weight_Tuning.md):
-generate training data (`cmd/traindata`), fit a model however you like,
-export the result as a `Weights`-shaped JSON file, then measure it here.
+Evaluates a hand-edited `bot.Weights` candidate against baseline. A
+per-candidate logistic-regression fitting pipeline that used to feed this
+flag was tried and retired (see
+[`project-docs/bot_player/phase_3_continuous_improvement/10_Bot_Weight_Tuning.md`](../../../project-docs/bot_player/phase_3_continuous_improvement/10_Bot_Weight_Tuning.md)
+for that history) — `--weights-variant` itself stays as a general-purpose
+way to A/B test any `Weights`-shaped JSON file against
+`bot.DefaultWeights`, however it was produced.
 
 ```bash
 go run ./cmd/tournament \

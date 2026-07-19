@@ -29,15 +29,13 @@ func (s *ScoredStrategy) fortify(g *risk.Game, playerID string) (Command, Explan
 		Features: []Feature{{Name: "end_turn_bias", Value: s.weights.FortifyEndTurnBias}},
 	})
 
-	cmd, expl := s.selectBest(options, 3)
+	cmd, expl := selectBest(options, 3)
 	return cmd, expl, nil
 }
 
 // fortifySignals holds fortifyFeatures' raw (unweighted) per-candidate
-// signal, computed once and shared by two consumers that turn it into a
-// score differently: ScoredStrategy.fortifyFeatures (weighted linear sum)
-// and GBTStrategy (fed straight into a tree ensemble, no weighting at
-// all -- see strategy_gbt.go).
+// signal, computed once by computeFortifySignals and turned into a score
+// by ScoredStrategy.fortifyFeatures (weighted linear sum).
 type fortifySignals struct {
 	DestinationThreat  float64
 	ContinentValue     float64

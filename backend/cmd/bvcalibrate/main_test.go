@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 )
 
 func TestPositivePercentileIgnoresNonPositiveValues(t *testing.T) {
@@ -82,3 +84,104 @@ func TestWriteCalibratedMissingInput(t *testing.T) {
 		t.Fatal("expected an error for a missing input file")
 	}
 }
+
+func writeLinearFixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "linear.json")
+	data, _ := json.Marshal(map[string]any{
+		"weights":        []float64{1.0},
+		"intercept":      0.0,
+		"mean":           []float64{0.0},
+		"std":            []float64{1.0},
+		"attack_margin":  0.5,
+		"fortify_margin": 0.1,
+		"feature_names":  []string{"x"},
+	})
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write linear fixture: %v", err)
+	}
+	return path
+}
+
+func writeGCNFixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "gcn.json")
+	data, _ := json.Marshal(map[string]any{
+		"gcn1":   map[string]any{"weight": [][]float64{{1.0, 0.0, 0.0, 0.0}}, "bias": []float64{0.0}},
+		"gcn2":   map[string]any{"weight": [][]float64{{1.0}}, "bias": []float64{0.0}},
+		"fc1":    map[string]any{"weight": [][]float64{{1.0}}, "bias": []float64{0.0}},
+		"fc2":    map[string]any{"weight": [][]float64{{1.0, 1.0}}, "bias": []float64{0.0}},
+		"fc3":    map[string]any{"weight": [][]float64{{1.0, 1.0}}, "bias": []float64{0.0}},
+		"output": map[string]any{"weight": [][]float64{{1.0}}, "bias": []float64{0.0}},
+		"mean":   make([]float64, 9),
+		"std":    []float64{1, 1, 1, 1, 1, 1, 1, 1, 1},
+		"propagation_matrix": [][]float64{
+			{0.5, 0.5},
+			{0.5, 0.5},
+		},
+		"board_order": []string{"A", "B"},
+		"feature_names": []string{
+			"territory_A_is_mine", "territory_A_army_fraction", "territory_A_is_continent_border", "territory_A_enemy_threat_fraction",
+			"territory_B_is_mine", "territory_B_army_fraction", "territory_B_is_continent_border", "territory_B_enemy_threat_fraction",
+			"global1",
+		},
+		"attack_margin":  0.3,
+		"fortify_margin": 0.05,
+	})
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write gcn fixture: %v", err)
+	}
+	return path
+}
+
+func TestLoadValueFunctionLinear(t *testing.T) {
+	value, err := loadValueFunction(writeLinearFixture(t), "linear")
+	if err != nil {
+		t.Fatalf("loadValueFunction: %v", err)
+	}
+	if value.AttackMargin() != 0.5 || value.FortifyMargin() != 0.1 {
+		t.Errorf("unexpected margins: attack=%v fortify=%v", value.AttackMargin(), value.FortifyMargin())
+	}
+	if got := value.Score([]float64{2.0}); got != 2.0 {
+		t.Errorf("Score([2.0]) = %v, want 2.0", got)
+	}
+}
+
+func TestLoadValueFunctionGCN(t *testing.T) {
+	value, err := loadValueFunction(writeGCNFixture(t), "gcn")
+	if err != nil {
+		t.Fatalf("loadValueFunction: %v", err)
+	}
+	if value.AttackMargin() != 0.3 || value.FortifyMargin() != 0.05 {
+		t.Errorf("unexpected margins: attack=%v fortify=%v", value.AttackMargin(), value.FortifyMargin())
+	}
+	// Just confirm it runs without error/panic and returns a finite score.
+	got := value.Score(make([]float64, 9))
+	if got != got { // NaN check without importing math
+		t.Errorf("Score(...) = %v, expected a finite value", got)
+	}
+}
+
+func TestLoadValueFunctionUnknownType(t *testing.T) {
+	if _, err := loadValueFunction(writeLinearFixture(t), "nonsense"); err == nil {
+		t.Fatal("expected an error for an unknown --model-type")
+	}
+}
+
+func TestZeroMarginValueFunctionAlwaysReturnsZeroMargins(t *testing.T) {
+	value, err := loadValueFunction(writeLinearFixture(t), "linear")
+	if err != nil {
+		t.Fatalf("loadValueFunction: %v", err)
+	}
+	wrapped := zeroMarginValueFunction{value}
+
+	if wrapped.AttackMargin() != 0 || wrapped.FortifyMargin() != 0 {
+		t.Errorf("expected zero margins from the wrapper, got attack=%v fortify=%v", wrapped.AttackMargin(), wrapped.FortifyMargin())
+	}
+	// Score still delegates to the wrapped value function unchanged.
+	if got, want := wrapped.Score([]float64{2.0}), value.Score([]float64{2.0}); got != want {
+		t.Errorf("Score(...) = %v, want %v (should delegate unchanged)", got, want)
+	}
+}
+
+var _ bot.ValueFunction = zeroMarginValueFunction{}

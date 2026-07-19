@@ -33,7 +33,7 @@ func (s *ScoredStrategy) reinforce(g *risk.Game, playerID string) (Command, Expl
 			Features: s.reinforceFeatures(g, pi, a.Territory),
 		})
 	}
-	cmd, expl := s.selectBest(options, 3)
+	cmd, expl := selectBest(options, 3)
 	cmd.Armies = min(g.PendingReinforcements, max(1, g.PendingReinforcements/3))
 	return cmd, expl, nil
 }
@@ -55,16 +55,15 @@ func (s *ScoredStrategy) setupReinforce(g *risk.Game, playerID string) (Command,
 			Features: s.reinforceFeatures(g, pi, a.Territory),
 		})
 	}
-	cmd, expl := s.selectBest(options, 3)
+	cmd, expl := selectBest(options, 3)
 	return cmd, expl, nil
 }
 
 // reinforceSignals holds reinforceFeatures' raw (unweighted) per-candidate
-// signal, computed once and shared by two consumers that turn it into a
-// score differently: ScoredStrategy.reinforceFeatures (weighted linear
-// sum) and GBTStrategy (fed straight into a tree ensemble, no weighting
-// at all -- see strategy_gbt.go). Every field is always populated (unlike
-// attackSignals, reinforce has no conditional features).
+// signal, computed once by computeReinforceSignals and turned into a
+// score by ScoredStrategy.reinforceFeatures (weighted linear sum). Every
+// field is always populated (unlike attackSignals, reinforce has no
+// conditional features).
 //
 // enemy_threat and weakness (threat - ownArmies) are highly correlated
 // (0.98, measured across every legal candidate, not just chosen ones --

@@ -25,7 +25,8 @@ const (
 //
 // A free function, not a ScoredStrategy method -- card-timing policy
 // doesn't depend on any Weights value, so both ScoredStrategy and
-// GBTStrategy (see strategy_gbt.go) share this exact decision unchanged.
+// ValueStrategy (see strategy_value.go) share this exact decision
+// unchanged.
 func scoredCardTurnIn(g *risk.Game, playerID string) (Command, Explanation, bool) {
 	sets := risk.LegalCardTurnIns(g, playerID)
 	if len(sets) == 0 {

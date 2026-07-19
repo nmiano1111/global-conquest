@@ -15,7 +15,8 @@ matplotlib = "^3.9"
 scipy = "^1.13"
 python-dotenv = "^1.0"
 scikit-learn = "^1.9.0"
-lightgbm = "^4.6.0"
+pypdf = "^6.14.2"
+torch = "^2.13.0"
 
 [tool.poetry.group.dev.dependencies]
 jupyterlab = "^4.2"
@@ -30,9 +31,8 @@ export-games = "global_conquest_analytics.cli:export_games"
 export-players = "global_conquest_analytics.cli:export_players"
 combat-report = "global_conquest_analytics.cli:generate_combat_report_command"
 roll-streak-report = "global_conquest_analytics.cli:generate_roll_streak_report_command"
-fit-weights = "global_conquest_analytics.cli:fit_weights_command"
-fit-gbt = "global_conquest_analytics.cli:fit_gbt_command"
 fit-board-value = "global_conquest_analytics.cli:fit_board_value_command"
+fit-gcn = "global_conquest_analytics.cli:fit_gcn_command"
 
 [tool.ruff]
 line-length = 100

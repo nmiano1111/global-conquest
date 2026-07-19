@@ -2,9 +2,6 @@ package bot
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
@@ -14,8 +11,8 @@ import (
 // singleFeatureBoardValue builds a BoardValue that scores purely on one
 // named feature (see tdstate.FeatureNames), zero-mean/unit-std
 // standardization, weight on every other feature -- enough to
-// deterministically test which candidate BoardValueStrategy picks
-// without needing a real trained model or hand-listing ~400 weights.
+// deterministically test which candidate ValueStrategy picks without
+// needing a real trained model or hand-listing ~400 weights.
 func singleFeatureBoardValue(t *testing.T, featureName string, weight float64) *BoardValue {
 	t.Helper()
 	names := tdstate.FeatureNames(risk.ClassicBoard())
@@ -45,12 +42,12 @@ func singleFeatureBoardValue(t *testing.T, featureName string, weight float64) *
 func singleFeatureBoardValueWithMargin(t *testing.T, featureName string, weight, margin float64) *BoardValue {
 	t.Helper()
 	bv := singleFeatureBoardValue(t, featureName, weight)
-	bv.AttackMargin = margin
-	bv.FortifyMargin = margin
+	bv.attackMargin = margin
+	bv.fortifyMargin = margin
 	return bv
 }
 
-func TestBoardValueStrategyUnhandledPhaseFallsBackToBasic(t *testing.T) {
+func TestValueStrategyUnhandledPhaseFallsBackToBasic(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseSetupClaim
 
@@ -67,7 +64,7 @@ func TestBoardValueStrategyUnhandledPhaseFallsBackToBasic(t *testing.T) {
 	}
 }
 
-func TestBoardValueStrategyAttackNoLegalAttacksEndsAttack(t *testing.T) {
+func TestValueStrategyAttackNoLegalAttacksEndsAttack(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseAttack
 	// p0 owns nothing (newTestGame's default owner=1 everywhere), so
@@ -82,7 +79,7 @@ func TestBoardValueStrategyAttackNoLegalAttacksEndsAttack(t *testing.T) {
 	}
 }
 
-func TestBoardValueStrategyAttackPrefersHigherScoringCandidate(t *testing.T) {
+func TestValueStrategyAttackPrefersHigherScoringCandidate(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseAttack
 	// Alaska attacks Kamchatka with a huge advantage (near-certain
@@ -108,12 +105,12 @@ func TestBoardValueStrategyAttackPrefersHigherScoringCandidate(t *testing.T) {
 	}
 }
 
-func TestBoardValueStrategyAttackRequiresBeatingMargin(t *testing.T) {
+func TestValueStrategyAttackRequiresBeatingMargin(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseAttack
 	// Same near-certain-win setup as
-	// TestBoardValueStrategyAttackPrefersHigherScoringCandidate, but with
-	// a margin large enough that even this favorable attack's improvement
+	// TestValueStrategyAttackPrefersHigherScoringCandidate, but with a
+	// margin large enough that even this favorable attack's improvement
 	// over the current state doesn't clear it -- the gate must end the
 	// attack instead of taking it, confirming Margin is a real
 	// requirement and not just documentation.
@@ -132,7 +129,7 @@ func TestBoardValueStrategyAttackRequiresBeatingMargin(t *testing.T) {
 	}
 }
 
-func TestBoardValueStrategyAttackActsWhenImprovementClearsSmallMargin(t *testing.T) {
+func TestValueStrategyAttackActsWhenImprovementClearsSmallMargin(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseAttack
 	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 30}
@@ -150,7 +147,7 @@ func TestBoardValueStrategyAttackActsWhenImprovementClearsSmallMargin(t *testing
 	}
 }
 
-func TestBoardValueStrategyAttackEndsWhenNoCandidateBeatsCurrentState(t *testing.T) {
+func TestValueStrategyAttackEndsWhenNoCandidateBeatsCurrentState(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseAttack
 	// Alaska's neighbors are Northwest Territory, Alberta, Kamchatka
@@ -175,7 +172,7 @@ func TestBoardValueStrategyAttackEndsWhenNoCandidateBeatsCurrentState(t *testing
 	}
 }
 
-func TestBoardValueStrategyReinforceCardTurnInMandatory(t *testing.T) {
+func TestValueStrategyReinforceCardTurnInMandatory(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseReinforce
 	g.PendingReinforcements = 0
@@ -198,7 +195,7 @@ func TestBoardValueStrategyReinforceCardTurnInMandatory(t *testing.T) {
 	}
 }
 
-func TestBoardValueStrategyReinforcePrefersHigherScoringCandidateAndBatches(t *testing.T) {
+func TestValueStrategyReinforcePrefersHigherScoringCandidateAndBatches(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseReinforce
 	g.PendingReinforcements = 4
@@ -216,11 +213,11 @@ func TestBoardValueStrategyReinforcePrefersHigherScoringCandidateAndBatches(t *t
 		t.Fatalf("expected place_reinforcement at Alaska (its own army fraction is directly rewarded), got %+v", cmd)
 	}
 	if cmd.Armies != max(1, 4/3) {
-		t.Errorf("expected the same batching rule as ScoredStrategy/GBTStrategy, got Armies=%d", cmd.Armies)
+		t.Errorf("expected the same batching rule as ScoredStrategy, got Armies=%d", cmd.Armies)
 	}
 }
 
-func TestBoardValueStrategySetupReinforceReturnsLegalPlacement(t *testing.T) {
+func TestValueStrategySetupReinforceReturnsLegalPlacement(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseSetupReinforce
 	g.SetupReserves[0] = 3
@@ -236,7 +233,7 @@ func TestBoardValueStrategySetupReinforceReturnsLegalPlacement(t *testing.T) {
 	}
 }
 
-func TestBoardValueStrategyOccupyPrefersHigherScoringCandidate(t *testing.T) {
+func TestValueStrategyOccupyPrefersHigherScoringCandidate(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseOccupy
 	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 10}
@@ -255,7 +252,7 @@ func TestBoardValueStrategyOccupyPrefersHigherScoringCandidate(t *testing.T) {
 	}
 }
 
-func TestBoardValueStrategyFortifyEndsTurnWhenNoLegalMove(t *testing.T) {
+func TestValueStrategyFortifyEndsTurnWhenNoLegalMove(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseFortify
 	// p0 owns nothing, so risk.LegalFortifications is empty.
@@ -269,7 +266,7 @@ func TestBoardValueStrategyFortifyEndsTurnWhenNoLegalMove(t *testing.T) {
 	}
 }
 
-func TestBoardValueStrategyFortifyPrefersHigherScoringCandidate(t *testing.T) {
+func TestValueStrategyFortifyPrefersHigherScoringCandidate(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseFortify
 	g.Territories["Madagascar"] = risk.TerritoryState{Owner: 0, Armies: 5}
@@ -284,79 +281,5 @@ func TestBoardValueStrategyFortifyPrefersHigherScoringCandidate(t *testing.T) {
 	}
 	if cmd.Action != ActionFortify {
 		t.Fatalf("expected a fortify move (South Africa's own army fraction is directly rewarded), got %+v", cmd)
-	}
-}
-
-func TestBoardValueScoreStandardizesAndComputesDotProduct(t *testing.T) {
-	bv := &BoardValue{
-		Weights:   []float64{2.0, -1.0},
-		Intercept: 0.5,
-		Mean:      []float64{1.0, 0.0},
-		Std:       []float64{2.0, 1.0},
-	}
-	// standardized = [(3-1)/2, (4-0)/1] = [1.0, 4.0]
-	// score = 0.5 + 2*1.0 + (-1)*4.0 = 0.5 + 2 - 4 = -1.5
-	got := bv.Score([]float64{3.0, 4.0})
-	if got != -1.5 {
-		t.Errorf("Score(...) = %v, want -1.5", got)
-	}
-}
-
-func TestBoardValueScoreHandlesZeroStd(t *testing.T) {
-	bv := &BoardValue{
-		Weights:   []float64{3.0},
-		Intercept: 0,
-		Mean:      []float64{5.0},
-		Std:       []float64{0.0}, // a constant training-set feature
-	}
-	// std=0 falls back to 1.0 to avoid divide-by-zero: standardized = 5-5=0
-	got := bv.Score([]float64{5.0})
-	if got != 0 {
-		t.Errorf("Score(...) = %v, want 0", got)
-	}
-}
-
-func TestLoadBoardValueRoundTrips(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "value.json")
-	data, _ := json.Marshal(map[string]any{
-		"weights":        []float64{1.0, 2.0},
-		"intercept":      0.5,
-		"mean":           []float64{0.0, 0.0},
-		"std":            []float64{1.0, 1.0},
-		"attack_margin":  0.75,
-		"fortify_margin": 0.05,
-		"feature_names":  []string{"a", "b"},
-	})
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	bv, err := LoadBoardValue(path)
-	if err != nil {
-		t.Fatalf("LoadBoardValue: %v", err)
-	}
-	if len(bv.Weights) != 2 || bv.Intercept != 0.5 || bv.AttackMargin != 0.75 || bv.FortifyMargin != 0.05 {
-		t.Errorf("unexpected loaded BoardValue: %+v", bv)
-	}
-}
-
-func TestLoadBoardValueMissingFile(t *testing.T) {
-	if _, err := LoadBoardValue(filepath.Join(t.TempDir(), "nope.json")); err == nil {
-		t.Fatal("expected an error for a missing file")
-	}
-}
-
-func TestLoadBoardValueRejectsLengthMismatch(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "value.json")
-	data, _ := json.Marshal(map[string]any{
-		"weights": []float64{1.0, 2.0},
-		"mean":    []float64{0.0}, // wrong length
-		"std":     []float64{1.0, 1.0},
-	})
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if _, err := LoadBoardValue(path); err == nil {
-		t.Fatal("expected an error for mismatched weights/mean/std lengths")
 	}
 }

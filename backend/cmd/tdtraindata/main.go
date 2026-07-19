@@ -97,6 +97,9 @@ func run(args []string) (completed bool, err error) {
 	if err := writeFeatureNames(*output); err != nil {
 		return false, fmt.Errorf("write feature names: %w", err)
 	}
+	if err := writeBoardSchema(*output); err != nil {
+		return false, fmt.Errorf("write board schema: %w", err)
+	}
 
 	progress := newProgressReporter(*games)
 	defer progress.done()

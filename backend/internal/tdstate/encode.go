@@ -24,6 +24,22 @@ type TerritoryFeatures struct {
 	ArmyFraction      float64
 	Continent         []bool // one-hot, sortedContinents(board) order
 	IsContinentBorder bool
+	// EnemyThreatFraction is the sum of armies in territories adjacent to
+	// this one, owned by anyone other than pi, as a fraction of the
+	// board's total armies. Added after a live-play audit found
+	// ValueStrategy's reinforce phase locking onto one "favorite"
+	// territory per game (a single territory receiving up to ~47% of all
+	// reinforcements placed that game) and never reinforcing embattled
+	// border territories instead: every per-territory ArmyFraction
+	// coefficient a fit ever produced was small but strictly positive
+	// (more armies here is always slightly good, with no notion of "this
+	// territory needs it"), so the model had no way to prefer a
+	// threatened territory over its fixed favorite. This mirrors
+	// internal/bot's local adjacentEnemyArmies signal (used by
+	// ScoredStrategy's reinforceSignals) -- not imported (this package
+	// must not depend on internal/bot, see the package doc comment),
+	// recomputed here at the whole-board level instead.
+	EnemyThreatFraction float64
 }
 
 // GlobalFeatures holds the non-per-territory signals in a Features
@@ -36,8 +52,19 @@ type GlobalFeatures struct {
 	StrongestEnemyTerritoryFraction float64
 	ContinentArmyFraction           []float64 // sortedContinents(board) order
 	CardFraction                    float64   // len(cards) / cardFractionCap
-	Phase                           []bool    // one-hot, allPhases order
-	IsMyTurn                        bool
+	// Defence estimates how thin pi's weakest defended front is, per
+	// continent pi fully owns -- ported from Jamie Carr's "Using Graph
+	// Convolutional Networks and TD(λ) to Play the Game of Risk"
+	// (arXiv:2009.06355), the one hand-crafted feature that paper's
+	// author found necessary to add after the network failed to learn
+	// defensive behavior from low-level features alone: "the only
+	// instance where I had to build in human knowledge... I was sure to
+	// keep the feature global and not incorporate information about
+	// specific threats" -- unlike EnemyThreatFraction, this never looks
+	// at enemy army counts, only at how weak pi's own frontier is.
+	Defence  float64
+	Phase    []bool // one-hot, allPhases order
+	IsMyTurn bool
 }
 
 // Features is one player's encoded view of a game state.
@@ -51,6 +78,12 @@ type Features struct {
 // threshold (risk.CardTurnInRequired), the natural cap for "how many
 // cards is a lot."
 const cardFractionCap = 5.0
+
+// defenceCap bounds Defence the same way cardFractionCap bounds
+// CardFraction -- the paper found uncapped values could reach abnormal
+// highs early/late game and confuse training, capping at 0.2 before
+// standardizing.
+const defenceCap = 0.2
 
 // allPhases is every risk.Phase this encoder can one-hot, in a fixed
 // (not data-derived) canonical order -- the full enum, not just the ones
@@ -98,6 +131,97 @@ func isContinentBorder(board risk.Board, t risk.Territory, c risk.Continent) boo
 	return false
 }
 
+// enemyThreatFraction sums the armies in territories adjacent to t owned
+// by anyone other than pi (unowned/eliminated-vacated territories don't
+// contribute, matching risk.TerritoryState's Owner < 0 convention used
+// elsewhere in this package), as a fraction of totalArmies.
+func enemyThreatFraction(g *risk.Game, t risk.Territory, pi int, totalArmies int) float64 {
+	threat := 0
+	for neighbor := range g.Board.Adjacent[t] {
+		ts := g.Territories[neighbor]
+		if ts.Owner >= 0 && ts.Owner != pi {
+			threat += ts.Armies
+		}
+	}
+	return float64(threat) / float64(totalArmies)
+}
+
+// isFrontier reports whether t, owned by pi, has a neighbor owned by a
+// different, non-eliminated-vacated player.
+func isFrontier(g *risk.Game, t risk.Territory, pi int) bool {
+	if g.Territories[t].Owner != pi {
+		return false
+	}
+	for neighbor := range g.Board.Adjacent[t] {
+		ts := g.Territories[neighbor]
+		if ts.Owner >= 0 && ts.Owner != pi {
+			return true
+		}
+	}
+	return false
+}
+
+// computeDefence implements GlobalFeatures.Defence: for each continent pi
+// fully owns, finds the minimum army count among pi's own territories in
+// that continent that are a frontier (isFrontier) -- the weakest link
+// defending that continent's front, if any front exists at all (a fully
+// owned continent with no adjacent enemy anywhere contributes nothing).
+// Collects one such minimum per continent, sorted smallest to largest,
+// and takes a weighted mean (weights n, n-1, ..., 1, so the very weakest
+// fronts dominate the average), divided by total board armies, capped at
+// defenceCap.
+//
+// This is an interpretation of the paper's own description (which
+// additionally traces a connected-owned-territory search per border
+// territory) rather than a byte-exact reproduction -- it captures the
+// same intent (how vulnerable is pi's weakest owned front) without that
+// extra graph-search machinery, which doesn't change the core signal for
+// a continent that's already fully owned (every territory in it is
+// "connected" to every other by definition of owning the whole thing).
+func computeDefence(g *risk.Game, pi int, continents []risk.Continent, totalArmies int) float64 {
+	var weakestPerContinent []int
+	for _, c := range continents {
+		info := g.Board.Continents[c]
+		owned := true
+		for _, t := range info.Territories {
+			if g.Territories[t].Owner != pi {
+				owned = false
+				break
+			}
+		}
+		if !owned {
+			continue
+		}
+		minArmies := -1
+		for _, t := range info.Territories {
+			if !isFrontier(g, t, pi) {
+				continue
+			}
+			armies := g.Territories[t].Armies
+			if minArmies == -1 || armies < minArmies {
+				minArmies = armies
+			}
+		}
+		if minArmies != -1 {
+			weakestPerContinent = append(weakestPerContinent, minArmies)
+		}
+	}
+	if len(weakestPerContinent) == 0 {
+		return 0
+	}
+	slices.Sort(weakestPerContinent)
+
+	n := len(weakestPerContinent)
+	var weightedSum, weightSum float64
+	for i, armies := range weakestPerContinent {
+		weight := float64(n - i)
+		weightedSum += weight * float64(armies)
+		weightSum += weight
+	}
+	defence := (weightedSum / weightSum) / float64(totalArmies)
+	return min(defence, defenceCap)
+}
+
 // Encode builds pi's perspective of g's current state.
 func Encode(g *risk.Game, pi int) Features {
 	continents := sortedContinents(g.Board)
@@ -127,10 +251,11 @@ func Encode(g *risk.Game, pi int) Features {
 			}
 		}
 		territories[i] = TerritoryFeatures{
-			IsMine:            ts.Owner == pi,
-			ArmyFraction:      float64(ts.Armies) / float64(totalArmies),
-			Continent:         continentOneHot,
-			IsContinentBorder: border,
+			IsMine:              ts.Owner == pi,
+			ArmyFraction:        float64(ts.Armies) / float64(totalArmies),
+			Continent:           continentOneHot,
+			IsContinentBorder:   border,
+			EnemyThreatFraction: enemyThreatFraction(g, t, pi, totalArmies),
 		}
 	}
 
@@ -198,6 +323,7 @@ func encodeGlobal(g *risk.Game, pi int, continents []risk.Continent, totalArmies
 		StrongestEnemyTerritoryFraction: float64(strongestEnemyTerritories) / float64(totalTerritories),
 		ContinentArmyFraction:           continentArmyFraction,
 		CardFraction:                    float64(cardCount) / cardFractionCap,
+		Defence:                         computeDefence(g, pi, continents, totalArmies),
 		Phase:                           phaseOneHot,
 		IsMyTurn:                        pi == g.CurrentPlayer,
 	}
