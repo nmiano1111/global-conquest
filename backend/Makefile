@@ -30,6 +30,10 @@ COMPOSE_FILE         ?= ./docker-compose.yml
 
 SEED_FILE            ?= ./seed.sql
 
+# tdtraindata
+TD_GAMES             ?= 200
+TD_OUTPUT_DIR         := data/raw/tdtraindata
+
 # Flyway
 MIGRATIONS_DIR ?= ./migrations
 FLYWAY_IMAGE   ?= flyway/flyway:9
@@ -51,7 +55,7 @@ FLYWAY_CMD = docker run --rm \
 .PHONY: help tidy fmt vet lint build run dev test test-short test-integration e2e seed-go \
         swagger swagger-check clean tools \
         db-volume db-up db-down db-logs db-connect db-wait db-migrate \
-        build-discord run-discord
+        build-discord run-discord tdtraindata-diverse
 
 help: ## Show targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -141,3 +145,20 @@ e2e: ## Run DB-backed end-to-end tests (requires E2E_ADMIN_DSN)
 
 seed-go: ## Seed DB with test users/games (hashes password='password' via auth module)
 	$(GO) run ./cmd/seed
+
+tdtraindata-diverse: ## Generate a diversified TD(lambda) training set across rotating strategy lineups (override TD_GAMES to change games-per-lineup, default 200)
+	@mkdir -p $(TD_OUTPUT_DIR)
+	@echo "==> Generating diversified tdtraindata set ($(TD_GAMES) games per lineup) into $(TD_OUTPUT_DIR)"
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,cluster-v1,pixie-v1,quo-v1,boscoe-v1,killbot-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux_all_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,angry-v1,cluster-v1,pixie-v1,quo-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_a_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies cluster-v1,pixie-v1,boscoe-v1,scored-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_b_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,quo-v1,killbot-v1,basic-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_c_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies scored-v1,boscoe-v1,killbot-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/small_a_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,scored-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/baseline_train.jsonl
+	@echo "==> Done. Fit against the whole set from analytics/ with: poetry run fit-gcn --output /tmp/gcn.json"
