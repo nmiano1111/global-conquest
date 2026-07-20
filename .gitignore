@@ -20,3 +20,5 @@ backend/raw/
 /backend/data/raw/tdtraindata/*.jsonl
 
 /backend/data/raw/tdtraindata/*.jsonl
+
+/backend/data/raw/tdtraindata/*.jsonl
