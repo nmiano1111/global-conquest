@@ -26,11 +26,41 @@ go run ./cmd/tdtraindata \
   --output data/raw/tdtraindata/basic_scored_scored_train.jsonl
 ```
 
+## Diversified datasets
+
+`--strategies` is a single fixed lineup for the whole invocation — every
+game in that run uses the same strategy per seat. To avoid the "policy
+monoculture" problem the Lux Delux research notes describe (a training
+set that only ever sees the states one heuristic naturally visits), run
+this tool multiple times with different `--strategies` combinations
+drawing from the eight available IDs, into separate output files, then
+concatenate the `.jsonl` files (and keep just one copy of the sidecar
+files — they're identical across runs, since they only depend on the
+board, not the strategies):
+
+```bash
+go run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,boscoe-v1 --games 50 --output data/raw/tdtraindata/run1_train.jsonl
+go run ./cmd/tdtraindata --strategies cluster-v1,quo-v1,killbot-v1 --games 50 --output data/raw/tdtraindata/run2_train.jsonl
+go run ./cmd/tdtraindata --strategies basic-v1,scored-v1,scored-v1 --games 50 --output data/raw/tdtraindata/run3_train.jsonl
+```
+
+`make tdtraindata-diverse` (from `backend/`) runs a ready-made set of six such
+lineups — rotating strategy pairings and player counts (3p/4p/6p) so no
+single matchup or seat count dominates the resulting dataset — at 200
+games each by default (`make tdtraindata-diverse TD_GAMES=500` to scale
+up). See the `Makefile`'s `tdtraindata-diverse` target for the exact
+lineups.
+
+`fit-board-value`/`fit-gcn` (`analytics/`) already load every `*_train.jsonl`
+under `data/raw/tdtraindata/` by default when `--input` is omitted, so
+dropping multiple runs' output in that directory is enough to train
+across all of them at once.
+
 ## Flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--strategies` | *(required)* | Comma-separated strategy ID per seat, e.g. `basic-v1,scored-v1,scored-v1` — fixed for every game; player count is this list's length |
+| `--strategies` | *(required)* | Comma-separated strategy ID per seat, e.g. `basic-v1,scored-v1,scored-v1` — fixed for every game; player count is this list's length. Available IDs: `basic-v1`, `scored-v1`, `angry-v1`, `cluster-v1`, `pixie-v1`, `quo-v1`, `boscoe-v1`, `killbot-v1` (the last six are Lux Delux-inspired personas — see [`project-docs/bot_player/proposals/Lux_Delux_Bot_Personas.md`](../../../project-docs/bot_player/proposals/Lux_Delux_Bot_Personas.md)) |
 | `--games` | *(required)* | Number of games to run |
 | `--output` | *(required)* | JSONL destination for the generated turn-boundary rows |
 | `--seed-start` | `1` | First seed used; games run with seeds `seed-start..seed-start+games-1` |

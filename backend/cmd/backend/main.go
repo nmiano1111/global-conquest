@@ -81,8 +81,9 @@ func main() {
 	// bots
 	botLoader := service.NewBotGameLoader(gamesSvc)
 	strategies := bot.StrategyRegistry{
-		bot.StrategyBasicV1:  bot.NewBasicStrategy(),
-		bot.StrategyScoredV1: bot.NewScoredStrategy(bot.DefaultWeights),
+		bot.StrategyBasicV1:   bot.NewBasicStrategy(),
+		bot.StrategyScoredV1:  bot.NewScoredStrategy(bot.DefaultWeights), // kept registered: existing in-progress games may already have bots persisted with this strategy
+		bot.StrategyKillbotV1: bot.NewKillbotStrategy(),
 	}
 	botRunner := bot.NewRunner(botLoader, s, strategies, bot.RealSleeper{}, bot.DefaultPacingConfig())
 	botManager := bot.NewManager(context.Background(), botRunner, bot.ExecutionLive)

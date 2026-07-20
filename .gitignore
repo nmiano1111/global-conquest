@@ -13,6 +13,10 @@ global-conquest/dist/
 
 # Go
 backend/tmp/
-
+backend/raw/
 # OS
 .DS_Store
+
+/backend/data/raw/tdtraindata/*.jsonl
+
+/backend/data/raw/tdtraindata/*.jsonl
