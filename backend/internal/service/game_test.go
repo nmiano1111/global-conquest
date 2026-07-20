@@ -557,6 +557,48 @@ func TestListGamesEnrichesInProgressTurnInfo(t *testing.T) {
 	}
 }
 
+func TestListGamesReportsViewerEliminated(t *testing.T) {
+	inProgressState := json.RawMessage(`{"players":[{"id":"u1","eliminated":true},{"id":"u2"}],"current_player":1,"phase":"attack"}`)
+	completedState := json.RawMessage(`{"players":[{"id":"u1","eliminated":true},{"id":"u2"}],"phase":"game_over","winner":"u2"}`)
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}}, &fakeGamesStore{
+		createFn:         func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn:        func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) {
+			return []store.Game{
+				{ID: "lobby1", Status: "lobby"},
+				{ID: "ip1", Status: "in_progress", State: inProgressState},
+				{ID: "done1", Status: "completed", State: completedState},
+			}, nil
+		},
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
+	})
+
+	// Viewed as the eliminated player u1.
+	out, err := svc.ListGames(context.Background(), "", "", 0, 0, "u1", false, false)
+	if err != nil {
+		t.Fatalf("list games: %v", err)
+	}
+	if out[0].ViewerEliminated {
+		t.Errorf("a lobby game should never report ViewerEliminated, got true")
+	}
+	if !out[1].ViewerEliminated {
+		t.Errorf("expected u1 to be reported eliminated in the in_progress game")
+	}
+	if !out[2].ViewerEliminated {
+		t.Errorf("expected u1 to be reported eliminated in the completed game")
+	}
+
+	// Viewed as the surviving player u2, the same games should not be flagged.
+	out, err = svc.ListGames(context.Background(), "", "", 0, 0, "u2", false, false)
+	if err != nil {
+		t.Fatalf("list games: %v", err)
+	}
+	if out[1].ViewerEliminated || out[2].ViewerEliminated {
+		t.Errorf("expected u2 (not eliminated) to never be flagged, got %#v / %#v", out[1], out[2])
+	}
+}
+
 // fakeDomainEventStore records InsertDomainEvent calls for assertions.
 type fakeDomainEventStore struct {
 	insertFn func(context.Context, db.Querier, string, risk.DomainEvent, []byte) (store.GameDomainEvent, error)

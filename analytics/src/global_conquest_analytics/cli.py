@@ -28,7 +28,7 @@ roll-streak-report
     usernames instead of UUIDs. Does NOT query Postgres.
 
 fit-board-value
-    Read backend/cmd/tdtraindata's JSONL output (data/raw/tdtraindata/*_train.jsonl
+    Read backend/cmd/tdtraindata's JSONL output (backend/data/raw/tdtraindata/*_train.jsonl
     by default — run `go run ./cmd/tdtraindata` first), fit a single whole-board
     linear value function via logistic regression, and export a weights JSON
     file (reports/generated/board_value/<timestamp>.json by default) ready
@@ -63,7 +63,12 @@ _RAW_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "game_events.parquet
 _GAMES_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "games.parquet"
 _PLAYERS_PARQUET = Path(__file__).parents[2] / "data" / "raw" / "players.parquet"
 _ROLL_STREAK_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "roll_streaks"
-_TDTRAINDATA_DIR = Path(__file__).parents[2] / "data" / "raw" / "tdtraindata"
+# backend/cmd/tdtraindata is a Go tool that writes relative to wherever
+# it's invoked (typically backend/, per its own README's examples), not
+# relative to this package -- unlike the parents[2]-based paths above,
+# which are all analytics-internal (produced by this package's own
+# export-* commands), this one points at backend/'s own data directory.
+_TDTRAINDATA_DIR = Path(__file__).parents[3] / "backend" / "data" / "raw" / "tdtraindata"
 _BOARD_VALUE_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "board_value"
 _GCN_REPORT_DIR = Path(__file__).parents[2] / "reports" / "generated" / "gcn"
 
@@ -383,7 +388,7 @@ def _filter_report_by_player(report: RollStreakReport, player_id: str) -> RollSt
 
 def _resolve_tdtraindata_inputs(args_input: list[str] | None) -> list[Path]:
     """Shared --input resolution for fit-board-value/fit-gcn: explicit
-    paths, or every *_train.jsonl under data/raw/tdtraindata/. Exits with
+    paths, or every *_train.jsonl under backend/data/raw/tdtraindata/. Exits with
     an error (matching both commands' prior behavior) if neither yields
     anything.
     """
@@ -424,7 +429,7 @@ def _load_tdtraindata_episodes(input_paths: list[Path]) -> tuple[list[Episode], 
 def fit_board_value_command() -> None:
     """CLI entry point: fit a whole-board linear value function, export weights.json.
 
-    Reads data/raw/tdtraindata/*_train.jsonl by default (run
+    Reads backend/data/raw/tdtraindata/*_train.jsonl by default (run
     `go run ./cmd/tdtraindata` first). Does not query Postgres.
     """
     parser = argparse.ArgumentParser(
@@ -437,7 +442,7 @@ def fit_board_value_command() -> None:
         default=None,
         help=(
             "Training JSONL file (repeatable). Default: every "
-            "*_train.jsonl under data/raw/tdtraindata/."
+            "*_train.jsonl under backend/data/raw/tdtraindata/."
         ),
     )
     parser.add_argument(
@@ -476,7 +481,7 @@ def fit_board_value_command() -> None:
 def fit_gcn_command() -> None:
     """CLI entry point: fit a supervised GCN value function, export weights.json.
 
-    Reads data/raw/tdtraindata/*_train.jsonl by default (run
+    Reads backend/data/raw/tdtraindata/*_train.jsonl by default (run
     `go run ./cmd/tdtraindata` first). Does not query Postgres.
     """
     parser = argparse.ArgumentParser(
@@ -489,7 +494,7 @@ def fit_gcn_command() -> None:
         default=None,
         help=(
             "Training JSONL file (repeatable). Default: every "
-            "*_train.jsonl under data/raw/tdtraindata/."
+            "*_train.jsonl under backend/data/raw/tdtraindata/."
         ),
     )
     parser.add_argument(
