@@ -56,14 +56,15 @@ type discordOutboxStore interface {
 // state in a WithTxQ transaction using GetByIDForUpdate to avoid races
 // between concurrent actions on the same game.
 type GamesService struct {
-	db               gameDB
-	games            store.GamesStore
-	gameEvent        gameEventStore
-	gamePlayers      gamePlayersStore
-	gameDomainEvents gameDomainEventStore
-	discordOutbox    discordOutboxStore
-	assignBotNames   func(count int, exclude []string) []string
-	gameStarted      func(gameID string)
+	db                 gameDB
+	games              store.GamesStore
+	gameEvent          gameEventStore
+	gamePlayers        gamePlayersStore
+	gameDomainEvents   gameDomainEventStore
+	discordOutbox      discordOutboxStore
+	assignBotNames     func(count int, exclude []string) []string
+	gameStarted        func(gameID string)
+	defaultBotStrategy string
 }
 
 var (
@@ -135,6 +136,23 @@ func (s *GamesService) notifyGameStarted(gameID string) {
 	if s.gameStarted != nil {
 		s.gameStarted(gameID)
 	}
+}
+
+// SetDefaultBotStrategy overrides which strategy ID new bots are assigned
+// (applyBotMetadata's fallback is bot.StrategyKillbotV1 when this is
+// unset/empty). Production wiring in cmd/backend/main.go only calls this
+// when GCN_MODEL_PATH is configured, letting a local GCN experiment
+// become every new bot's persona without changing the compiled-in
+// default for anyone who hasn't opted in.
+func (s *GamesService) SetDefaultBotStrategy(strategyID string) {
+	s.defaultBotStrategy = strategyID
+}
+
+func (s *GamesService) botStrategy() string {
+	if s.defaultBotStrategy != "" {
+		return s.defaultBotStrategy
+	}
+	return bot.StrategyKillbotV1
 }
 
 type gameEventStore interface {
@@ -563,7 +581,7 @@ func (s *GamesService) startEngineForFullLobby(lobby lobbyState) (*risk.Game, []
 	if err != nil {
 		return nil, nil, err
 	}
-	applyBotMetadata(startedEngine, lobby.BotNames)
+	applyBotMetadata(startedEngine, lobby.BotNames, s.botStrategy())
 	nextState, err := json.Marshal(startedEngine)
 	if err != nil {
 		return nil, nil, err
@@ -1629,16 +1647,18 @@ func overlayBotNames(names map[string]string, botNames map[string]string) {
 // build plain PlayerState{ID: id} entries with no notion of which IDs are
 // bots, so this is applied once, right after the engine starts.
 //
-// New bots default to killbot-v1, the strongest of the Lux Delux-inspired
-// personas ported in internal/bot (see
-// project-docs/bot_player/proposals/Lux_Delux_Bot_Personas.md) — until
-// per-bot persona selection exists in the create-game flow, every bot in
-// every game gets this one strategy.
-func applyBotMetadata(g *risk.Game, botNames map[string]string) {
+// Every bot in every game gets the same strategyID — until per-bot
+// persona selection exists in the create-game flow, there's no way to
+// vary it per bot. strategyID is GamesService.botStrategy()'s result at
+// the one call site (startEngineForFullLobby): killbot-v1 (the strongest
+// of the Lux Delux-inspired personas ported in internal/bot, see
+// project-docs/bot_player/proposals/Lux_Delux_Bot_Personas.md) unless
+// SetDefaultBotStrategy has overridden it.
+func applyBotMetadata(g *risk.Game, botNames map[string]string, strategyID string) {
 	for i := range g.Players {
 		if name, ok := botNames[g.Players[i].ID]; ok {
 			g.Players[i].Controller = risk.ControllerBot
-			g.Players[i].Strategy = bot.StrategyKillbotV1
+			g.Players[i].Strategy = strategyID
 			g.Players[i].Name = name
 		}
 	}

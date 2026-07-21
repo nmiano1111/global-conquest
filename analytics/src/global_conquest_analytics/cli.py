@@ -506,13 +506,60 @@ def fit_gcn_command() -> None:
         ),
     )
     parser.add_argument(
-        "--epochs", type=int, default=20, help="Training epochs (default: 20)."
+        "--epochs",
+        type=int,
+        default=20,
+        help=(
+            "Training epochs (default: 20 -- for --objective td, this is per-timestep "
+            "sequential and dramatically slower per epoch than the default supervised "
+            "objective's vectorized full-batch pass; time a small run with --input pointed "
+            "at one smaller *_train.jsonl file before committing to a large one, and "
+            "consider passing a much lower value, e.g. 1-3)."
+        ),
+    )
+    parser.add_argument(
+        "--objective",
+        choices=["supervised", "td"],
+        default="supervised",
+        help=(
+            "supervised (default): regress every turn-boundary row directly toward that "
+            "player's eventual Won/Loss (fit_gcn, BCEWithLogitsLoss, full-batch). "
+            "td: semi-gradient TD(lambda) with eligibility traces (fit_gcn_td), "
+            "bootstrapping between temporally close states instead -- see gcn_fit.py's "
+            "module docstring and fit_gcn_td's own docstring for why this exists."
+        ),
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=1e-3,
+        help=(
+            "Plain-SGD learning rate for the TD(lambda) eligibility-trace update, only "
+            "used with --objective td (default: 1e-3, matching td_fit.fit_td_lambda's own "
+            "validated default -- gcn_fit.fit_gcn_td's own docstring explains why this is "
+            "plain SGD rather than Adam)."
+        ),
+    )
+    parser.add_argument(
+        "--lam",
+        type=float,
+        default=0.8,
+        help="TD(lambda) eligibility-trace decay, only used with --objective td (default: 0.8).",
+    )
+    parser.add_argument(
+        "--td-error-clip",
+        type=float,
+        default=5.0,
+        help=(
+            "Bound on |target - V(s_t)| before applying a TD(lambda) update, only used "
+            "with --objective td (default: 5.0)."
+        ),
     )
     args = parser.parse_args(sys.argv[1:])
 
     input_paths = _resolve_tdtraindata_inputs(args.input)
 
-    from global_conquest_analytics.gcn_fit import export_gcn, fit_gcn, load_board_schema
+    from global_conquest_analytics.gcn_fit import export_gcn, fit_gcn, fit_gcn_td, load_board_schema
 
     episodes, feature_names = _load_tdtraindata_episodes(input_paths)
     # Board topology is identical across every input file (one board, the
@@ -524,8 +571,20 @@ def fit_gcn_command() -> None:
         f"{len(feature_names)} features, {len(schema.order)}-node board.\n"
     )
 
-    fit = fit_gcn(episodes, feature_names, schema, epochs=args.epochs)
-    print(f"Fitted GCN after {args.epochs} epochs")
+    if args.objective == "td":
+        print(
+            f"objective=td: fitting sequentially, episode by episode -- this is much slower "
+            f"per epoch than --objective supervised's batched pass. Running {args.epochs} "
+            f"epoch(s) across {n_pairs} episodes; if this is your first run, consider "
+            f"Ctrl-C and retrying with --epochs 1 and a smaller --input first.\n"
+        )
+        fit = fit_gcn_td(
+            episodes, feature_names, schema, epochs=args.epochs, alpha=args.alpha,
+            lam=args.lam, td_error_clip=args.td_error_clip,
+        )
+    else:
+        fit = fit_gcn(episodes, feature_names, schema, epochs=args.epochs)
+    print(f"Fitted GCN ({args.objective}) after {args.epochs} epochs")
 
     output_path = (
         Path(args.output)

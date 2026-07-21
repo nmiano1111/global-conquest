@@ -52,6 +52,7 @@ objective, was the lever that mattered.
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -264,6 +265,141 @@ def fit_gcn(
     )
 
 
+def fit_gcn_td(
+    episodes: list[Episode],
+    feature_names: list[str],
+    schema: BoardSchema,
+    epochs: int = 1,
+    alpha: float = 1e-3,
+    lam: float = 0.8,
+    td_error_clip: float = 5.0,
+    seed: int = 0,
+    target_sync_episodes: int = 1,
+) -> GCNFit:
+    """Fit a GCNValueNetwork via semi-gradient TD(λ) with eligibility
+    traces over its full parameter set -- the GCN generalization of
+    td_fit.fit_td_lambda's already-validated linear-model algorithm
+    (there, ∇V(x)=x has a closed form; here the same role is played by
+    autograd). See this module's own docstring point (3) for why this
+    exists: td_fit.py documented that naive "regress every state to the
+    game's final outcome" (fit_gcn's own BCEWithLogitsLoss objective)
+    produces "erratic, flip-flopping predictions," and that TD(λ)'s
+    bootstrapping between temporally close states fixes it -- a finding
+    that was validated for a linear model but never re-applied to the
+    GCN, which has trained on the same abandoned objective the whole
+    time. fit_gcn is left untouched; this is a new, separate objective a
+    caller opts into (see cli.py's --objective flag), so both remain
+    directly comparable rather than one silently replacing the other.
+
+    Unlike fit_gcn's single vectorized full-batch pass, this must process
+    one episode at a time, sequentially within each episode: the
+    eligibility trace resets per episode, and each step's bootstrap
+    target depends on the *current* weights after every prior update
+    within that same episode. This is dramatically more expensive per
+    epoch than fit_gcn's batched BCE loop -- epochs defaults to 1, not
+    20; time a small run before committing to a large one (see cli.py's
+    fit-gcn --objective td help text).
+
+    Value stays in raw, unbounded model-output space (no sigmoid) --
+    matching GCNValueNetwork.forward's existing no-activation output and
+    fit_td_lambda's own raw-value convention, and consistent with how the
+    Go side actually consumes the score (gcnmodel.Model.Score, no
+    activation, ranking only). td_error_clip bounds |target - V(s_t)|
+    before it's applied, same defense-in-depth against divergence as
+    fit_td_lambda.
+
+    Update mechanism is a direct generalization of fit_td_lambda's own
+    plain-SGD eligibility-trace update (param += alpha * delta * trace),
+    using autograd for ∇_θV(s_t) in place of the linear model's closed-form
+    x. alpha defaults to 1e-3, matching fit_td_lambda's own validated
+    default. An earlier version of this function instead fed the
+    trace-shaped update into the same Adam optimizer fit_gcn trains this
+    exact network with successfully (param.grad = -(delta * trace),
+    optimizer.step()), reasoning that Adam's adaptive scaling would be
+    lower-risk than hand-tuning a raw alpha for a much larger nonlinear
+    model than fit_td_lambda's. In practice that was the opposite: it
+    reliably collapsed the network to a near-constant output (every state
+    scored ~identically) after a few epochs on the real training set,
+    while plain SGD at fit_td_lambda's own alpha does not, on the same
+    data. Adam's own momentum accumulation stacking with the trace's
+    already-temporal accumulation is the most likely cause of that
+    collapse; the empirical result (this module's test suite, and a real
+    per-territory discrimination check against actual training data) is
+    what settled it, not a theoretical argument either way.
+
+    Bootstrap targets come from a separate target_model, a copy of model
+    re-synced every target_sync_episodes episodes (default every
+    episode, i.e. frozen for exactly one episode at a time rather than
+    updated every single step within it) -- the standard DQN-style fix
+    for bootstrapping off a constantly-moving target. This alone did not
+    prevent the Adam-based collapse above at any sync interval tried (1
+    or 50 episodes); it's retained here because the working plain-SGD
+    configuration was validated with it in place, not because it was
+    independently proven necessary once Adam was removed.
+    """
+    torch.manual_seed(seed)
+
+    standardizer = fit_standardizer(episodes)
+    standardized = standardize_episodes(episodes, standardizer)
+    reshaped = reshape_episodes(standardized, feature_names, schema)
+
+    node_dim = reshaped[0].node_features.shape[2]
+    global_dim = reshaped[0].global_features.shape[1]
+    num_nodes = reshaped[0].node_features.shape[1]
+
+    model = GCNValueNetwork(node_dim=node_dim, global_dim=global_dim, num_nodes=num_nodes)
+    target_model = copy.deepcopy(model)
+    for target_param in target_model.parameters():
+        target_param.requires_grad_(False)
+    p = torch.tensor(propagation_matrix(schema), dtype=torch.float32)
+
+    rng = np.random.default_rng(seed)
+    episodes_seen = 0
+    for _ in range(epochs):
+        order = rng.permutation(len(reshaped))
+        for idx in order:
+            if episodes_seen % target_sync_episodes == 0:
+                target_model.load_state_dict(model.state_dict())
+            episodes_seen += 1
+
+            ep = reshaped[idx]
+            reward = 1.0 if ep.won else 0.0
+            t_count = ep.node_features.shape[0]
+            traces = {name: torch.zeros_like(param) for name, param in model.named_parameters()}
+
+            for t in range(t_count):
+                node_t = torch.tensor(ep.node_features[t : t + 1], dtype=torch.float32)
+                global_t = torch.tensor(ep.global_features[t : t + 1], dtype=torch.float32)
+
+                if t < t_count - 1:
+                    with torch.no_grad():
+                        next_node = torch.tensor(
+                            ep.node_features[t + 1 : t + 2], dtype=torch.float32
+                        )
+                        next_global = torch.tensor(
+                            ep.global_features[t + 1 : t + 2], dtype=torch.float32
+                        )
+                        target = target_model(next_node, next_global, p).item()
+                else:
+                    target = reward
+
+                model.zero_grad()
+                v_t = model(node_t, global_t, p)
+                v_t.backward()
+
+                delta = float(np.clip(target - v_t.item(), -td_error_clip, td_error_clip))
+                with torch.no_grad():
+                    for name, param in model.named_parameters():
+                        if param.grad is None:
+                            continue
+                        traces[name] = lam * traces[name] + param.grad
+                        param.data += alpha * delta * traces[name]
+
+    return GCNFit(
+        model=model, standardizer=standardizer, schema=schema, feature_names=feature_names
+    )
+
+
 def export_gcn(fit: GCNFit, output_path: Path) -> None:
     """Write fit as JSON matching backend/internal/bot/gcnmodel's
     expected shape: each layer's weight/bias (nn.Linear's weight is
@@ -307,6 +443,7 @@ __all__ = [
     "ReshapedEpisode",
     "export_gcn",
     "fit_gcn",
+    "fit_gcn_td",
     "load_board_schema",
     "node_feature_dim",
     "propagation_matrix",

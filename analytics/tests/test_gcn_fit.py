@@ -14,16 +14,18 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 from global_conquest_analytics.gcn_fit import (
     BoardSchema,
     export_gcn,
     fit_gcn,
+    fit_gcn_td,
     load_board_schema,
     node_feature_dim,
     propagation_matrix,
     reshape_episodes,
 )
-from global_conquest_analytics.td_fit import Episode
+from global_conquest_analytics.td_fit import Episode, standardize_episodes
 
 # A 3-node path graph A-B-C, 1 continent, matching tdstate's per-territory
 # stride (is_mine, army_fraction, continent one-hot x1, is_continent_border,
@@ -94,6 +96,52 @@ def _synthetic_episodes(n_per_class: int = 15) -> list[Episode]:
 def test_fit_gcn_produces_finite_weights_and_predictions() -> None:
     episodes = _synthetic_episodes()
     fit = fit_gcn(episodes, _FEATURE_NAMES, _SCHEMA, epochs=5)
+
+    for param in fit.model.parameters():
+        assert np.isfinite(param.detach().numpy()).all()
+
+
+def test_fit_gcn_td_discriminates_winning_from_losing_trajectories() -> None:
+    # Same idea as test_td_fit.py's own
+    # test_fit_td_lambda_discriminates_winning_from_losing_trajectories,
+    # generalized to the GCN's node/global feature layout: every feature
+    # climbs steadily toward 1.0 in the winning episode, decays steadily
+    # toward 0.0 in the losing one.
+    won = Episode(
+        game_id="g1",
+        player_id="p0",
+        features=np.tile(np.array([[0.2], [0.5], [0.8], [1.0]]), (1, 17)),
+        won=True,
+    )
+    lost = Episode(
+        game_id="g1",
+        player_id="p1",
+        features=np.tile(np.array([[0.8], [0.5], [0.2], [0.0]]), (1, 17)),
+        won=False,
+    )
+
+    fit = fit_gcn_td([won, lost], _FEATURE_NAMES, _SCHEMA, epochs=200, alpha=0.05, seed=0)
+
+    standardized = standardize_episodes([won, lost], fit.standardizer)
+    reshaped = reshape_episodes(standardized, _FEATURE_NAMES, _SCHEMA)
+    p = torch.tensor(propagation_matrix(_SCHEMA), dtype=torch.float32)
+
+    def final_score(index: int) -> float:
+        ep = reshaped[index]
+        node_t = torch.tensor(ep.node_features[-1:], dtype=torch.float32)
+        global_t = torch.tensor(ep.global_features[-1:], dtype=torch.float32)
+        with torch.no_grad():
+            return float(fit.model(node_t, global_t, p).item())
+
+    won_final = final_score(0)
+    lost_final = final_score(1)
+
+    assert won_final > lost_final
+
+
+def test_fit_gcn_td_produces_finite_weights() -> None:
+    episodes = _synthetic_episodes()
+    fit = fit_gcn_td(episodes, _FEATURE_NAMES, _SCHEMA, epochs=1)
 
     for param in fit.model.parameters():
         assert np.isfinite(param.detach().numpy()).all()

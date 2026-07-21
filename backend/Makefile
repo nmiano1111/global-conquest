@@ -153,12 +153,14 @@ tdtraindata-diverse: ## Generate a diversified TD(lambda) training set across ro
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux_all_train.jsonl
 	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,angry-v1,cluster-v1,pixie-v1,quo-v1 \
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_a_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies cluster-v1,pixie-v1,boscoe-v1,scored-v1 \
+	$(GO) run ./cmd/tdtraindata --strategies cluster-v1,pixie-v1,boscoe-v1,turtle-v1 \
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_b_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies angry-v1,quo-v1,killbot-v1,basic-v1 \
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,quo-v1,killbot-v1,turtle-v1 \
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_c_train.jsonl
 	$(GO) run ./cmd/tdtraindata --strategies scored-v1,boscoe-v1,killbot-v1 \
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/small_a_train.jsonl
 	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,scored-v1 \
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/baseline_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies turtle-v1,killbot-v1,angry-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/turtle_mix_train.jsonl
 	@echo "==> Done. Fit against the whole set from analytics/ with: poetry run fit-gcn --output /tmp/gcn.json"

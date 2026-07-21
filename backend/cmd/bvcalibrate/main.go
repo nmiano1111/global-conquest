@@ -82,8 +82,10 @@ func run(args []string) error {
 	parallel := fs.Int("parallel", runtime.NumCPU(), "Number of games to run concurrently")
 	gameMode := fs.String("game-mode", "auto_start", "Game construction mode: auto_start|manual")
 	maxTurns := fs.Int("max-turns", 0, "Override the default turn safety limit per game (0 = use the default)")
+	maxDuration := fs.Duration("max-duration", 0, "Override the default wall-clock safety limit per game (0 = use the default) -- raise this when calibrating an expensive per-decision strategy, e.g. --lookahead")
 	percentile := fs.Float64("percentile", 50, "Percentile (0-100) of each phase's positive score-delta distribution to use as its margin")
 	modelType := fs.String("model-type", "linear", "Value function model type to calibrate: linear|gcn")
+	lookahead := fs.Bool("lookahead", false, "Enable attack-phase opponent-reply lookahead (bot.ValueStrategy.Lookahead) during the observation pass -- use when calibrating margins for a lookahead-enabled evaluation run, since its score distribution differs from the 0-ply default")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -126,6 +128,9 @@ func run(args []string) error {
 	if *maxTurns > 0 {
 		limits.MaxTurns = *maxTurns
 	}
+	if *maxDuration > 0 {
+		limits.MaxDuration = *maxDuration
+	}
 
 	sem := make(chan struct{}, *parallel)
 	var wg sync.WaitGroup
@@ -138,6 +143,7 @@ func run(args []string) error {
 			defer func() { <-sem }()
 
 			bvs := bot.NewBoardValueStrategy(observedValue)
+			bvs.Lookahead = *lookahead
 			bvs.Observer = observe
 			registry := bot.StrategyRegistry{
 				bot.StrategyBasicV1:     bot.NewBasicStrategy(),

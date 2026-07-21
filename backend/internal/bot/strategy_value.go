@@ -8,6 +8,19 @@ import (
 	"github.com/nmiano1111/global-conquest/backend/internal/tdstate"
 )
 
+// StrategyGCNV1 is the registry ID for a live-play GCN-backed
+// ValueStrategy (bot.NewBoardValueStrategy over a *gcnmodel.Model) --
+// unlike basic-v1/scored-v1/killbot-v1, this one has no fixed weights
+// baked into the binary: cmd/backend only registers it when GCN_MODEL_PATH
+// is set (see main.go), loading whichever exported gcn_fit.py weights
+// file that path points at. Not yet proven to win real games -- every
+// GCN variant evaluated so far (varying training data diversity, a
+// shallow decision-time lookahead, a purpose-built defensive teacher
+// persona, and a TD(lambda) training objective, each independently
+// verified) has scored 0% across hundreds of evaluation games -- so this
+// is registered for local experimentation, not as a production default.
+const StrategyGCNV1 = "gcn-v1"
+
 // ValueStrategy scores candidates by the value of the resulting *board
 // state* (via internal/bot's afterstate helpers + internal/tdstate.Encode),
 // not local per-candidate features -- see
@@ -44,6 +57,15 @@ type ValueStrategy struct {
 	// order to fit AttackMargin/FortifyMargin -- not used during normal
 	// play.
 	Observer func(phase string, bestScore, currentScore float64)
+
+	// Lookahead, when true, scores each candidate attack in the attack
+	// phase via lookaheadAttackScore (internal/bot/lookahead.go) instead
+	// of a plain attackAfterstateBlend -- rolling one extra ply forward
+	// against the attacked territory's former owner's own best immediate
+	// reply, rather than picking greedily off the immediate afterstate
+	// alone. Defaults to false (today's calibrated behavior, unchanged).
+	// Only affects attack(); reinforce/occupy/fortify are untouched.
+	Lookahead bool
 }
 
 // NewBoardValueStrategy constructs a ValueStrategy from an already-loaded
@@ -81,19 +103,28 @@ func (s *ValueStrategy) currentStateScore(g *risk.Game, pi int) float64 {
 	return s.value.Score(tdstate.Encode(g, pi).Flatten())
 }
 
-// attack scores every legal attack's afterstate (attackAfterstateBlend)
-// and picks the highest, ending the attack phase instead when there's no
-// legal attack or the best one doesn't beat the current state's own
-// score.
+// attack scores every legal attack's afterstate (attackAfterstateBlend,
+// or lookaheadAttackScore when s.Lookahead is set) and picks the highest,
+// ending the attack phase instead when there's no legal attack or the
+// best one doesn't beat the current state's own score.
 func (s *ValueStrategy) attack(g *risk.Game, playerID string) (Command, Explanation, error) {
 	actions := risk.LegalAttacks(g, playerID)
 	pi := playerIndex(g, playerID)
 	currentScore := s.currentStateScore(g, pi)
 
+	scoreCandidate := func(a risk.AttackAction) float64 {
+		return s.value.Score(attackAfterstateBlend(g, pi, a))
+	}
+	if s.Lookahead {
+		scoreCandidate = func(a risk.AttackAction) float64 {
+			return lookaheadAttackScore(g, pi, a, s.value)
+		}
+	}
+
 	best := -1
 	var bestScore float64
 	for i, a := range actions {
-		score := s.value.Score(attackAfterstateBlend(g, pi, a))
+		score := scoreCandidate(a)
 		if best == -1 || score > bestScore {
 			best, bestScore = i, score
 		}
