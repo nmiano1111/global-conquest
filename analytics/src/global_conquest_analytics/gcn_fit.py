@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -275,6 +276,7 @@ def fit_gcn_td(
     td_error_clip: float = 5.0,
     seed: int = 0,
     target_sync_episodes: int = 1,
+    on_progress: Callable[[int, int, int, int], None] | None = None,
 ) -> GCNFit:
     """Fit a GCNValueNetwork via semi-gradient TD(λ) with eligibility
     traces over its full parameter set -- the GCN generalization of
@@ -336,6 +338,16 @@ def fit_gcn_td(
     or 50 episodes); it's retained here because the working plain-SGD
     configuration was validated with it in place, not because it was
     independently proven necessary once Adam was removed.
+
+    on_progress, if set, is called after every episode as
+    on_progress(epoch, epochs, episode_number, total_episodes) (epoch and
+    episode_number are both 1-indexed) -- a purely additive side-channel
+    that never influences training, the same pattern as
+    cmd/tournament's onProgress/internal/simulation.Config's
+    OnTurnBoundary on the Go side. Left unset, it costs nothing extra;
+    cli.py's fit-gcn --objective td supplies a throttled, print-based one,
+    since a full run here is sequential and can take a long time with no
+    other feedback otherwise.
     """
     torch.manual_seed(seed)
 
@@ -355,9 +367,9 @@ def fit_gcn_td(
 
     rng = np.random.default_rng(seed)
     episodes_seen = 0
-    for _ in range(epochs):
+    for epoch_idx in range(epochs):
         order = rng.permutation(len(reshaped))
-        for idx in order:
+        for episode_number, idx in enumerate(order, start=1):
             if episodes_seen % target_sync_episodes == 0:
                 target_model.load_state_dict(model.state_dict())
             episodes_seen += 1
@@ -394,6 +406,9 @@ def fit_gcn_td(
                             continue
                         traces[name] = lam * traces[name] + param.grad
                         param.data += alpha * delta * traces[name]
+
+            if on_progress is not None:
+                on_progress(epoch_idx + 1, epochs, episode_number, len(reshaped))
 
     return GCNFit(
         model=model, standardizer=standardizer, schema=schema, feature_names=feature_names

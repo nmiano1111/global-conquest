@@ -21,4 +21,4 @@ backend/raw/
 /backend/data/raw/tdtraindata/*.boardschema.json
 /backend/data/raw/tdtraindata/*.featurenames.json
 
-/backend/data/models/
+/models/

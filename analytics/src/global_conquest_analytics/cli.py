@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -578,10 +579,34 @@ def fit_gcn_command() -> None:
             f"epoch(s) across {n_pairs} episodes; if this is your first run, consider "
             f"Ctrl-C and retrying with --epochs 1 and a smaller --input first.\n"
         )
+
+        start = time.monotonic()
+        last_print = 0.0
+
+        def on_progress(epoch: int, total_epochs: int, episode: int, total_episodes: int) -> None:
+            nonlocal last_print
+            now = time.monotonic()
+            at_boundary = episode == total_episodes  # always show each epoch's 100%
+            if now - last_print < 2.0 and not at_boundary:
+                return
+            last_print = now
+            elapsed = now - start
+            done = (epoch - 1) * total_episodes + episode
+            total = total_epochs * total_episodes
+            rate = done / elapsed if elapsed > 0 else 0.0
+            eta = (total - done) / rate if rate > 0 else 0.0
+            print(
+                f"\r  epoch {epoch}/{total_epochs}, episode {episode}/{total_episodes} "
+                f"({100 * done / total:.1f}%) -- elapsed {elapsed:.0f}s, eta {eta:.0f}s",
+                end="",
+                flush=True,
+            )
+
         fit = fit_gcn_td(
             episodes, feature_names, schema, epochs=args.epochs, alpha=args.alpha,
-            lam=args.lam, td_error_clip=args.td_error_clip,
+            lam=args.lam, td_error_clip=args.td_error_clip, on_progress=on_progress,
         )
+        print()  # newline after the final \r-updated progress line
     else:
         fit = fit_gcn(episodes, feature_names, schema, epochs=args.epochs)
     print(f"Fitted GCN ({args.objective}) after {args.epochs} epochs")
