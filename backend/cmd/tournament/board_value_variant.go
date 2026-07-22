@@ -36,12 +36,11 @@ func (f *boardValueVariantFlag) Set(value string) error {
 
 // registerBoardValueVariants loads each entry's board_fit.py-exported
 // weights file (bot.LoadBoardValue) and adds a bot.ValueStrategy to
-// registry under its given ID, with Lookahead set from lookahead (see
-// --lookahead in main.go). Rejects any ID that collides with an
+// registry under its given ID. Rejects any ID that collides with an
 // already-registered strategy -- a built-in, a --weights-variant, or a
 // repeated --board-value-variant ID -- same rationale as
 // registerWeightsVariants.
-func registerBoardValueVariants(registry bot.StrategyRegistry, variants boardValueVariantFlag, lookahead bool) error {
+func registerBoardValueVariants(registry bot.StrategyRegistry, variants boardValueVariantFlag) error {
 	for _, v := range variants {
 		if _, exists := registry[v.StrategyID]; exists {
 			return fmt.Errorf("--board-value-variant %s: strategy ID is already registered (a built-in strategy or a duplicate variant)", v.StrategyID)
@@ -50,9 +49,7 @@ func registerBoardValueVariants(registry bot.StrategyRegistry, variants boardVal
 		if err != nil {
 			return fmt.Errorf("--board-value-variant %s: %w", v.StrategyID, err)
 		}
-		bvs := bot.NewBoardValueStrategy(value)
-		bvs.Lookahead = lookahead
-		registry[v.StrategyID] = bvs
+		registry[v.StrategyID] = bot.NewBoardValueStrategy(value)
 	}
 	return nil
 }

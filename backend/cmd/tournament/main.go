@@ -50,7 +50,7 @@ func run(args []string) (completed bool, err error) {
 	gameMode := fs.String("game-mode", "auto_start", "Game construction mode: auto_start|manual")
 	maxTurns := fs.Int("max-turns", 0, "Override the default turn safety limit per game (0 = use the default)")
 	maxCommands := fs.Int("max-commands", 0, "Override the default command safety limit per game (0 = use the default)")
-	maxDuration := fs.Duration("max-duration", 0, "Override the default wall-clock safety limit per game (0 = use the default) -- raise this for strategies with expensive per-decision scoring, e.g. --lookahead")
+	maxDuration := fs.Duration("max-duration", 0, "Override the default wall-clock safety limit per game (0 = use the default)")
 	format := fs.String("format", "text", "Aggregate output format: text|json")
 	output := fs.String("output", "", "Write the aggregate summary to this file instead of stdout")
 	rawOutput := fs.String("raw-output", "", "If set, write one JSON-encoded simulation.Result per line (JSONL) to this path as each game completes")
@@ -60,7 +60,6 @@ func run(args []string) (completed bool, err error) {
 	fs.Var(&boardValueVariants, "board-value-variant", "Register a whole-board value function strategy variant as <strategy-id>=<weights-path> (repeatable) -- see internal/bot.LoadBoardValue")
 	var gcnVariants gcnVariantFlag
 	fs.Var(&gcnVariants, "gcn-variant", "Register a GCN whole-board value function strategy variant as <strategy-id>=<weights-path> (repeatable) -- see internal/bot/gcnmodel.LoadModel")
-	lookahead := fs.Bool("lookahead", false, "Enable attack-phase opponent-reply lookahead (bot.ValueStrategy.Lookahead) on every --board-value-variant/--gcn-variant registered in this run")
 	if err := fs.Parse(args); err != nil {
 		return false, err
 	}
@@ -94,10 +93,10 @@ func run(args []string) (completed bool, err error) {
 	if err := registerWeightsVariants(registry, weightsVariants); err != nil {
 		return false, err
 	}
-	if err := registerBoardValueVariants(registry, boardValueVariants, *lookahead); err != nil {
+	if err := registerBoardValueVariants(registry, boardValueVariants); err != nil {
 		return false, err
 	}
-	if err := registerGCNVariants(registry, gcnVariants, *lookahead); err != nil {
+	if err := registerGCNVariants(registry, gcnVariants); err != nil {
 		return false, err
 	}
 	sim := simulation.NewSimulator(registry)

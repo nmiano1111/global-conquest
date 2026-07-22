@@ -36,14 +36,13 @@ func (f *gcnVariantFlag) Set(value string) error {
 
 // registerGCNVariants loads each entry's gcn_fit.py-exported weights file
 // (gcnmodel.LoadModel) and adds a bot.ValueStrategy scored by it to
-// registry under its given ID, with Lookahead set from lookahead (see
-// --lookahead in main.go) -- the same strategy shell --board-value-variant
-// uses, since bot.ValueStrategy is generic over bot.ValueFunction and
-// gcnmodel.Model implements it. Rejects any ID that collides with an
-// already-registered strategy -- a built-in, a
+// registry under its given ID -- the same strategy shell
+// --board-value-variant uses, since bot.ValueStrategy is generic
+// over bot.ValueFunction and gcnmodel.Model implements it. Rejects any ID
+// that collides with an already-registered strategy -- a built-in, a
 // --weights-variant/--board-value-variant, or a repeated --gcn-variant
 // ID -- same rationale as the other variant registrars.
-func registerGCNVariants(registry bot.StrategyRegistry, variants gcnVariantFlag, lookahead bool) error {
+func registerGCNVariants(registry bot.StrategyRegistry, variants gcnVariantFlag) error {
 	for _, v := range variants {
 		if _, exists := registry[v.StrategyID]; exists {
 			return fmt.Errorf("--gcn-variant %s: strategy ID is already registered (a built-in strategy or a duplicate variant)", v.StrategyID)
@@ -52,9 +51,7 @@ func registerGCNVariants(registry bot.StrategyRegistry, variants gcnVariantFlag,
 		if err != nil {
 			return fmt.Errorf("--gcn-variant %s: %w", v.StrategyID, err)
 		}
-		bvs := bot.NewBoardValueStrategy(model)
-		bvs.Lookahead = lookahead
-		registry[v.StrategyID] = bvs
+		registry[v.StrategyID] = bot.NewBoardValueStrategy(model)
 	}
 	return nil
 }

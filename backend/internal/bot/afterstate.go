@@ -74,63 +74,44 @@ func fortifyAfterstate(g *risk.Game, playerID string, from, to risk.Territory, a
 	return c
 }
 
-// attackBranches builds the two hypothetical afterstates for the given
-// attack -- "conquered" (ownership of a.To transfers to pi, both
-// territories' armies set from the forecast's expected losses) and "held"
-// (ownership unchanged, armies reduced by the same expected losses) --
-// along with the forecast's win probability, the weight attackAfterstateBlend
-// (and internal/bot/lookahead.go, which reuses this same pair for its
-// opponent-reply ply) blends them by. This is deliberately an
-// approximation, not an exact simulation of any one dice outcome --
-// matching 11_Learned_Board_Evaluation.md's own reasoning for why a
-// smoother expected-value signal beats rolling one stochastic sample
-// here. Never constructs a real risk.Game via risk.Game.Attack (which
-// would consume rng); both hypothetical states are built by directly
-// overwriting Territories entries on a copy.
-func attackBranches(g *risk.Game, pi int, a risk.AttackAction) (conquered, held *risk.Game, winProbability float64) {
+// attackAfterstateBlend computes a probability-weighted blend of two
+// hypothetical afterstates for the given attack, at the *encoded feature*
+// level (not the raw game state -- fractional army counts don't make
+// sense on a real risk.Game): "conquered" (ownership of a.To transfers to
+// pi, both territories' armies set from the forecast's expected losses)
+// weighted by the forecast's win probability, and "held" (ownership
+// unchanged, armies reduced by the same expected losses) weighted by the
+// complement. This is deliberately an approximation, not an exact
+// simulation of any one dice outcome -- matching
+// 11_Learned_Board_Evaluation.md's own reasoning for why a smoother
+// expected-value signal beats rolling one stochastic sample here. Never
+// constructs a real risk.Game via risk.Game.Attack (which would consume
+// rng); both hypothetical states are built by directly overwriting
+// Territories entries on a copy.
+func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 {
 	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
 	targetOwner := g.Territories[a.To].Owner
 
 	attackerRemaining := max(1, a.SourceArmies-round(forecast.ExpectedAttackerLosses))
 	defenderRemaining := max(1, a.TargetArmies-round(forecast.ExpectedDefenderLosses))
 
-	conquered = copyGameState(g)
+	conquered := copyGameState(g)
 	conquered.Territories[a.From] = risk.TerritoryState{Owner: pi, Armies: max(1, attackerRemaining-a.MaxAttackerDice)}
 	conquered.Territories[a.To] = risk.TerritoryState{Owner: pi, Armies: a.MaxAttackerDice}
 
-	held = copyGameState(g)
+	held := copyGameState(g)
 	held.Territories[a.From] = risk.TerritoryState{Owner: pi, Armies: attackerRemaining}
 	held.Territories[a.To] = risk.TerritoryState{Owner: targetOwner, Armies: defenderRemaining}
 
-	return conquered, held, forecast.WinProbability
-}
+	conqueredFeatures := tdstate.Encode(conquered, pi).Flatten()
+	heldFeatures := tdstate.Encode(held, pi).Flatten()
 
-// blendFeatures encodes conquered and held from perspective's point of
-// view and blends the two flattened feature vectors by p (conquered's
-// weight) and 1-p (held's weight) -- perspective is independent of
-// whichever player's attack actually produced the branches, so
-// lookahead.go can score a branch pair from pi's viewpoint even when the
-// branches came from an opponent's reply.
-func blendFeatures(conquered, held *risk.Game, perspective int, p float64) []float64 {
-	conqueredFeatures := tdstate.Encode(conquered, perspective).Flatten()
-	heldFeatures := tdstate.Encode(held, perspective).Flatten()
-
+	p := forecast.WinProbability
 	blended := make([]float64, len(conqueredFeatures))
 	for i := range blended {
 		blended[i] = p*conqueredFeatures[i] + (1-p)*heldFeatures[i]
 	}
 	return blended
-}
-
-// attackAfterstateBlend computes a probability-weighted blend of the two
-// hypothetical afterstates for the given attack, at the *encoded feature*
-// level (not the raw game state -- fractional army counts don't make
-// sense on a real risk.Game), from the acting player pi's own
-// perspective. See attackBranches/blendFeatures for the two steps this
-// composes.
-func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 {
-	conquered, held, p := attackBranches(g, pi, a)
-	return blendFeatures(conquered, held, pi, p)
 }
 
 func round(f float64) int {

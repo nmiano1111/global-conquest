@@ -72,7 +72,7 @@ func TestRegisterBoardValueVariantsAddsCustomStrategy(t *testing.T) {
 	}
 	variants := boardValueVariantFlag{{StrategyID: "board-value-candidate", WeightsPath: path}}
 
-	if err := registerBoardValueVariants(registry, variants, false); err != nil {
+	if err := registerBoardValueVariants(registry, variants); err != nil {
 		t.Fatalf("registerBoardValueVariants: %v", err)
 	}
 	if _, ok := registry.Get("board-value-candidate"); !ok {
@@ -89,7 +89,7 @@ func TestRegisterBoardValueVariantsRejectsBuiltinCollision(t *testing.T) {
 	}
 	variants := boardValueVariantFlag{{StrategyID: bot.StrategyScoredV1, WeightsPath: path}}
 
-	if err := registerBoardValueVariants(registry, variants, false); err == nil {
+	if err := registerBoardValueVariants(registry, variants); err == nil {
 		t.Fatal("expected an error when a --board-value-variant ID collides with a built-in strategy")
 	}
 }
@@ -106,7 +106,7 @@ func TestRegisterBoardValueVariantsRejectsDuplicateVariantID(t *testing.T) {
 		{StrategyID: "candidate", WeightsPath: path},
 	}
 
-	if err := registerBoardValueVariants(registry, variants, false); err == nil {
+	if err := registerBoardValueVariants(registry, variants); err == nil {
 		t.Fatal("expected an error for a duplicate --board-value-variant strategy ID")
 	}
 }
@@ -117,7 +117,7 @@ func TestRegisterBoardValueVariantsPropagatesLoadError(t *testing.T) {
 	}
 	variants := boardValueVariantFlag{{StrategyID: "candidate", WeightsPath: filepath.Join(t.TempDir(), "nope.json")}}
 
-	if err := registerBoardValueVariants(registry, variants, false); err == nil {
+	if err := registerBoardValueVariants(registry, variants); err == nil {
 		t.Fatal("expected an error when the weights file doesn't exist")
 	}
 }

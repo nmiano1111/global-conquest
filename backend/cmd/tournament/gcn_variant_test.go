@@ -87,7 +87,7 @@ func TestRegisterGCNVariantsAddsCustomStrategy(t *testing.T) {
 	}
 	variants := gcnVariantFlag{{StrategyID: "gcn-candidate", WeightsPath: path}}
 
-	if err := registerGCNVariants(registry, variants, false); err != nil {
+	if err := registerGCNVariants(registry, variants); err != nil {
 		t.Fatalf("registerGCNVariants: %v", err)
 	}
 	if _, ok := registry.Get("gcn-candidate"); !ok {
@@ -104,7 +104,7 @@ func TestRegisterGCNVariantsRejectsBuiltinCollision(t *testing.T) {
 	}
 	variants := gcnVariantFlag{{StrategyID: bot.StrategyScoredV1, WeightsPath: path}}
 
-	if err := registerGCNVariants(registry, variants, false); err == nil {
+	if err := registerGCNVariants(registry, variants); err == nil {
 		t.Fatal("expected an error when a --gcn-variant ID collides with a built-in strategy")
 	}
 }
@@ -121,7 +121,7 @@ func TestRegisterGCNVariantsRejectsDuplicateVariantID(t *testing.T) {
 		{StrategyID: "candidate", WeightsPath: path},
 	}
 
-	if err := registerGCNVariants(registry, variants, false); err == nil {
+	if err := registerGCNVariants(registry, variants); err == nil {
 		t.Fatal("expected an error for a duplicate --gcn-variant strategy ID")
 	}
 }
@@ -132,7 +132,7 @@ func TestRegisterGCNVariantsPropagatesLoadError(t *testing.T) {
 	}
 	variants := gcnVariantFlag{{StrategyID: "candidate", WeightsPath: filepath.Join(t.TempDir(), "nope.json")}}
 
-	if err := registerGCNVariants(registry, variants, false); err == nil {
+	if err := registerGCNVariants(registry, variants); err == nil {
 		t.Fatal("expected an error when the model file doesn't exist")
 	}
 }
