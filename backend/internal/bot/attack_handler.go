@@ -23,62 +23,86 @@ type TerminalState struct {
 // a <= 1 (attacker can't legally continue, matching risk.LegalAttacks'
 // >1 army requirement and ForecastAttack's identical base case).
 //
+// Computed via a forward dynamic-programming sweep over the (a, d)
+// grid, O(attackerArmies * defenderArmies) time and space -- not
+// backward recursion with a full terminal-state list memoized at every
+// internal (a, d) node, which this replaced after a full-game/
+// multi-game memory diagnostic found that approach spiking to hundreds
+// of MB (in a single call, not a leak across calls) once a real game
+// let armies pile into the hundreds on one border territory: every
+// internal node's memoized list can itself be O(a+d) long, so total
+// memory was roughly O(a*d*(a+d)) -- invisible at the small hand-picked
+// army counts unit tests use, explosive at realistic ones. Every
+// non-terminal state strictly decreases a+d each round (compared =
+// min(attackerDice, defenderDice) >= 1 whenever a>1 and d>0), so
+// processing (a, d) states in decreasing order of a+d is a valid
+// topological order: everything that can contribute to a state has
+// already been added by the time that state is processed.
+//
 // Returned in canonical worst-for-attacker -> best-for-attacker order
 // (see sortTerminalStates), matching the paper's own R ordering so
 // SelectTerminalState can walk the result directly with no separate
 // sort step.
 func AttackTerminalStates(attackerArmies, defenderArmies int) []TerminalState {
-	roundCache := make(map[[2]int][]diceOutcome)
-	memo := make(map[[2]int][]TerminalState)
-
-	var walk func(a, d int) []TerminalState
-	walk = func(a, d int) []TerminalState {
-		if d <= 0 {
-			return []TerminalState{{AttackerRemaining: a, DefenderRemaining: 0, Probability: 1}}
-		}
-		if a <= 1 {
-			return []TerminalState{{AttackerRemaining: a, DefenderRemaining: d, Probability: 1}}
-		}
-		key := [2]int{a, d}
-		if cached, ok := memo[key]; ok {
-			return cached
-		}
-
-		attackerDice := min(3, a-1)
-		defenderDice := min(2, d)
-		dist, ok := roundCache[[2]int{attackerDice, defenderDice}]
-		if !ok {
-			dist = roundDistribution(attackerDice, defenderDice)
-			roundCache[[2]int{attackerDice, defenderDice}] = dist
-		}
-
-		// Merged into a map keyed by (a, d) but accumulated in a
-		// first-seen order slice, not map iteration -- same
-		// determinism concern as roundDistribution's own comment:
-		// floating-point addition isn't associative, so the order
-		// terms are summed in has to be stable call to call.
-		merged := make(map[[2]int]float64)
-		var order [][2]int
-		for _, o := range dist {
-			for _, sub := range walk(a-o.AttackerLoss, d-o.DefenderLoss) {
-				subKey := [2]int{sub.AttackerRemaining, sub.DefenderRemaining}
-				if _, seen := merged[subKey]; !seen {
-					order = append(order, subKey)
-				}
-				merged[subKey] += o.P * sub.Probability
-			}
-		}
-
-		out := make([]TerminalState, 0, len(order))
-		for _, k := range order {
-			out = append(out, TerminalState{AttackerRemaining: k[0], DefenderRemaining: k[1], Probability: merged[k]})
-		}
-		out = sortTerminalStates(out)
-		memo[key] = out
-		return out
+	// Preserves the exact base-case priority defenderArmies<=0 checked
+	// before attackerArmies<=1, matching how the recursion this replaced
+	// resolved degenerate top-level inputs (never actually reached via
+	// risk.LegalAttacks-derived candidates in practice, but kept for a
+	// stable contract).
+	if defenderArmies <= 0 {
+		return []TerminalState{{AttackerRemaining: attackerArmies, DefenderRemaining: 0, Probability: 1}}
+	}
+	if attackerArmies <= 1 {
+		return []TerminalState{{AttackerRemaining: attackerArmies, DefenderRemaining: defenderArmies, Probability: 1}}
 	}
 
-	return walk(attackerArmies, defenderArmies)
+	a0, d0 := attackerArmies, defenderArmies
+	prob := make([][]float64, a0+1) // prob[a][d]: probability mass currently at (a, d)
+	for i := range prob {
+		prob[i] = make([]float64, d0+1)
+	}
+	prob[a0][d0] = 1
+
+	roundCache := make(map[[2]int][]diceOutcome)
+	terminal := make(map[[2]int]float64) // keyed by (finalAttacker, finalDefender)
+
+	for sum := a0 + d0; sum >= 2; sum-- {
+		for a := 1; a <= a0 && a <= sum; a++ {
+			d := sum - a
+			if d < 0 || d > d0 {
+				continue
+			}
+			p := prob[a][d]
+			if p == 0 {
+				continue
+			}
+			if d == 0 {
+				terminal[[2]int{a, 0}] += p
+				continue
+			}
+			if a == 1 {
+				terminal[[2]int{1, d}] += p
+				continue
+			}
+
+			attackerDice, defenderDice := min(3, a-1), min(2, d)
+			key := [2]int{attackerDice, defenderDice}
+			dist, ok := roundCache[key]
+			if !ok {
+				dist = roundDistribution(attackerDice, defenderDice)
+				roundCache[key] = dist
+			}
+			for _, o := range dist {
+				prob[a-o.AttackerLoss][d-o.DefenderLoss] += p * o.P
+			}
+		}
+	}
+
+	out := make([]TerminalState, 0, len(terminal))
+	for k, p := range terminal {
+		out = append(out, TerminalState{AttackerRemaining: k[0], DefenderRemaining: k[1], Probability: p})
+	}
+	return sortTerminalStates(out)
 }
 
 // sortTerminalStates orders terminal states worst-for-attacker (best-

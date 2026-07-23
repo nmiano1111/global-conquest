@@ -33,12 +33,22 @@ func TestBoardValueVariantFlagSetAccumulates(t *testing.T) {
 }
 
 func TestBoardValueVariantFlagSetRejectsMalformed(t *testing.T) {
-	cases := []string{"", "no-equals-sign", "=missing-id.json", "missing-path="}
+	cases := []string{"", "no-equals-sign", "=missing-id.json", "missing-path=", "a=b.json,search-depth=notanint", "a=b.json,risky=notafloat", "a=b.json,unknown-option=1", "a=b.json,search-breadth=notanint"}
 	for _, c := range cases {
 		var f boardValueVariantFlag
 		if err := f.Set(c); err == nil {
 			t.Errorf("Set(%q): expected an error", c)
 		}
+	}
+}
+
+func TestBoardValueVariantFlagSetParsesSearchOptions(t *testing.T) {
+	var f boardValueVariantFlag
+	if err := f.Set("candidate-a=weights.json,search-depth=2,risky=0.4,search-breadth=5"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if len(f) != 1 || f[0].SearchDepth != 2 || f[0].Risky != 0.4 || f[0].SearchBreadth != 5 {
+		t.Fatalf("unexpected parse result: %+v", f)
 	}
 }
 
@@ -108,6 +118,30 @@ func TestRegisterBoardValueVariantsRejectsDuplicateVariantID(t *testing.T) {
 
 	if err := registerBoardValueVariants(registry, variants); err == nil {
 		t.Fatal("expected an error for a duplicate --board-value-variant strategy ID")
+	}
+}
+
+func TestRegisterBoardValueVariantsPropagatesSearchOptions(t *testing.T) {
+	path := writeMinimalBoardValueFile(t)
+
+	registry := bot.StrategyRegistry{
+		bot.StrategyBasicV1: bot.NewBasicStrategy(),
+	}
+	variants := boardValueVariantFlag{{StrategyID: "board-value-search", WeightsPath: path, SearchDepth: 2, Risky: 0.4, SearchBreadth: 5}}
+
+	if err := registerBoardValueVariants(registry, variants); err != nil {
+		t.Fatalf("registerBoardValueVariants: %v", err)
+	}
+	strategy, ok := registry.Get("board-value-search")
+	if !ok {
+		t.Fatal("expected board-value-search to be registered")
+	}
+	bvs, ok := strategy.(*bot.ValueStrategy)
+	if !ok {
+		t.Fatalf("expected *bot.ValueStrategy, got %T", strategy)
+	}
+	if bvs.AttackSearchDepth != 2 || bvs.Risky != 0.4 || bvs.AttackSearchBreadth != 5 {
+		t.Errorf("expected AttackSearchDepth=2 Risky=0.4 AttackSearchBreadth=5, got AttackSearchDepth=%d Risky=%v AttackSearchBreadth=%d", bvs.AttackSearchDepth, bvs.Risky, bvs.AttackSearchBreadth)
 	}
 }
 

@@ -117,3 +117,32 @@ func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 
 func round(f float64) int {
 	return int(f + 0.5)
 }
+
+// applyTerminalOutcome materializes one Attack Handler TerminalState (a
+// concrete, real fight-to-a-conclusion result -- see attack_handler.go)
+// into a copy of g. Unlike attackAfterstateBlend, which averages the
+// "conquered" and "held" branches into a single feature vector for
+// one-shot scoring, this produces an actual valid *risk.Game so a
+// sequence search (attack_search.go) can keep reasoning from it as a
+// real board state instead of chaining approximations of
+// approximations.
+//
+// Deliberately does not model the real engine's PhaseOccupy sub-step:
+// on conquest, occupyArmies moves into a.To immediately, matching
+// attackAfterstateBlend's existing MaxAttackerDice heuristic rather than
+// searching the real occupy choice space -- occupy()'s own
+// LegalOccupations search stays authoritative once the real engine
+// actually gets there. This keeps the sequence search scoped to "which
+// attacks," not also "how many armies to occupy with," per
+// Search_Integration_Roadmap_with_References.md's Phase 2 scoping.
+func applyTerminalOutcome(g *risk.Game, pi int, a risk.AttackAction, outcome TerminalState, occupyArmies int) *risk.Game {
+	c := copyGameState(g)
+	if outcome.DefenderRemaining == 0 {
+		c.Territories[a.To] = risk.TerritoryState{Owner: pi, Armies: occupyArmies}
+		c.Territories[a.From] = risk.TerritoryState{Owner: pi, Armies: max(1, outcome.AttackerRemaining-occupyArmies)}
+		return c
+	}
+	c.Territories[a.From] = risk.TerritoryState{Owner: pi, Armies: outcome.AttackerRemaining}
+	c.Territories[a.To] = risk.TerritoryState{Owner: g.Territories[a.To].Owner, Armies: outcome.DefenderRemaining}
+	return c
+}

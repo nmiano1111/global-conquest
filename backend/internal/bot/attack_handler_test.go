@@ -3,6 +3,7 @@ package bot
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 func sumProbabilities(states []TerminalState) float64 {
@@ -75,6 +76,45 @@ func TestAttackTerminalStates_HandComputed(t *testing.T) {
 	}
 	if math.Abs(won.Probability-15.0/36) > 1e-9 {
 		t.Errorf("won state probability = %v, want 15/36", won.Probability)
+	}
+}
+
+// TestAttackTerminalStates_LargeArmiesStayFast is a regression test for
+// a real bug: the original backward-recursive implementation memoized a
+// full terminal-state list (up to O(a+d) long) at every one of the
+// O(a*d) internal (a, d) states it visited, so total memory was roughly
+// O(a*d*(a+d)) -- invisible at every other test's small hand-picked
+// army counts, but a multi-hundred-MB single-call spike once a real,
+// longer game piled armies into the hundreds on one border territory
+// (found via a full-game/multi-game memory diagnostic, not a unit
+// test). The current forward-DP implementation is O(a*d); this asserts
+// it stays fast and correct at army counts a genuinely long game can
+// reach.
+func TestAttackTerminalStates_LargeArmiesStayFast(t *testing.T) {
+	const a, d = 300, 250
+
+	start := time.Now()
+	states := AttackTerminalStates(a, d)
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Errorf("AttackTerminalStates(%d, %d) took %v, want well under 1s", a, d, elapsed)
+	}
+	if len(states) == 0 {
+		t.Fatalf("AttackTerminalStates(%d, %d): got no terminal states", a, d)
+	}
+	if total := sumProbabilities(states); math.Abs(total-1) > 1e-9 {
+		t.Errorf("AttackTerminalStates(%d, %d): probabilities sum to %v, want 1", a, d, total)
+	}
+
+	var won float64
+	for _, s := range states {
+		if s.DefenderRemaining == 0 {
+			won += s.Probability
+		}
+	}
+	if want := ForecastAttack(a, d).WinProbability; math.Abs(won-want) > 1e-9 {
+		t.Errorf("AttackTerminalStates(%d, %d): summed win probability = %v, ForecastAttack says %v", a, d, won, want)
 	}
 }
 

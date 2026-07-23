@@ -33,12 +33,22 @@ func TestGCNVariantFlagSetAccumulates(t *testing.T) {
 }
 
 func TestGCNVariantFlagSetRejectsMalformed(t *testing.T) {
-	cases := []string{"", "no-equals-sign", "=missing-id.json", "missing-path="}
+	cases := []string{"", "no-equals-sign", "=missing-id.json", "missing-path=", "a=b.json,search-depth=notanint", "a=b.json,risky=notafloat", "a=b.json,unknown-option=1", "a=b.json,search-breadth=notanint"}
 	for _, c := range cases {
 		var f gcnVariantFlag
 		if err := f.Set(c); err == nil {
 			t.Errorf("Set(%q): expected an error", c)
 		}
+	}
+}
+
+func TestGCNVariantFlagSetParsesSearchOptions(t *testing.T) {
+	var f gcnVariantFlag
+	if err := f.Set("candidate-a=weights.json,search-depth=2,risky=0.4,search-breadth=5"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if len(f) != 1 || f[0].SearchDepth != 2 || f[0].Risky != 0.4 || f[0].SearchBreadth != 5 {
+		t.Fatalf("unexpected parse result: %+v", f)
 	}
 }
 
@@ -123,6 +133,30 @@ func TestRegisterGCNVariantsRejectsDuplicateVariantID(t *testing.T) {
 
 	if err := registerGCNVariants(registry, variants); err == nil {
 		t.Fatal("expected an error for a duplicate --gcn-variant strategy ID")
+	}
+}
+
+func TestRegisterGCNVariantsPropagatesSearchOptions(t *testing.T) {
+	path := writeMinimalGCNFile(t)
+
+	registry := bot.StrategyRegistry{
+		bot.StrategyBasicV1: bot.NewBasicStrategy(),
+	}
+	variants := gcnVariantFlag{{StrategyID: "gcn-search", WeightsPath: path, SearchDepth: 2, Risky: 0.4, SearchBreadth: 5}}
+
+	if err := registerGCNVariants(registry, variants); err != nil {
+		t.Fatalf("registerGCNVariants: %v", err)
+	}
+	strategy, ok := registry.Get("gcn-search")
+	if !ok {
+		t.Fatal("expected gcn-search to be registered")
+	}
+	bvs, ok := strategy.(*bot.ValueStrategy)
+	if !ok {
+		t.Fatalf("expected *bot.ValueStrategy, got %T", strategy)
+	}
+	if bvs.AttackSearchDepth != 2 || bvs.Risky != 0.4 || bvs.AttackSearchBreadth != 5 {
+		t.Errorf("expected AttackSearchDepth=2 Risky=0.4 AttackSearchBreadth=5, got AttackSearchDepth=%d Risky=%v AttackSearchBreadth=%d", bvs.AttackSearchDepth, bvs.Risky, bvs.AttackSearchBreadth)
 	}
 }
 

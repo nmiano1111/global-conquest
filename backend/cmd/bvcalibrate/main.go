@@ -85,6 +85,9 @@ func run(args []string) error {
 	maxDuration := fs.Duration("max-duration", 0, "Override the default wall-clock safety limit per game (0 = use the default)")
 	percentile := fs.Float64("percentile", 50, "Percentile (0-100) of each phase's positive score-delta distribution to use as its margin")
 	modelType := fs.String("model-type", "linear", "Value function model type to calibrate: linear|gcn")
+	searchDepth := fs.Int("search-depth", 0, "If > 0, calibrate margins under an N-ply attack sequence search (bot.ValueStrategy.AttackSearchDepth) instead of the single-ply blend -- the calibrated margin only applies to whatever depth/risky/breadth it was calibrated at, the same reason a weights file needs its own calibration run (see internal/bot/attack_search.go)")
+	risky := fs.Float64("risky", 0.3, "Attack Handler Risky threshold (bot.ValueStrategy.Risky), only consulted when --search-depth > 0")
+	searchBreadth := fs.Int("search-breadth", 0, "If > 0 and --search-depth > 0, cap each search level to this many top-scoring candidates (bot.ValueStrategy.AttackSearchBreadth) -- unpruned search at depth >= 2 is too slow to finish enough games inside the default per-game duration limit for a meaningful sample; see internal/bot/attack_search.go")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -142,6 +145,9 @@ func run(args []string) error {
 			defer func() { <-sem }()
 
 			bvs := bot.NewBoardValueStrategy(observedValue)
+			bvs.AttackSearchDepth = *searchDepth
+			bvs.Risky = *risky
+			bvs.AttackSearchBreadth = *searchBreadth
 			bvs.Observer = observe
 			registry := bot.StrategyRegistry{
 				bot.StrategyBasicV1:     bot.NewBasicStrategy(),

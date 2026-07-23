@@ -63,6 +63,41 @@ type ValueStrategy struct {
 	// order to fit AttackMargin/FortifyMargin -- not used during normal
 	// play.
 	Observer func(phase string, bestScore, currentScore float64)
+
+	// AttackSearchDepth, when > 0, replaces attack()'s single-ply
+	// attackAfterstateBlend scoring with a real search over sequences of
+	// up to this many of our own consecutive attacks (Phase 2 of
+	// project-docs/bot_player/proposals/
+	// Search_Integration_Roadmap_with_References.md) -- see
+	// attack_search.go. Every legal attack is explored at every level
+	// (unlike the removed LookaheadDepth, which only ever followed one
+	// greedily-picked path), and each attack is materialized via
+	// AttackTerminalStates/SelectTerminalState into one concrete
+	// deterministic board state, not a probability blend. Zero (the
+	// default) keeps the original, already-validated single-ply behavior
+	// unchanged.
+	AttackSearchDepth int
+
+	// Risky is the Attack Handler's terminal-state selection threshold
+	// (paper Section 3.3) -- higher walks further toward
+	// attacker-favorable outcomes before committing. Only consulted when
+	// AttackSearchDepth > 0. Values <= 0 fall back to the paper's own
+	// default, 0.3 (see attack_search.go's risky()).
+	Risky float64
+
+	// AttackSearchBreadth, when > 0 and AttackSearchDepth > 0, caps how
+	// many top-scoring legal attacks are explored at each level of the
+	// sequence search, ranked by the existing single-ply
+	// attackAfterstateBlend score -- a minimal, pulled-forward version of
+	// Phase 4's heuristic pruning (project-docs/bot_player/proposals/
+	// Search_Integration_Roadmap_with_References.md), found necessary in
+	// practice: unpruned search at depth >= 2 is too slow to finish
+	// enough tournament games inside the default 30s/game budget for a
+	// meaningful win-rate sample (measured: depth=2 ~2.5s/decision,
+	// depth=3 ~88.6s/decision, vs ~70ms for depth<=1). Zero (the
+	// default) means unlimited -- explore every legal attack, matching
+	// Phase 2's original, already-tested behavior.
+	AttackSearchBreadth int
 }
 
 // NewBoardValueStrategy constructs a ValueStrategy from an already-loaded
@@ -100,28 +135,40 @@ func (s *ValueStrategy) currentStateScore(g *risk.Game, pi int) float64 {
 	return s.value.Score(tdstate.Encode(g, pi).Flatten())
 }
 
-// attack scores every legal attack's afterstate (attackAfterstateBlend)
-// and picks the highest, ending the attack phase instead when there's no
-// legal attack or the best one doesn't beat the current state's own
-// score.
+// attack picks a candidate to attack with, ending the attack phase
+// instead when there's no legal attack or the best one doesn't beat the
+// current state's own score. When AttackSearchDepth > 0, the candidate
+// comes from a real search over sequences of our own attacks
+// (attackSequenceSearch, attack_search.go); otherwise (the original,
+// already-validated default) every legal attack's afterstate is scored
+// independently via the single-ply attackAfterstateBlend and the
+// highest picked.
 func (s *ValueStrategy) attack(g *risk.Game, playerID string) (Command, Explanation, error) {
-	actions := risk.LegalAttacks(g, playerID)
 	pi := playerIndex(g, playerID)
 	currentScore := s.currentStateScore(g, pi)
 
+	var a risk.AttackAction
 	best := -1
 	var bestScore float64
-	for i, a := range actions {
-		score := s.value.Score(attackAfterstateBlend(g, pi, a))
-		if best == -1 || score > bestScore {
-			best, bestScore = i, score
+	if s.AttackSearchDepth > 0 {
+		var ok bool
+		a, bestScore, ok = s.attackSequenceSearch(g, playerID, pi, s.AttackSearchDepth, s.risky())
+		if ok {
+			best = 0
+		}
+	} else {
+		actions := risk.LegalAttacks(g, playerID)
+		for i, candidate := range actions {
+			score := s.value.Score(attackAfterstateBlend(g, pi, candidate))
+			if best == -1 || score > bestScore {
+				best, bestScore, a = i, score, candidate
+			}
 		}
 	}
 
 	if !s.clearsMargin("attack", best, bestScore, currentScore, s.value.AttackMargin()) {
 		return Command{Action: ActionEndAttack}, Explanation{Score: bestScore}, nil
 	}
-	a := actions[best]
 	return Command{
 		Action:       ActionAttack,
 		From:         string(a.From),
