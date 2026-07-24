@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/tdstate"
@@ -224,17 +225,82 @@ func TestCandidateAttacksReturnsTopScoringByBreadth(t *testing.T) {
 	bvs := NewBoardValueStrategy(multiFeatureBoardValue(t, weights))
 	pi := playerIndex(g, p0)
 
-	all := bvs.candidateAttacks(g, p0, pi, 0)
+	all := bvs.candidateAttacks(g, p0, pi, 0, make(forecastCache))
 	if len(all) != 3 {
 		t.Fatalf("expected all 3 legal attacks from Alaska with breadth=0, got %d: %+v", len(all), all)
 	}
 
-	top2 := bvs.candidateAttacks(g, p0, pi, 2)
+	top2 := bvs.candidateAttacks(g, p0, pi, 2, make(forecastCache))
 	if len(top2) != 2 {
 		t.Fatalf("expected exactly 2 candidates with breadth=2, got %d: %+v", len(top2), top2)
 	}
 	if top2[0].To != "Alberta" || top2[1].To != "Kamchatka" {
 		t.Fatalf("expected [Alberta, Kamchatka] in descending-score order (Northwest Territory scores 0, excluded), got %+v", top2)
+	}
+}
+
+func TestForecastCacheReusesResultsAndMatchesForecastAttack(t *testing.T) {
+	cache := make(forecastCache)
+
+	first := cache.forecast(200, 150)
+	want := ForecastAttack(200, 150)
+	if first != want {
+		t.Fatalf("forecastCache.forecast(200, 150) = %+v, want %+v (must match ForecastAttack exactly)", first, want)
+	}
+	if len(cache) != 1 {
+		t.Fatalf("expected 1 cached entry after one forecast() call, got %d", len(cache))
+	}
+
+	second := cache.forecast(200, 150)
+	if second != first {
+		t.Fatalf("second forecast(200, 150) = %+v, want the identical cached %+v", second, first)
+	}
+	if len(cache) != 1 {
+		t.Fatalf("expected repeated call with the same (a, d) not to add a new entry, got %d entries", len(cache))
+	}
+
+	cache.forecast(50, 30)
+	if len(cache) != 2 {
+		t.Fatalf("expected a distinct (a, d) pair to add a new entry, got %d entries", len(cache))
+	}
+}
+
+// TestAttackSequenceSearchDepth3StaysFastAtLargeArmyCounts is a
+// regression test for a real bug: at depth=3, candidateAttacks' ranking
+// pass calls ForecastAttack once per legal attack at every one of the
+// (up to breadth^depth) tree nodes visited, and before forecastCache
+// existed, none of that was shared across nodes -- a real depth=3
+// decision against a state with armies in the hundreds (the scale a
+// long game can reach, see the roadmap doc's Phase 2 entry) failed to
+// finish within a 30-minute timeout. This constructs a comparably
+// large-army, multi-candidate scenario and asserts depth=3 completes
+// quickly now that the cache is shared across the whole search tree.
+func TestAttackSequenceSearchDepth3StaysFastAtLargeArmyCounts(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseAttack
+
+	board := risk.ClassicBoard()
+	for i, terr := range board.Order {
+		owner := i % 3
+		armies := 300
+		if owner == 0 {
+			armies = 500
+		}
+		g.Territories[terr] = risk.TerritoryState{Owner: owner, Armies: armies}
+	}
+
+	bvs := NewBoardValueStrategy(singleFeatureBoardValue(t, "my_army_fraction", 1.0))
+	bvs.AttackSearchDepth = 3
+	bvs.AttackSearchBreadth = 5
+
+	start := time.Now()
+	_, _, err := bvs.NextCommand(context.Background(), g, p0)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("depth=3 decision at large army counts took %v, want well under 5s", elapsed)
 	}
 }
 

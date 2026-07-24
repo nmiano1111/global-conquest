@@ -89,7 +89,25 @@ func fortifyAfterstate(g *risk.Game, playerID string, from, to risk.Territory, a
 // rng); both hypothetical states are built by directly overwriting
 // Territories entries on a copy.
 func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 {
-	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
+	return attackAfterstateBlendWithForecast(g, pi, a, ForecastAttack)
+}
+
+// attackAfterstateBlendWithForecast is attackAfterstateBlend generalized
+// over which function computes each candidate's CombatForecast --
+// exists so the sequence search (attack_search.go) can inject a
+// per-decision memoized forecaster instead of always calling
+// ForecastAttack directly. ForecastAttack only memoizes *within* one
+// call; the search's candidate-ranking pass (candidateAttacks) calls
+// this once per legal attack at every tree node it visits, and once
+// armies reach the scale a long game can produce, repeatedly
+// re-deriving the same (or a nearby) (a, d) forecast at many different
+// nodes becomes a real, measured cost (a depth=3 search's ranking
+// passes alone didn't finish within 30 minutes on one real decision
+// before this existed). attackAfterstateBlend itself is unchanged --
+// existing callers keep ForecastAttack's own call-scoped memoization,
+// no behavior change.
+func attackAfterstateBlendWithForecast(g *risk.Game, pi int, a risk.AttackAction, forecastFn func(attackerArmies, defenderArmies int) CombatForecast) []float64 {
+	forecast := forecastFn(a.SourceArmies, a.TargetArmies)
 	targetOwner := g.Territories[a.To].Owner
 
 	attackerRemaining := max(1, a.SourceArmies-round(forecast.ExpectedAttackerLosses))
