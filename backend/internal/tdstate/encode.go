@@ -50,7 +50,26 @@ type GlobalFeatures struct {
 	MyIncomeFraction                float64
 	StrongestEnemyArmyFraction      float64
 	StrongestEnemyTerritoryFraction float64
-	ContinentArmyFraction           []float64 // sortedContinents(board) order
+	// WeakestEnemyArmyFraction/WeakestEnemyTerritoryFraction both describe
+	// the SAME living rival -- whoever has the fewest total armies -- not
+	// independent per-metric minimums the way StrongestEnemy* above are.
+	// Mirrors internal/bot's killTarget (geometry.go), the actual signal
+	// killbot-v1's elimination-hunting behavior runs on: it scans every
+	// living rival and picks whichever has the lowest (card-adjusted)
+	// army total. Not imported (this package must not depend on
+	// internal/bot) and deliberately simpler -- no card-adjustment or
+	// beatability margin, since those are action-selection heuristics,
+	// not a general positional signal a value function needs. Recomputed
+	// fresh every Encode call, exactly like killTarget itself -- there is
+	// no identity to track across turns, so unlike an earlier per-seat
+	// scheme (shelved after real evaluation showed it net-regressed win
+	// rate against killbot, see
+	// project-docs/bot_player/proposals/Feature_Expansion_Roadmap_with_References.md),
+	// this has no "rank flicker" failure mode to worry about: a scalar
+	// snapshot has nothing to flicker between.
+	WeakestEnemyArmyFraction      float64
+	WeakestEnemyTerritoryFraction float64
+	ContinentArmyFraction         []float64 // sortedContinents(board) order
 	CardFraction                    float64   // len(cards) / cardFractionCap
 	// Defence estimates how thin pi's weakest defended front is, per
 	// continent pi fully owns -- ported from Jamie Carr's "Using Graph
@@ -277,6 +296,7 @@ func encodeGlobal(g *risk.Game, pi int, continents []risk.Continent, totalArmies
 	totalTerritories := len(g.Board.Order)
 
 	var strongestEnemyArmies, strongestEnemyTerritories int
+	weakestEnemy := -1
 	for i, p := range g.Players {
 		if i == pi || p.Eliminated {
 			continue
@@ -287,6 +307,14 @@ func encodeGlobal(g *risk.Game, pi int, continents []risk.Continent, totalArmies
 		if territoriesOf[i] > strongestEnemyTerritories {
 			strongestEnemyTerritories = territoriesOf[i]
 		}
+		if weakestEnemy == -1 || armiesOf[i] < armiesOf[weakestEnemy] {
+			weakestEnemy = i
+		}
+	}
+	var weakestEnemyArmies, weakestEnemyTerritories int
+	if weakestEnemy != -1 {
+		weakestEnemyArmies = armiesOf[weakestEnemy]
+		weakestEnemyTerritories = territoriesOf[weakestEnemy]
 	}
 
 	continentArmyFraction := make([]float64, len(continents))
@@ -321,6 +349,8 @@ func encodeGlobal(g *risk.Game, pi int, continents []risk.Continent, totalArmies
 		MyIncomeFraction:                incomeFraction(g, pi),
 		StrongestEnemyArmyFraction:      float64(strongestEnemyArmies) / float64(totalArmies),
 		StrongestEnemyTerritoryFraction: float64(strongestEnemyTerritories) / float64(totalTerritories),
+		WeakestEnemyArmyFraction:        float64(weakestEnemyArmies) / float64(totalArmies),
+		WeakestEnemyTerritoryFraction:   float64(weakestEnemyTerritories) / float64(totalTerritories),
 		ContinentArmyFraction:           continentArmyFraction,
 		CardFraction:                    float64(cardCount) / cardFractionCap,
 		Defence:                         computeDefence(g, pi, continents, totalArmies),

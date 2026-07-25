@@ -149,18 +149,41 @@ seed-go: ## Seed DB with test users/games (hashes password='password' via auth m
 tdtraindata-diverse: ## Generate a diversified TD(lambda) training set across rotating strategy lineups (override TD_GAMES to change games-per-lineup, default 200)
 	@mkdir -p $(TD_OUTPUT_DIR)
 	@echo "==> Generating diversified tdtraindata set ($(TD_GAMES) games per lineup) into $(TD_OUTPUT_DIR)"
-	$(GO) run ./cmd/tdtraindata --strategies angry-v1,cluster-v1,pixie-v1,quo-v1,boscoe-v1,killbot-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux_all_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,angry-v1,cluster-v1,pixie-v1,quo-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_a_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies cluster-v1,pixie-v1,boscoe-v1,turtle-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_b_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies angry-v1,quo-v1,killbot-v1,turtle-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_c_train.jsonl
+	# Player count is fixed per lineup (= len(--strategies)), and encode.go's
+	# enemySeatCount=5 owner-slot/fraction features only get populated up to
+	# numPlayers-1 enemies -- so seat coverage across the whole set depends on
+	# how many lineups exist at each player count, not just total game count.
+	# Kept at exactly 3 lineups per player count (3/4/5/6) so every seat slot
+	# sees the same number of games, instead of skewing toward whichever
+	# counts happen to have more lineups.
+	#
+	# -- 3 players (seats 1-2 populated) --
 	$(GO) run ./cmd/tdtraindata --strategies scored-v1,boscoe-v1,killbot-v1 \
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/small_a_train.jsonl
 	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,scored-v1 \
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/baseline_train.jsonl
 	$(GO) run ./cmd/tdtraindata --strategies turtle-v1,killbot-v1,angry-v1 \
 		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/turtle_mix_train.jsonl
+	# -- 4 players (seats 1-3 populated) --
+	$(GO) run ./cmd/tdtraindata --strategies cluster-v1,pixie-v1,boscoe-v1,turtle-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_b_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,quo-v1,killbot-v1,turtle-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_c_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies basic-v1,killbot-v1,boscoe-v1,quo-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_d_train.jsonl
+	# -- 5 players (seats 1-4 populated) -- previously zero lineups at this
+	# count, so seat 4 had no data outside 6-player games.
+	$(GO) run ./cmd/tdtraindata --strategies basic-v1,angry-v1,cluster-v1,quo-v1,killbot-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_5a_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies scored-v1,pixie-v1,boscoe-v1,turtle-v1,killbot-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_5b_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,boscoe-v1,quo-v1,turtle-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_5c_train.jsonl
+	# -- 6 players (seats 1-5 populated) --
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,cluster-v1,pixie-v1,quo-v1,boscoe-v1,killbot-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux_all_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,angry-v1,cluster-v1,pixie-v1,quo-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_a_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,boscoe-v1,killbot-v1,turtle-v1,quo-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_e_train.jsonl
 	@echo "==> Done. Fit against the whole set from analytics/ with: poetry run fit-gcn --output /tmp/gcn.json"

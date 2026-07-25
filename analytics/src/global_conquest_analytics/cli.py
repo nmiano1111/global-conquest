@@ -556,6 +556,18 @@ def fit_gcn_command() -> None:
             "with --objective td (default: 5.0)."
         ),
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help=(
+            "Random seed for weight initialization (torch.manual_seed) and, for "
+            "--objective td, episode ordering (default: 0). Training is otherwise "
+            "fully deterministic given identical input data and hyperparameters, so "
+            "this is the only way to get a genuinely different training draw -- e.g. "
+            "to check whether an unusual result is a real effect or a bad draw."
+        ),
+    )
     args = parser.parse_args(sys.argv[1:])
 
     input_paths = _resolve_tdtraindata_inputs(args.input)
@@ -605,10 +617,11 @@ def fit_gcn_command() -> None:
         fit = fit_gcn_td(
             episodes, feature_names, schema, epochs=args.epochs, alpha=args.alpha,
             lam=args.lam, td_error_clip=args.td_error_clip, on_progress=on_progress,
+            seed=args.seed,
         )
         print()  # newline after the final \r-updated progress line
     else:
-        fit = fit_gcn(episodes, feature_names, schema, epochs=args.epochs)
+        fit = fit_gcn(episodes, feature_names, schema, epochs=args.epochs, seed=args.seed)
     print(f"Fitted GCN ({args.objective}) after {args.epochs} epochs")
 
     output_path = (
