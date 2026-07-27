@@ -1,52 +1,15 @@
-import { Circle, Container, Graphics, Text, TextStyle } from "pixi.js";
+import { Circle, Container, Graphics, Text } from "pixi.js";
+import { HIGHLIGHT_STYLE, UNOWNED_FILL } from "./highlightStyles";
+import { ARMY_TEXT_STYLE, NAME_TEXT_STYLE } from "./territoryTextStyles";
 import type { TerritoryDisplayState, TerritoryHighlightKind } from "./types";
 
 const TERRITORY_RADIUS = 42;
-
-// Shared text styles — created once, reused across all 42 nodes.
-// Army count: large, centered. A solid dark stroke outline is far more readable
-// than a drop shadow alone — it guarantees contrast against any player color.
-const armyStyle = new TextStyle({
-  fill: "#ffffff",
-  fontSize: 32,
-  fontWeight: "bold",
-  align: "center",
-  stroke: { color: "#000000", width: 6 },
-});
-
-// Name label: small, white, bold stroke outline so it reads on any fill color.
-const nameStyle = new TextStyle({
-  fill: "#ffffff",
-  fontSize: 11,
-  fontWeight: "800",
-  align: "center",
-  stroke: { color: "rgba(0,0,0,0.75)", width: 3.5 },
-  dropShadow: { color: "#000000", blur: 3, distance: 1, alpha: 0.4 },
-});
-
-/**
- * Per-highlight-kind ring styling. Each kind combines a distinct color,
- * ring width, and fill alpha so states remain distinguishable without
- * relying on color alone (width and alpha differ too), and stay legible
- * for color-blind users.
- */
-const HIGHLIGHT_STYLE: Record<
-  Exclude<TerritoryHighlightKind, "none">,
-  { color: number; ringWidth: number; fillAlpha: number; pulse: boolean; scale: number }
-> = {
-  "selected-source": { color: 0xfbbf24, ringWidth: 4, fillAlpha: 0.24, pulse: false, scale: 1.12 },
-  "selected-target": { color: 0xf43f5e, ringWidth: 4, fillAlpha: 0.22, pulse: false, scale: 1.12 },
-  "legal-target": { color: 0x38bdf8, ringWidth: 2.5, fillAlpha: 0.14, pulse: true, scale: 1.0 },
-  "recent-combat": { color: 0xf97316, ringWidth: 3, fillAlpha: 0.18, pulse: true, scale: 1.0 },
-  "recent-capture": { color: 0x34d399, ringWidth: 3.5, fillAlpha: 0.22, pulse: true, scale: 1.06 },
-  passive: { color: 0x818cf8, ringWidth: 2.5, fillAlpha: 0.14, pulse: false, scale: 1.0 },
-};
 
 export class TerritoryNode extends Container {
   private circleGfx: Graphics;
   private armyLabel: Text;
   private currentHighlight: TerritoryHighlightKind = "none";
-  private currentFill = "#e2e8f0";
+  private currentFill = UNOWNED_FILL;
 
   constructor(name: string, x: number, y: number, onClick: (name: string) => void) {
     super();
@@ -62,23 +25,23 @@ export class TerritoryNode extends Container {
     this.addChild(this.circleGfx);
 
     // Army count — centered. The 32px bold number is the primary focal point.
-    this.armyLabel = new Text({ text: "0", style: armyStyle });
+    this.armyLabel = new Text({ text: "0", style: ARMY_TEXT_STYLE });
     this.armyLabel.anchor.set(0.5, 0.5);
     this.armyLabel.position.set(0, -3);
     this.addChild(this.armyLabel);
 
     // Territory name — sits below the army count in the lower arc of the circle.
-    const nameLabel = new Text({ text: name, style: nameStyle });
+    const nameLabel = new Text({ text: name, style: NAME_TEXT_STYLE });
     nameLabel.anchor.set(0.5, 0);
     nameLabel.position.set(0, 20);
     this.addChild(nameLabel);
 
-    this.drawCircle("#e2e8f0", "none", 0);
+    this.drawCircle(UNOWNED_FILL, "none", 0);
   }
 
   update(state: TerritoryDisplayState, playerColors: string[]) {
     const fill =
-      state.owner >= 0 ? (playerColors[state.owner] ?? "#e2e8f0") : "#e2e8f0";
+      state.owner >= 0 ? (playerColors[state.owner] ?? UNOWNED_FILL) : UNOWNED_FILL;
     this.currentHighlight = state.highlight;
     this.currentFill = fill;
     this.drawCircle(fill, state.highlight, 0);
