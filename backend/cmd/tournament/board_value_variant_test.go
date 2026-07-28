@@ -52,6 +52,20 @@ func TestBoardValueVariantFlagSetParsesSearchOptions(t *testing.T) {
 	}
 }
 
+func TestBoardValueVariantFlagSetParsesPhase4Options(t *testing.T) {
+	var f boardValueVariantFlag
+	if err := f.Set("candidate-a=weights.json,tp=3,gp=4,reinforce-search-depth=2,occupy-search-breadth=5,fortify-search-breadth=10"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if len(f) != 1 {
+		t.Fatalf("unexpected parse result: %+v", f)
+	}
+	e := f[0]
+	if e.Tp != 3 || e.Gp != 4 || e.ReinforceSearchDepth != 2 || e.OccupySearchBreadth != 5 || e.FortifySearchBreadth != 10 {
+		t.Fatalf("unexpected parse result: %+v", e)
+	}
+}
+
 // writeMinimalBoardValueFile writes a trivial single-weight board value
 // JSON file, matching bot.LoadBoardValue's expected shape.
 func writeMinimalBoardValueFile(t *testing.T) string {
@@ -127,7 +141,11 @@ func TestRegisterBoardValueVariantsPropagatesSearchOptions(t *testing.T) {
 	registry := bot.StrategyRegistry{
 		bot.StrategyBasicV1: bot.NewBasicStrategy(),
 	}
-	variants := boardValueVariantFlag{{StrategyID: "board-value-search", WeightsPath: path, SearchDepth: 2, Risky: 0.4, SearchBreadth: 5}}
+	variants := boardValueVariantFlag{{
+		StrategyID: "board-value-search", WeightsPath: path,
+		SearchDepth: 2, Risky: 0.4, SearchBreadth: 5,
+		Tp: 3, Gp: 4, ReinforceSearchDepth: 2, OccupySearchBreadth: 5, FortifySearchBreadth: 10,
+	}}
 
 	if err := registerBoardValueVariants(registry, variants); err != nil {
 		t.Fatalf("registerBoardValueVariants: %v", err)
@@ -142,6 +160,10 @@ func TestRegisterBoardValueVariantsPropagatesSearchOptions(t *testing.T) {
 	}
 	if bvs.AttackSearchDepth != 2 || bvs.Risky != 0.4 || bvs.AttackSearchBreadth != 5 {
 		t.Errorf("expected AttackSearchDepth=2 Risky=0.4 AttackSearchBreadth=5, got AttackSearchDepth=%d Risky=%v AttackSearchBreadth=%d", bvs.AttackSearchDepth, bvs.Risky, bvs.AttackSearchBreadth)
+	}
+	if bvs.Tp != 3 || bvs.Gp != 4 || bvs.ReinforceSearchDepth != 2 || bvs.OccupySearchBreadth != 5 || bvs.FortifySearchBreadth != 10 {
+		t.Errorf("expected Tp=3 Gp=4 ReinforceSearchDepth=2 OccupySearchBreadth=5 FortifySearchBreadth=10, got Tp=%d Gp=%d ReinforceSearchDepth=%d OccupySearchBreadth=%d FortifySearchBreadth=%d",
+			bvs.Tp, bvs.Gp, bvs.ReinforceSearchDepth, bvs.OccupySearchBreadth, bvs.FortifySearchBreadth)
 	}
 }
 

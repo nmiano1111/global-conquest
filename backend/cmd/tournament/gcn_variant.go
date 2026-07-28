@@ -14,11 +14,16 @@ import (
 type gcnVariantFlag []gcnVariantEntry
 
 type gcnVariantEntry struct {
-	StrategyID    string
-	WeightsPath   string
-	SearchDepth   int
-	Risky         float64
-	SearchBreadth int
+	StrategyID           string
+	WeightsPath          string
+	SearchDepth          int
+	Risky                float64
+	SearchBreadth        int
+	Tp                   int
+	Gp                   int
+	ReinforceSearchDepth int
+	OccupySearchBreadth  int
+	FortifySearchBreadth int
 }
 
 func (f *gcnVariantFlag) String() string {
@@ -44,6 +49,8 @@ func (f *gcnVariantFlag) Set(value string) error {
 		return err
 	}
 	entry.SearchDepth, entry.Risky, entry.SearchBreadth = opts.depth, opts.risky, opts.breadth
+	entry.Tp, entry.Gp, entry.ReinforceSearchDepth = opts.tp, opts.gp, opts.reinforceSearchDepth
+	entry.OccupySearchBreadth, entry.FortifySearchBreadth = opts.occupySearchBreadth, opts.fortifySearchBreadth
 	*f = append(*f, entry)
 	return nil
 }
@@ -69,6 +76,11 @@ func registerGCNVariants(registry bot.StrategyRegistry, variants gcnVariantFlag)
 		bvs.AttackSearchDepth = v.SearchDepth
 		bvs.Risky = v.Risky
 		bvs.AttackSearchBreadth = v.SearchBreadth
+		bvs.Tp = v.Tp
+		bvs.Gp = v.Gp
+		bvs.ReinforceSearchDepth = v.ReinforceSearchDepth
+		bvs.OccupySearchBreadth = v.OccupySearchBreadth
+		bvs.FortifySearchBreadth = v.FortifySearchBreadth
 		registry[v.StrategyID] = bvs
 	}
 	return nil

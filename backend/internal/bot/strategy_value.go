@@ -130,6 +130,39 @@ type ValueStrategy struct {
 	AttackValue    ValueFunction
 	ReinforceValue ValueFunction
 	FortifyValue   ValueFunction
+
+	// OccupySearchBreadth, when > 0, caps occupy() to that many army
+	// counts (Phase 4/Ga of project-docs/bot_player/proposals/
+	// Search_Integration_Roadmap_with_References.md -- the paper's "Ga
+	// variations, linearly interpolated from the minimum ... and the
+	// maximum, disregarding duplicates"), instead of scoring every legal
+	// count exhaustively. Zero (the default) means unlimited -- score
+	// every risk.LegalOccupations result, matching today's original,
+	// already-tested behavior.
+	OccupySearchBreadth int
+
+	// FortifySearchBreadth, when > 0, caps fortify() to that many army
+	// counts per legal (from, to) pair, interpolated across [1, MaxArmies]
+	// (Phase 4/Gf). Unlike OccupySearchBreadth, zero (the default) does
+	// NOT mean "exhaustive" -- risk.LegalFortifications only ever reports
+	// one count (MaxArmies) per pair, so zero reproduces that exact
+	// single-candidate behavior, unchanged.
+	FortifySearchBreadth int
+
+	// ReinforceSearcher, ReinforceSearchDepth, Tp, and Gp are reinforce()'s
+	// analogues of Searcher/AttackSearchDepth/AttackSearchBreadth/Risky --
+	// see ReinforceSearcher's doc comment (reinforce_searcher.go) and
+	// GroupReinforcer (reinforce_search.go). ReinforceSearcher, if
+	// non-nil, is used verbatim; otherwise ReinforceSearchDepth > 0 builds
+	// a default *GroupReinforcer{Tp, Gp, Depth: ReinforceSearchDepth}, the
+	// paper's Tp/Gp placing search (Phase 4). Zero (the default) keeps
+	// reinforce() on SingleBatchReinforcer, the original, already-tested
+	// behavior, unchanged. Tp/Gp fall back to the paper's own defaults (2
+	// and 3) when <= 0.
+	ReinforceSearcher    ReinforceSearcher
+	ReinforceSearchDepth int
+	Tp                   int
+	Gp                   int
 }
 
 // searcher returns the AttackSearcher attack() should use: s.Searcher if
@@ -144,6 +177,20 @@ func (s *ValueStrategy) searcher() AttackSearcher {
 		return &SequenceSearcher{Depth: s.AttackSearchDepth, Breadth: s.AttackSearchBreadth, Risky: s.Risky}
 	}
 	return SinglePlySearcher{}
+}
+
+// reinforceSearcher returns the ReinforceSearcher reinforce() should use:
+// s.ReinforceSearcher if set, otherwise a *GroupReinforcer built from
+// Tp/Gp/ReinforceSearchDepth if ReinforceSearchDepth > 0, otherwise
+// SingleBatchReinforcer{} -- the original, always-validated default.
+func (s *ValueStrategy) reinforceSearcher() ReinforceSearcher {
+	if s.ReinforceSearcher != nil {
+		return s.ReinforceSearcher
+	}
+	if s.ReinforceSearchDepth > 0 {
+		return &GroupReinforcer{Tp: s.Tp, Gp: s.Gp, Depth: s.ReinforceSearchDepth}
+	}
+	return SingleBatchReinforcer{}
 }
 
 // attackValue returns s.AttackValue if set, otherwise the shared model --
@@ -256,34 +303,29 @@ func (s *ValueStrategy) clearsMargin(phase string, best int, bestScore, currentS
 
 // reinforce decides card timing first (scoredCardTurnIn, shared with
 // ScoredStrategy -- card-timing policy doesn't depend on any
-// weights/value function), then scores every legal reinforcement
-// territory's afterstate and places a capped batch at the top scorer --
-// same batching rule as ScoredStrategy.reinforce.
+// weights/value function), then delegates to reinforceSearcher() --
+// SingleBatchReinforcer (the original, always-validated default: score
+// every legal territory independently, place a capped batch at the top
+// scorer, same batching rule as ScoredStrategy.reinforce) unless
+// ReinforceSearcher or ReinforceSearchDepth says otherwise (Phase 4/Tp/Gp,
+// see reinforceSearcher()).
 func (s *ValueStrategy) reinforce(g *risk.Game, playerID string) (Command, Explanation, error) {
 	if cmd, expl, ok := scoredCardTurnIn(g, playerID); ok {
 		return cmd, expl, nil
 	}
 
-	actions := risk.LegalReinforcements(g, playerID)
-	if len(actions) == 0 {
+	t, armies, score, ok := s.reinforceSearcher().Search(g, playerID, playerIndex(g, playerID), s.reinforceValue())
+	if !ok {
 		return Command{}, Explanation{}, fmt.Errorf("bot: no legal reinforcement for player %s", playerID)
 	}
-	pi := playerIndex(g, playerID)
-	armies := min(g.PendingReinforcements, max(1, g.PendingReinforcements/3))
-
-	territories := make([]risk.Territory, len(actions))
-	for i, a := range actions {
-		territories[i] = a.Territory
-	}
-	best, bestScore := s.bestReinforceCandidateTerritories(g, playerID, pi, territories, armies)
-
-	cmd := Command{Action: ActionPlaceReinforcement, Territory: string(actions[best].Territory), Armies: armies}
-	return cmd, Explanation{Score: bestScore}, nil
+	return Command{Action: ActionPlaceReinforcement, Territory: string(t), Armies: armies}, Explanation{Score: score}, nil
 }
 
-// setupReinforce uses the same afterstate scoring as reinforce, but
-// places exactly one army per call (risk.PlaceInitialArmy's only legal
-// amount).
+// setupReinforce uses the same afterstate scoring as SingleBatchReinforcer,
+// but places exactly one army per call (risk.PlaceInitialArmy's only
+// legal amount) over every owned territory, unfiltered -- Tp/Gp (Phase 4)
+// describes the ongoing reinforce search, not pre-game setup allocation,
+// so this phase is untouched by ReinforceSearcher entirely.
 func (s *ValueStrategy) setupReinforce(g *risk.Game, playerID string) (Command, Explanation, error) {
 	actions := risk.LegalSetupReinforcements(g, playerID)
 	if len(actions) == 0 {
@@ -295,12 +337,17 @@ func (s *ValueStrategy) setupReinforce(g *risk.Game, playerID string) (Command, 
 	for i, a := range actions {
 		territories[i] = a.Territory
 	}
-	best, bestScore := s.bestReinforceCandidateTerritories(g, playerID, pi, territories, 1)
+	best, bestScore := bestReinforceCandidateTerritories(g, playerID, pi, territories, 1, s.reinforceValue())
 	return Command{Action: ActionPlaceInitialArmy, Territory: string(actions[best].Territory)}, Explanation{Score: bestScore}, nil
 }
 
-func (s *ValueStrategy) bestReinforceCandidateTerritories(g *risk.Game, playerID string, pi int, territories []risk.Territory, armies int) (best int, bestScore float64) {
-	value := s.reinforceValue()
+// bestReinforceCandidateTerritories scores territories independently
+// (each afterstate assumes armies is placed there alone) and returns the
+// top scorer's index -- shared by setupReinforce and
+// SingleBatchReinforcer.Search. Package-level (not a *ValueStrategy
+// method) since SingleBatchReinforcer has no access to a *ValueStrategy,
+// the same reason currentStateScore is package-level.
+func bestReinforceCandidateTerritories(g *risk.Game, playerID string, pi int, territories []risk.Territory, armies int, value ValueFunction) (best int, bestScore float64) {
 	for i, t := range territories {
 		after := reinforceAfterstate(g, playerID, t, armies)
 		score := value.Score(tdstate.Encode(after, pi).Flatten())
@@ -311,9 +358,11 @@ func (s *ValueStrategy) bestReinforceCandidateTerritories(g *risk.Game, playerID
 	return best, bestScore
 }
 
-// occupy scores every legal army count to move into the just-conquered
-// territory's afterstate and picks the highest. Uses attackValue() (not
-// a separate knob) since occupy is part of the attack sequence that
+// occupy scores every candidate army count to move into the just-conquered
+// territory's afterstate and picks the highest -- occupyArmyCounts caps
+// the candidates to OccupySearchBreadth (Phase 4/Ga) when set, otherwise
+// every legal count is scored exhaustively, unchanged. Uses attackValue()
+// (not a separate knob) since occupy is part of the attack sequence that
 // triggered it -- see AttackValue's doc comment.
 func (s *ValueStrategy) occupy(g *risk.Game, playerID string) (Command, Explanation, error) {
 	actions := risk.LegalOccupations(g, playerID)
@@ -322,42 +371,54 @@ func (s *ValueStrategy) occupy(g *risk.Game, playerID string) (Command, Explanat
 	}
 	pi := playerIndex(g, playerID)
 	value := s.attackValue()
+	counts := occupyArmyCounts(actions, s.OccupySearchBreadth)
 
-	best := 0
 	var bestScore float64
-	for i, a := range actions {
-		after := occupyAfterstate(g, playerID, a.Armies)
+	var bestArmies int
+	for i, armies := range counts {
+		after := occupyAfterstate(g, playerID, armies)
 		score := value.Score(tdstate.Encode(after, pi).Flatten())
 		if i == 0 || score > bestScore {
-			best, bestScore = i, score
+			bestScore, bestArmies = score, armies
 		}
 	}
 
-	return Command{Action: ActionOccupy, Armies: actions[best].Armies}, Explanation{Score: bestScore}, nil
+	return Command{Action: ActionOccupy, Armies: bestArmies}, Explanation{Score: bestScore}, nil
 }
 
-// fortify scores every legal fortification move's afterstate, ending the
-// turn without fortifying instead when there's no legal move or the best
-// one doesn't beat the current state's own score.
+// fortify scores every legal fortification move's afterstate -- for each
+// legal (from, to) pair, fortifyArmyCounts (Phase 4/Gf) supplies the army
+// counts to try, capped to FortifySearchBreadth when set, otherwise just
+// the single MaxArmies candidate, unchanged from before Gf existed -- and
+// ends the turn without fortifying instead when there's no legal move or
+// the best one doesn't beat the current state's own score.
 func (s *ValueStrategy) fortify(g *risk.Game, playerID string) (Command, Explanation, error) {
 	actions := risk.LegalFortifications(g, playerID)
 	pi := playerIndex(g, playerID)
 	value := s.fortifyValue()
 	currentScore := currentStateScore(value, g, pi)
 
-	best := -1
+	found := false
 	var bestScore float64
-	for i, a := range actions {
-		after := fortifyAfterstate(g, playerID, a.From, a.To, a.MaxArmies)
-		score := value.Score(tdstate.Encode(after, pi).Flatten())
-		if best == -1 || score > bestScore {
-			best, bestScore = i, score
+	var bestFrom, bestTo risk.Territory
+	var bestArmies int
+	for _, a := range actions {
+		for _, armies := range fortifyArmyCounts(a, s.FortifySearchBreadth) {
+			after := fortifyAfterstate(g, playerID, a.From, a.To, armies)
+			score := value.Score(tdstate.Encode(after, pi).Flatten())
+			if !found || score > bestScore {
+				found, bestScore = true, score
+				bestFrom, bestTo, bestArmies = a.From, a.To, armies
+			}
 		}
 	}
 
+	best := -1
+	if found {
+		best = 0
+	}
 	if !s.clearsMargin("fortify", best, bestScore, currentScore, value.FortifyMargin()) {
 		return Command{Action: ActionEndTurn}, Explanation{Score: bestScore}, nil
 	}
-	a := actions[best]
-	return Command{Action: ActionFortify, From: string(a.From), To: string(a.To), Armies: a.MaxArmies}, Explanation{Score: bestScore}, nil
+	return Command{Action: ActionFortify, From: string(bestFrom), To: string(bestTo), Armies: bestArmies}, Explanation{Score: bestScore}, nil
 }
