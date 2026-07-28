@@ -42,7 +42,10 @@ const StrategyGCNV1 = "gcn-v1"
 // registry ID/CLI flag ("board-value-candidate", --board-value-variant,
 // --gcn-variant) names which value function is loaded, not which
 // strategy shell runs it, so those stay as-is regardless of the model
-// class.
+// class. A single shared model (passed to NewBoardValueStrategy) scores
+// every phase by default, but AttackValue/ReinforceValue/FortifyValue
+// let a specific phase use a different model instead -- see their doc
+// comments.
 //
 // ValueStrategy can score the *current, unmodified* state the same way
 // it scores any candidate's afterstate -- so "should I keep
@@ -111,6 +114,22 @@ type ValueStrategy struct {
 	// default) means unlimited -- explore every legal attack, matching
 	// Phase 2's original, already-tested behavior.
 	AttackSearchBreadth int
+
+	// AttackValue, ReinforceValue, and FortifyValue, when non-nil,
+	// override which ValueFunction scores that specific phase's
+	// candidates/margin instead of the shared model passed to
+	// NewBoardValueStrategy -- e.g. a model trained/calibrated
+	// specifically on attack-phase afterstates can be plugged in without
+	// also being forced onto reinforce/fortify decisions. Each defaults
+	// to the shared model when left nil, so existing callers that only
+	// ever set one model (via NewBoardValueStrategy) are unaffected.
+	// Occupy (choosing how many armies to move into a just-conquered
+	// territory) deliberately has no separate knob -- it's part of the
+	// same conquest as the attack that triggered it, so it shares
+	// AttackValue's resolved model rather than adding a fourth field.
+	AttackValue    ValueFunction
+	ReinforceValue ValueFunction
+	FortifyValue   ValueFunction
 }
 
 // searcher returns the AttackSearcher attack() should use: s.Searcher if
@@ -125,6 +144,33 @@ func (s *ValueStrategy) searcher() AttackSearcher {
 		return &SequenceSearcher{Depth: s.AttackSearchDepth, Breadth: s.AttackSearchBreadth, Risky: s.Risky}
 	}
 	return SinglePlySearcher{}
+}
+
+// attackValue returns s.AttackValue if set, otherwise the shared model --
+// also used by occupy(), which piggybacks on the attack phase's model
+// (see AttackValue's doc comment).
+func (s *ValueStrategy) attackValue() ValueFunction {
+	if s.AttackValue != nil {
+		return s.AttackValue
+	}
+	return s.value
+}
+
+// reinforceValue returns s.ReinforceValue if set, otherwise the shared
+// model -- used by both reinforce() and setupReinforce().
+func (s *ValueStrategy) reinforceValue() ValueFunction {
+	if s.ReinforceValue != nil {
+		return s.ReinforceValue
+	}
+	return s.value
+}
+
+// fortifyValue returns s.FortifyValue if set, otherwise the shared model.
+func (s *ValueStrategy) fortifyValue() ValueFunction {
+	if s.FortifyValue != nil {
+		return s.FortifyValue
+	}
+	return s.value
 }
 
 // NewBoardValueStrategy constructs a ValueStrategy from an already-loaded
@@ -172,15 +218,16 @@ func currentStateScore(value ValueFunction, g *risk.Game, pi int) float64 {
 // unless Searcher or AttackSearchDepth says otherwise (see searcher()).
 func (s *ValueStrategy) attack(g *risk.Game, playerID string) (Command, Explanation, error) {
 	pi := playerIndex(g, playerID)
-	currentScore := currentStateScore(s.value, g, pi)
+	value := s.attackValue()
+	currentScore := currentStateScore(value, g, pi)
 
-	a, bestScore, ok := s.searcher().Search(g, playerID, pi, s.value)
+	a, bestScore, ok := s.searcher().Search(g, playerID, pi, value)
 	best := -1
 	if ok {
 		best = 0
 	}
 
-	if !s.clearsMargin("attack", best, bestScore, currentScore, s.value.AttackMargin()) {
+	if !s.clearsMargin("attack", best, bestScore, currentScore, value.AttackMargin()) {
 		return Command{Action: ActionEndAttack}, Explanation{Score: bestScore}, nil
 	}
 	return Command{
@@ -253,9 +300,10 @@ func (s *ValueStrategy) setupReinforce(g *risk.Game, playerID string) (Command, 
 }
 
 func (s *ValueStrategy) bestReinforceCandidateTerritories(g *risk.Game, playerID string, pi int, territories []risk.Territory, armies int) (best int, bestScore float64) {
+	value := s.reinforceValue()
 	for i, t := range territories {
 		after := reinforceAfterstate(g, playerID, t, armies)
-		score := s.value.Score(tdstate.Encode(after, pi).Flatten())
+		score := value.Score(tdstate.Encode(after, pi).Flatten())
 		if i == 0 || score > bestScore {
 			best, bestScore = i, score
 		}
@@ -264,19 +312,22 @@ func (s *ValueStrategy) bestReinforceCandidateTerritories(g *risk.Game, playerID
 }
 
 // occupy scores every legal army count to move into the just-conquered
-// territory's afterstate and picks the highest.
+// territory's afterstate and picks the highest. Uses attackValue() (not
+// a separate knob) since occupy is part of the attack sequence that
+// triggered it -- see AttackValue's doc comment.
 func (s *ValueStrategy) occupy(g *risk.Game, playerID string) (Command, Explanation, error) {
 	actions := risk.LegalOccupations(g, playerID)
 	if len(actions) == 0 {
 		return Command{}, Explanation{}, fmt.Errorf("bot: no legal occupation for player %s", playerID)
 	}
 	pi := playerIndex(g, playerID)
+	value := s.attackValue()
 
 	best := 0
 	var bestScore float64
 	for i, a := range actions {
 		after := occupyAfterstate(g, playerID, a.Armies)
-		score := s.value.Score(tdstate.Encode(after, pi).Flatten())
+		score := value.Score(tdstate.Encode(after, pi).Flatten())
 		if i == 0 || score > bestScore {
 			best, bestScore = i, score
 		}
@@ -291,19 +342,20 @@ func (s *ValueStrategy) occupy(g *risk.Game, playerID string) (Command, Explanat
 func (s *ValueStrategy) fortify(g *risk.Game, playerID string) (Command, Explanation, error) {
 	actions := risk.LegalFortifications(g, playerID)
 	pi := playerIndex(g, playerID)
-	currentScore := currentStateScore(s.value, g, pi)
+	value := s.fortifyValue()
+	currentScore := currentStateScore(value, g, pi)
 
 	best := -1
 	var bestScore float64
 	for i, a := range actions {
 		after := fortifyAfterstate(g, playerID, a.From, a.To, a.MaxArmies)
-		score := s.value.Score(tdstate.Encode(after, pi).Flatten())
+		score := value.Score(tdstate.Encode(after, pi).Flatten())
 		if best == -1 || score > bestScore {
 			best, bestScore = i, score
 		}
 	}
 
-	if !s.clearsMargin("fortify", best, bestScore, currentScore, s.value.FortifyMargin()) {
+	if !s.clearsMargin("fortify", best, bestScore, currentScore, value.FortifyMargin()) {
 		return Command{Action: ActionEndTurn}, Explanation{Score: bestScore}, nil
 	}
 	a := actions[best]

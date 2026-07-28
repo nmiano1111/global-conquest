@@ -217,6 +217,31 @@ func TestValueStrategyReinforcePrefersHigherScoringCandidateAndBatches(t *testin
 	}
 }
 
+// TestValueStrategyReinforceValueOverridesSharedModel confirms
+// ReinforceValue, when set, drives reinforce()'s candidate scoring
+// instead of the shared model passed to NewBoardValueStrategy -- the
+// shared model here favors Alaska (same setup as the test above), but
+// ReinforceValue favors Argentina instead, and the decision must follow
+// ReinforceValue.
+func TestValueStrategyReinforceValueOverridesSharedModel(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseReinforce
+	g.PendingReinforcements = 4
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 4}
+
+	bvs := NewBoardValueStrategy(singleFeatureBoardValue(t, "territory_Alaska_army_fraction", 10.0))
+	bvs.ReinforceValue = singleFeatureBoardValue(t, "territory_Argentina_army_fraction", 10.0)
+
+	cmd, _, err := bvs.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionPlaceReinforcement || cmd.Territory != "Argentina" {
+		t.Fatalf("expected ReinforceValue's preference (Argentina) to override the shared model's (Alaska), got %+v", cmd)
+	}
+}
+
 func TestValueStrategySetupReinforceReturnsLegalPlacement(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseSetupReinforce
