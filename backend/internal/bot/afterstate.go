@@ -89,7 +89,7 @@ func fortifyAfterstate(g *risk.Game, playerID string, from, to risk.Territory, a
 // rng); both hypothetical states are built by directly overwriting
 // Territories entries on a copy.
 func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 {
-	return attackAfterstateBlendWithForecast(g, pi, a, ForecastAttack)
+	return attackAfterstateBlendWithForecast(g, pi, a, risk.ForecastAttack)
 }
 
 // attackAfterstateBlendWithForecast is attackAfterstateBlend generalized
@@ -106,7 +106,7 @@ func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 
 // before this existed). attackAfterstateBlend itself is unchanged --
 // existing callers keep ForecastAttack's own call-scoped memoization,
 // no behavior change.
-func attackAfterstateBlendWithForecast(g *risk.Game, pi int, a risk.AttackAction, forecastFn func(attackerArmies, defenderArmies int) CombatForecast) []float64 {
+func attackAfterstateBlendWithForecast(g *risk.Game, pi int, a risk.AttackAction, forecastFn func(attackerArmies, defenderArmies int) risk.CombatForecast) []float64 {
 	forecast := forecastFn(a.SourceArmies, a.TargetArmies)
 	targetOwner := g.Territories[a.To].Owner
 
@@ -153,7 +153,7 @@ func round(f float64) int {
 // actually gets there. This keeps the sequence search scoped to "which
 // attacks," not also "how many armies to occupy with," per
 // Search_Integration_Roadmap_with_References.md's Phase 2 scoping.
-func applyTerminalOutcome(g *risk.Game, pi int, a risk.AttackAction, outcome TerminalState, occupyArmies int) *risk.Game {
+func applyTerminalOutcome(g *risk.Game, pi int, a risk.AttackAction, outcome risk.TerminalState, occupyArmies int) *risk.Game {
 	c := copyGameState(g)
 	if outcome.DefenderRemaining == 0 {
 		c.Territories[a.To] = risk.TerritoryState{Owner: pi, Armies: occupyArmies}

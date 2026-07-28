@@ -243,7 +243,7 @@ func TestForecastCacheReusesResultsAndMatchesForecastAttack(t *testing.T) {
 	cache := make(forecastCache)
 
 	first := cache.forecast(200, 150)
-	want := ForecastAttack(200, 150)
+	want := risk.ForecastAttack(200, 150)
 	if first != want {
 		t.Fatalf("forecastCache.forecast(200, 150) = %+v, want %+v (must match ForecastAttack exactly)", first, want)
 	}
@@ -328,7 +328,7 @@ func TestApplyTerminalOutcome(t *testing.T) {
 	a := risk.AttackAction{From: "Alaska", To: "Kamchatka", SourceArmies: 10, TargetArmies: 3, MaxAttackerDice: 3}
 
 	t.Run("conquered", func(t *testing.T) {
-		next := applyTerminalOutcome(g, 0, a, TerminalState{AttackerRemaining: 7, DefenderRemaining: 0}, 3)
+		next := applyTerminalOutcome(g, 0, a, risk.TerminalState{AttackerRemaining: 7, DefenderRemaining: 0}, 3)
 		if got := next.Territories["Kamchatka"]; got.Owner != 0 || got.Armies != 3 {
 			t.Errorf("Kamchatka after conquest = %+v, want Owner=0 Armies=3", got)
 		}
@@ -342,7 +342,7 @@ func TestApplyTerminalOutcome(t *testing.T) {
 	})
 
 	t.Run("held", func(t *testing.T) {
-		next := applyTerminalOutcome(g, 0, a, TerminalState{AttackerRemaining: 1, DefenderRemaining: 2}, 3)
+		next := applyTerminalOutcome(g, 0, a, risk.TerminalState{AttackerRemaining: 1, DefenderRemaining: 2}, 3)
 		if got := next.Territories["Kamchatka"]; got.Owner != 1 || got.Armies != 2 {
 			t.Errorf("Kamchatka after held = %+v, want Owner=1 Armies=2", got)
 		}

@@ -108,7 +108,7 @@ type attackSignals struct {
 // computeAttackSignals computes one legal attack's raw signal, independent
 // of any Weights value.
 func computeAttackSignals(g *risk.Game, pi int, a risk.AttackAction) attackSignals {
-	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
+	forecast := risk.ForecastAttack(a.SourceArmies, a.TargetArmies)
 	targetOwner := g.Territories[a.To].Owner
 
 	sig := attackSignals{

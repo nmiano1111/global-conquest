@@ -11,10 +11,10 @@ import (
 // Order: for each territory (in the same order Features.Territories was
 // built, i.e. g.Board.Order) -- IsMine, ArmyFraction, Continent one-hot,
 // IsContinentBorder, EnemyThreatFraction -- then the global block in
-// GlobalFeatures' own field order (..., WeakestEnemy*, CardFraction,
-// Defence, ...), with slice-valued fields expanded in place.
-// FeatureNames(board) produces the matching names for this exact order,
-// for labeling exported training data.
+// GlobalFeatures' own field order (..., CardFraction, Defence, ...), with
+// slice-valued fields expanded in place. FeatureNames(board) produces the
+// matching names for this exact order, for labeling exported training
+// data.
 func (f Features) Flatten() []float64 {
 	out := make([]float64, 0, f.width())
 	for _, t := range f.Territories {
@@ -24,8 +24,7 @@ func (f Features) Flatten() []float64 {
 	}
 	g := f.Global
 	out = append(out, g.MyArmyFraction, g.MyTerritoryFraction, g.MyIncomeFraction,
-		g.StrongestEnemyArmyFraction, g.StrongestEnemyTerritoryFraction,
-		g.WeakestEnemyArmyFraction, g.WeakestEnemyTerritoryFraction)
+		g.StrongestEnemyArmyFraction, g.StrongestEnemyTerritoryFraction)
 	out = append(out, g.ContinentArmyFraction...)
 	out = append(out, g.CardFraction, g.Defence)
 	out = append(out, boolsToFloats(g.Phase)...)
@@ -38,7 +37,7 @@ func (f Features) width() int {
 		return 0
 	}
 	perTerritory := 2 + len(f.Territories[0].Continent) + 2
-	return len(f.Territories)*perTerritory + 7 + len(f.Global.ContinentArmyFraction) + 2 + len(f.Global.Phase) + 1
+	return len(f.Territories)*perTerritory + 5 + len(f.Global.ContinentArmyFraction) + 2 + len(f.Global.Phase) + 1
 }
 
 // FeatureNames produces the names matching Flatten()'s exact order, for
@@ -59,7 +58,6 @@ func FeatureNames(board risk.Board) []string {
 	names = append(names,
 		"my_army_fraction", "my_territory_fraction", "my_income_fraction",
 		"strongest_enemy_army_fraction", "strongest_enemy_territory_fraction",
-		"weakest_enemy_army_fraction", "weakest_enemy_territory_fraction",
 	)
 	for _, c := range continents {
 		names = append(names, fmt.Sprintf("my_army_fraction_in_%s", c))

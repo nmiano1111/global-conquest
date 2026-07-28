@@ -34,14 +34,14 @@ func (s *ValueStrategy) risky() float64 {
 // reference type) -- not shared globally or across games/goroutines,
 // so it needs no locking and is bounded by how many distinct (a, d)
 // pairs one decision's search tree can visit, not by process lifetime.
-type forecastCache map[[2]int]CombatForecast
+type forecastCache map[[2]int]risk.CombatForecast
 
-func (c forecastCache) forecast(a, d int) CombatForecast {
+func (c forecastCache) forecast(a, d int) risk.CombatForecast {
 	key := [2]int{a, d}
 	if cached, ok := c[key]; ok {
 		return cached
 	}
-	result := ForecastAttack(a, d)
+	result := risk.ForecastAttack(a, d)
 	c[key] = result
 	return result
 }
@@ -97,7 +97,7 @@ func (s *ValueStrategy) attackSequenceSearch(g *risk.Game, playerID string, pi i
 	actions := s.candidateAttacks(g, playerID, pi, s.AttackSearchBreadth, cache)
 	best := -1
 	for i, candidate := range actions {
-		outcome := SelectTerminalState(AttackTerminalStates(candidate.SourceArmies, candidate.TargetArmies), risky)
+		outcome := risk.SelectTerminalState(risk.AttackTerminalStates(candidate.SourceArmies, candidate.TargetArmies), risky)
 		next := applyTerminalOutcome(g, pi, candidate, outcome, candidate.MaxAttackerDice)
 		score := s.bestContinuation(next, playerID, pi, maxDepth-1, risky, cache)
 		if best == -1 || score > bestScore {
@@ -132,7 +132,7 @@ func (s *ValueStrategy) bestContinuation(g *risk.Game, playerID string, pi int, 
 		return best
 	}
 	for _, a := range s.candidateAttacks(g, playerID, pi, s.AttackSearchBreadth, cache) {
-		outcome := SelectTerminalState(AttackTerminalStates(a.SourceArmies, a.TargetArmies), risky)
+		outcome := risk.SelectTerminalState(risk.AttackTerminalStates(a.SourceArmies, a.TargetArmies), risky)
 		next := applyTerminalOutcome(g, pi, a, outcome, a.MaxAttackerDice)
 		score := s.bestContinuation(next, playerID, pi, depth-1, risky, cache)
 		if score > best {

@@ -2,10 +2,19 @@ package bot
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 )
+
+// almostEqual was previously provided by combat_odds_test.go before that
+// file (and its own almostEqual) moved to internal/risk alongside
+// ForecastAttack/CombatForecast -- redefined here since this is the only
+// remaining bot-package test that used it.
+func almostEqual(a, b float64) bool {
+	return math.Abs(a-b) < 1e-6
+}
 
 // TestFortifyFeaturesRewardsDestinationThreatAndContinentValue checks the
 // named feature values directly, hand-derived: with only Madagascar and

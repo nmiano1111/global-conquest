@@ -127,7 +127,7 @@ func TestAttackAfterstateBlendWeightsByWinProbability(t *testing.T) {
 	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 30}
 	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 1}
 
-	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
+	forecast := risk.ForecastAttack(a.SourceArmies, a.TargetArmies)
 	if forecast.WinProbability < 0.95 {
 		t.Fatalf("expected this matchup to be hugely favorable, got WinProbability=%v", forecast.WinProbability)
 	}

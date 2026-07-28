@@ -135,7 +135,7 @@ func bestAttackIsMarginal(g *risk.Game, pi int, target risk.Territory) bool {
 		if ts.Owner != pi || ts.Armies <= 1 {
 			continue
 		}
-		if p := ForecastAttack(ts.Armies, targetArmies).WinProbability; p > best {
+		if p := risk.ForecastAttack(ts.Armies, targetArmies).WinProbability; p > best {
 			best = p
 		}
 	}

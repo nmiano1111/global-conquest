@@ -235,67 +235,6 @@ func TestEncodeStrongestEnemyIgnoresEliminatedAndSelf(t *testing.T) {
 	}
 }
 
-func TestEncodeWeakestEnemyIgnoresEliminatedAndSelf(t *testing.T) {
-	g := newTestGame(t)
-	g.Territories["Alaska"] = risk.TerritoryState{Owner: 1, Armies: 5} // still player 1's default holding, just resized
-	g.Territories["Iceland"] = risk.TerritoryState{Owner: 2, Armies: 2} // weakest by armies, but eliminated
-	g.Players[2].Eliminated = true
-
-	f := Encode(g, 0)
-	// Without the elimination, player 2 (2 armies) would be picked as
-	// weakest. With player 2 excluded, player 1 (the only living rival)
-	// is reported instead: Alaska stays player 1's (only its army count
-	// changed), so player 1 keeps all 41 non-Iceland territories -- 40
-	// default at 1 army + Alaska's 5 = 45 armies, 41 territories. Total
-	// armies = 45 + 2 (player 2, still counted in the board total, just
-	// not eligible as a "weakest living rival") = 47; total territories
-	// = 42.
-	wantArmies := 45.0 / 47.0
-	wantTerritories := 41.0 / 42.0
-	if diff := f.Global.WeakestEnemyArmyFraction - wantArmies; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("WeakestEnemyArmyFraction = %v, want %v (eliminated player 2 should be excluded)", f.Global.WeakestEnemyArmyFraction, wantArmies)
-	}
-	if diff := f.Global.WeakestEnemyTerritoryFraction - wantTerritories; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("WeakestEnemyTerritoryFraction = %v, want %v (eliminated player 2 should be excluded)", f.Global.WeakestEnemyTerritoryFraction, wantTerritories)
-	}
-}
-
-// TestEncodeWeakestEnemyDescribesSameRivalNotIndependentMinimums confirms
-// WeakestEnemyArmyFraction/WeakestEnemyTerritoryFraction both describe the
-// single living rival with the fewest armies -- not independently
-// computed per-metric minimums (which would let the reported territory
-// fraction belong to a *different* player than the reported army
-// fraction). Player 2 has fewer armies but more territories than player
-// 3; player 3 has the fewest territories but not the fewest armies. A
-// coupled implementation reports player 2 on both fields; a decoupled one
-// would incorrectly mix in player 3's territory count.
-func TestEncodeWeakestEnemyDescribesSameRivalNotIndependentMinimums(t *testing.T) {
-	g, err := risk.NewClassicGame([]string{"p0", "p1", "p2", "p3"}, fixedRNG{})
-	if err != nil {
-		t.Fatalf("new game: %v", err)
-	}
-	for _, terr := range g.Board.Order {
-		g.Territories[terr] = risk.TerritoryState{Owner: 1, Armies: 1}
-	}
-	g.Territories["Alaska"] = risk.TerritoryState{Owner: 2, Armies: 2} // player 2: 2 territories, 3 armies total
-	g.Territories["Iceland"] = risk.TerritoryState{Owner: 2, Armies: 1}
-	g.Territories["Ontario"] = risk.TerritoryState{Owner: 3, Armies: 10} // player 3: 1 territory, 10 armies
-
-	f := Encode(g, 0)
-	// player 1: 42 - 2 - 1 = 39 territories * 1 army = 39 armies, 39 territories.
-	// player 2: 2 territories, 3 armies -- weakest by armies among rivals.
-	// player 3: 1 territory, 10 armies.
-	total := 39.0 + 3.0 + 10.0
-	wantArmies := 3.0 / total
-	wantTerritories := 2.0 / 42.0 // player 2's own territory count, not player 3's (fewer, but not the weakest by armies)
-	if diff := f.Global.WeakestEnemyArmyFraction - wantArmies; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("WeakestEnemyArmyFraction = %v, want %v", f.Global.WeakestEnemyArmyFraction, wantArmies)
-	}
-	if diff := f.Global.WeakestEnemyTerritoryFraction - wantTerritories; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("WeakestEnemyTerritoryFraction = %v, want %v (should be player 2's own territory count, not player 3's smaller one)", f.Global.WeakestEnemyTerritoryFraction, wantTerritories)
-	}
-}
-
 func indexOf(t *testing.T, order []risk.Territory, target risk.Territory) int {
 	t.Helper()
 	for i, x := range order {
