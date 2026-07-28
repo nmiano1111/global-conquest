@@ -64,30 +64,43 @@ type ValueStrategy struct {
 	// play.
 	Observer func(phase string, bestScore, currentScore float64)
 
-	// AttackSearchDepth, when > 0, replaces attack()'s single-ply
-	// attackAfterstateBlend scoring with a real search over sequences of
-	// up to this many of our own consecutive attacks (Phase 2 of
-	// project-docs/bot_player/proposals/
+	// Searcher, if non-nil, is used for attack()'s search verbatim, taking
+	// priority over AttackSearchDepth/Risky/AttackSearchBreadth entirely
+	// -- the fully-general escape hatch for plugging in any AttackSearcher
+	// (see attack_searcher.go), including ones with no depth/breadth/risky
+	// notion at all (e.g. a future heuristic-pruned or time-budgeted
+	// searcher, Phase 4/5 of project-docs/bot_player/proposals/
+	// Search_Integration_Roadmap_with_References.md). Most callers should
+	// keep this nil and use AttackSearchDepth instead; Searcher exists for
+	// cases those three scalar fields can't express.
+	Searcher AttackSearcher
+
+	// AttackSearchDepth, when > 0 and Searcher is nil, makes attack()
+	// build a default *SequenceSearcher{Depth: AttackSearchDepth, Breadth:
+	// AttackSearchBreadth, Risky: Risky} and use that -- a real search
+	// over sequences of up to this many of the acting player's own
+	// consecutive attacks (Phase 2/3 of project-docs/bot_player/proposals/
 	// Search_Integration_Roadmap_with_References.md) -- see
 	// attack_search.go. Every legal attack is explored at every level
 	// (unlike the removed LookaheadDepth, which only ever followed one
 	// greedily-picked path), and each attack is materialized via
 	// AttackTerminalStates/SelectTerminalState into one concrete
 	// deterministic board state, not a probability blend. Zero (the
-	// default) keeps the original, already-validated single-ply behavior
-	// unchanged.
+	// default) keeps attack() on SinglePlySearcher, the original,
+	// already-validated single-ply behavior, unchanged.
 	AttackSearchDepth int
 
 	// Risky is the Attack Handler's terminal-state selection threshold
 	// (paper Section 3.3) -- higher walks further toward
 	// attacker-favorable outcomes before committing. Only consulted when
-	// AttackSearchDepth > 0. Values <= 0 fall back to the paper's own
-	// default, 0.3 (see attack_search.go's risky()).
+	// AttackSearchDepth > 0 and Searcher is nil. Values <= 0 fall back to
+	// the paper's own default, 0.3 (see attack_search.go's
+	// SequenceSearcher.risky()).
 	Risky float64
 
-	// AttackSearchBreadth, when > 0 and AttackSearchDepth > 0, caps how
-	// many top-scoring legal attacks are explored at each level of the
-	// sequence search, ranked by the existing single-ply
+	// AttackSearchBreadth, when > 0, AttackSearchDepth > 0, and Searcher
+	// is nil, caps how many top-scoring legal attacks are explored at each
+	// level of the sequence search, ranked by the existing single-ply
 	// attackAfterstateBlend score -- a minimal, pulled-forward version of
 	// Phase 4's heuristic pruning (project-docs/bot_player/proposals/
 	// Search_Integration_Roadmap_with_References.md), found necessary in
@@ -98,6 +111,20 @@ type ValueStrategy struct {
 	// default) means unlimited -- explore every legal attack, matching
 	// Phase 2's original, already-tested behavior.
 	AttackSearchBreadth int
+}
+
+// searcher returns the AttackSearcher attack() should use: s.Searcher if
+// set, otherwise a *SequenceSearcher built from AttackSearchDepth/Risky/
+// AttackSearchBreadth if AttackSearchDepth > 0, otherwise
+// SinglePlySearcher{} -- the original, always-validated default.
+func (s *ValueStrategy) searcher() AttackSearcher {
+	if s.Searcher != nil {
+		return s.Searcher
+	}
+	if s.AttackSearchDepth > 0 {
+		return &SequenceSearcher{Depth: s.AttackSearchDepth, Breadth: s.AttackSearchBreadth, Risky: s.Risky}
+	}
+	return SinglePlySearcher{}
 }
 
 // NewBoardValueStrategy constructs a ValueStrategy from an already-loaded
@@ -130,40 +157,27 @@ func (s *ValueStrategy) NextCommand(ctx context.Context, g *risk.Game, playerID 
 
 // currentStateScore scores g's current, unmodified state from pi's
 // perspective -- the "value of doing nothing" baseline attack/fortify
-// compare their best real candidate against.
-func (s *ValueStrategy) currentStateScore(g *risk.Game, pi int) float64 {
-	return s.value.Score(tdstate.Encode(g, pi).Flatten())
+// compare their best real candidate against. Package-level (not a
+// *ValueStrategy method) since SequenceSearcher.bestContinuation also
+// needs it as its recursive base case and has no access to a
+// *ValueStrategy.
+func currentStateScore(value ValueFunction, g *risk.Game, pi int) float64 {
+	return value.Score(tdstate.Encode(g, pi).Flatten())
 }
 
 // attack picks a candidate to attack with, ending the attack phase
 // instead when there's no legal attack or the best one doesn't beat the
-// current state's own score. When AttackSearchDepth > 0, the candidate
-// comes from a real search over sequences of our own attacks
-// (attackSequenceSearch, attack_search.go); otherwise (the original,
-// already-validated default) every legal attack's afterstate is scored
-// independently via the single-ply attackAfterstateBlend and the
-// highest picked.
+// current state's own score. The candidate comes from s.searcher() --
+// SinglePlySearcher (the original, already-validated single-ply default)
+// unless Searcher or AttackSearchDepth says otherwise (see searcher()).
 func (s *ValueStrategy) attack(g *risk.Game, playerID string) (Command, Explanation, error) {
 	pi := playerIndex(g, playerID)
-	currentScore := s.currentStateScore(g, pi)
+	currentScore := currentStateScore(s.value, g, pi)
 
-	var a risk.AttackAction
+	a, bestScore, ok := s.searcher().Search(g, playerID, pi, s.value)
 	best := -1
-	var bestScore float64
-	if s.AttackSearchDepth > 0 {
-		var ok bool
-		a, bestScore, ok = s.attackSequenceSearch(g, playerID, pi, s.AttackSearchDepth, s.risky())
-		if ok {
-			best = 0
-		}
-	} else {
-		actions := risk.LegalAttacks(g, playerID)
-		for i, candidate := range actions {
-			score := s.value.Score(attackAfterstateBlend(g, pi, candidate))
-			if best == -1 || score > bestScore {
-				best, bestScore, a = i, score, candidate
-			}
-		}
+	if ok {
+		best = 0
 	}
 
 	if !s.clearsMargin("attack", best, bestScore, currentScore, s.value.AttackMargin()) {
@@ -277,7 +291,7 @@ func (s *ValueStrategy) occupy(g *risk.Game, playerID string) (Command, Explanat
 func (s *ValueStrategy) fortify(g *risk.Game, playerID string) (Command, Explanation, error) {
 	actions := risk.LegalFortifications(g, playerID)
 	pi := playerIndex(g, playerID)
-	currentScore := s.currentStateScore(g, pi)
+	currentScore := currentStateScore(s.value, g, pi)
 
 	best := -1
 	var bestScore float64

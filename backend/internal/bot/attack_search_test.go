@@ -35,6 +35,47 @@ func TestValueStrategyAttackSearchDepthZeroMatchesBlendBaseline(t *testing.T) {
 	}
 }
 
+// fixedAttackSearcher is a minimal AttackSearcher used only to prove
+// ValueStrategy.Searcher is genuinely pluggable: it always returns the
+// same pre-chosen action and score, ignoring the ValueFunction it's
+// handed entirely -- something neither SinglePlySearcher nor
+// SequenceSearcher can do, since both use it to rank candidates. A real
+// third algorithm (e.g. Phase 4's heuristic pruning) would of course use
+// value; this is deliberately the simplest possible implementation of
+// the interface, not a template to build on.
+type fixedAttackSearcher struct {
+	action risk.AttackAction
+	score  float64
+}
+
+func (f fixedAttackSearcher) Search(g *risk.Game, playerID string, pi int, value ValueFunction) (risk.AttackAction, float64, bool) {
+	return f.action, f.score, true
+}
+
+// TestValueStrategyUsesCustomSearcherWhenSet confirms Searcher takes
+// priority over both AttackSearchDepth and the built-in SinglePlySearcher
+// default: a ValueFunction that would make SinglePlySearcher pick
+// Kamchatka (the only candidate it scores above zero) is overridden by a
+// fixedAttackSearcher hardcoded to attack Alberta instead.
+func TestValueStrategyUsesCustomSearcherWhenSet(t *testing.T) {
+	g, p0 := greenlandSequenceGame(t)
+	bvs := NewBoardValueStrategy(multiFeatureBoardValue(t, map[string]float64{
+		"territory_Kamchatka_is_mine": 1.0,
+	}))
+	bvs.Searcher = fixedAttackSearcher{
+		action: risk.AttackAction{From: "Alaska", To: "Alberta", SourceArmies: 30, TargetArmies: 1, MaxAttackerDice: 3},
+		score:  100,
+	}
+
+	cmd, _, err := bvs.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionAttack || cmd.To != "Alberta" {
+		t.Fatalf("expected the custom Searcher's fixed action (attack Alberta) to be used instead of SinglePlySearcher's Kamchatka pick, got %+v", cmd)
+	}
+}
+
 // multiFeatureBoardValue is singleFeatureBoardValue generalized to
 // several named features at once -- for scenarios that need one first
 // move's own 1-ply blend score to genuinely outrank another's (not
@@ -225,12 +266,12 @@ func TestCandidateAttacksReturnsTopScoringByBreadth(t *testing.T) {
 	bvs := NewBoardValueStrategy(multiFeatureBoardValue(t, weights))
 	pi := playerIndex(g, p0)
 
-	all := bvs.candidateAttacks(g, p0, pi, 0, make(forecastCache))
+	all := (&SequenceSearcher{Breadth: 0}).candidateAttacks(g, p0, pi, bvs.value, make(forecastCache))
 	if len(all) != 3 {
 		t.Fatalf("expected all 3 legal attacks from Alaska with breadth=0, got %d: %+v", len(all), all)
 	}
 
-	top2 := bvs.candidateAttacks(g, p0, pi, 2, make(forecastCache))
+	top2 := (&SequenceSearcher{Breadth: 2}).candidateAttacks(g, p0, pi, bvs.value, make(forecastCache))
 	if len(top2) != 2 {
 		t.Fatalf("expected exactly 2 candidates with breadth=2, got %d: %+v", len(top2), top2)
 	}
@@ -305,18 +346,18 @@ func TestAttackSequenceSearchDepth3StaysFastAtLargeArmyCounts(t *testing.T) {
 }
 
 func TestValueStrategyRiskyDefaultsWhenUnset(t *testing.T) {
-	s := &ValueStrategy{}
-	if got := s.risky(); got != defaultRisky {
+	ss := &SequenceSearcher{}
+	if got := ss.risky(); got != defaultRisky {
 		t.Errorf("risky() with Risky unset = %v, want defaultRisky (%v)", got, defaultRisky)
 	}
 
-	s.Risky = 0.5
-	if got := s.risky(); got != 0.5 {
+	ss.Risky = 0.5
+	if got := ss.risky(); got != 0.5 {
 		t.Errorf("risky() with Risky=0.5 = %v, want 0.5", got)
 	}
 
-	s.Risky = -1
-	if got := s.risky(); got != defaultRisky {
+	ss.Risky = -1
+	if got := ss.risky(); got != defaultRisky {
 		t.Errorf("risky() with Risky negative = %v, want defaultRisky (%v)", got, defaultRisky)
 	}
 }
