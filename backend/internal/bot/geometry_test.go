@@ -620,3 +620,60 @@ func TestKillTargetCardAdjustmentChangesSelection(t *testing.T) {
 		t.Fatalf("expected player 2 (card discount lowers their adjusted armies below player 1's, despite tying on raw armies and being checked second), got %d", target)
 	}
 }
+
+func TestConnectedComponentsSingleComponent(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Alaska - Northwest Territory - Alberta are all mutually adjacent.
+	ts := []risk.Territory{"Alaska", "Northwest Territory", "Alberta"}
+
+	got := connectedComponents(g, ts)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 component, got %d: %v", len(got), got)
+	}
+	want := []risk.Territory{"Alaska", "Northwest Territory", "Alberta"}
+	if !slices.Equal(got[0], sortedByBoardOrder(g, want)) {
+		t.Fatalf("expected component %v, got %v", sortedByBoardOrder(g, want), got[0])
+	}
+}
+
+func TestConnectedComponentsMultipleComponents(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Alaska/Northwest Territory are mutually adjacent; Japan is not
+	// adjacent to either (it borders Kamchatka/Mongolia, not the
+	// Alaska/Northwest Territory pair), so it forms its own component.
+	ts := []risk.Territory{"Alaska", "Northwest Territory", "Japan"}
+
+	got := connectedComponents(g, ts)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 components, got %d: %v", len(got), got)
+	}
+	foundPair, foundJapan := false, false
+	for _, c := range got {
+		if slices.Equal(c, sortedByBoardOrder(g, []risk.Territory{"Alaska", "Northwest Territory"})) {
+			foundPair = true
+		}
+		if slices.Equal(c, []risk.Territory{"Japan"}) {
+			foundJapan = true
+		}
+	}
+	if !foundPair || !foundJapan {
+		t.Fatalf("expected components {Alaska, Northwest Territory} and {Japan}, got %v", got)
+	}
+}
+
+func TestConnectedComponentsEmptyInput(t *testing.T) {
+	g, _ := newTestGame(t)
+	got := connectedComponents(g, nil)
+	if len(got) != 0 {
+		t.Fatalf("expected no components for empty input, got %v", got)
+	}
+}
+
+// sortedByBoardOrder returns ts sorted by canonical board order, for
+// building expected-value slices that match connectedComponents' own
+// per-component ordering guarantee.
+func sortedByBoardOrder(g *risk.Game, ts []risk.Territory) []risk.Territory {
+	out := append([]risk.Territory(nil), ts...)
+	sortTerritoriesByOrder(out, orderIndex(g))
+	return out
+}

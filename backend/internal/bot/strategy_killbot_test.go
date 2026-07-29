@@ -78,7 +78,17 @@ func TestKillbotStrategyAttackFiresKillBranch(t *testing.T) {
 	}
 }
 
-func TestKillbotStrategyAttackFallsBackToPixieStyleWhenNoKillTarget(t *testing.T) {
+// TestKillbotStrategyAttackFallsBackToBetterPixieWhenNoKillTarget confirms
+// attack() delegates entirely to the BetterPixie backer (not plain
+// Pixie -- see Lux_Port_Notes.md's Killbot addendum) once no rival is
+// weak enough to trigger the kill branch. South America has no
+// positive-bonus-continent target here worth BetterPixie's own
+// continent-scoped attack sequence (pi owns 3 of 4 South America
+// territories, but that's evaluated by betterPixieWantedContinents
+// rather than assumed), so this exercises attackForCard's board-wide
+// best-ratio scan, the same fallback stage both the old and new backer
+// share.
+func TestKillbotStrategyAttackFallsBackToBetterPixieWhenNoKillTarget(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseAttack
 	g.Territories["Venezuela"] = risk.TerritoryState{Owner: 0, Armies: 5}
@@ -95,7 +105,7 @@ func TestKillbotStrategyAttackFallsBackToPixieStyleWhenNoKillTarget(t *testing.T
 		t.Fatalf("expected attack, got %s", cmd.Action)
 	}
 	if cmd.From != "Venezuela" || cmd.To != "Brazil" {
-		t.Fatalf("expected Venezuela -> Brazil (Pixie-style fallback: no rival is weak enough to trigger the kill branch), got %s -> %s", cmd.From, cmd.To)
+		t.Fatalf("expected Venezuela -> Brazil (BetterPixie fallback: no rival is weak enough to trigger the kill branch), got %s -> %s", cmd.From, cmd.To)
 	}
 }
 
@@ -114,16 +124,23 @@ func TestKillbotStrategyAttackEndsWhenNothingQualifies(t *testing.T) {
 	}
 }
 
-func TestKillbotStrategyOccupyDelegatesToPixieLogic(t *testing.T) {
+// TestKillbotStrategyOccupyDelegatesToBetterPixieLogic confirms occupy
+// delegates to the BetterPixie backer (not plain Pixie -- see
+// Lux_Port_Notes.md's Killbot addendum): BetterPixie's moveArmiesIn only
+// checks for a *zero* raw enemy-neighbor count on either side (unlike
+// plain Pixie's own magnitude comparison at any nonzero tie), so this
+// exercises exactly that branch -- Alaska has zero enemy neighbors (every
+// neighbor, including the just-conquered Kamchatka, is pi-owned) while
+// Kamchatka still faces four (Yakutsk/Irkutsk/Mongolia/Japan, all left at
+// the default owner), giving a clean aEnemies==0 && dEnemies!=0 case that
+// doesn't depend on BetterPixie's more elaborate connectivity fallback.
+func TestKillbotStrategyOccupyDelegatesToBetterPixieLogic(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseOccupy
 	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 10}
+	g.Territories["Northwest Territory"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Alberta"] = risk.TerritoryState{Owner: 0, Armies: 1}
 	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 0, Armies: 1}
-	g.Territories["Yakutsk"] = risk.TerritoryState{Owner: 0, Armies: 1}
-	g.Territories["Irkutsk"] = risk.TerritoryState{Owner: 0, Armies: 1}
-	g.Territories["Mongolia"] = risk.TerritoryState{Owner: 0, Armies: 1}
-	// Alaska faces Northwest Territory + Alberta (2 enemies); Kamchatka
-	// faces only Japan now that Yakutsk/Irkutsk/Mongolia are also owned.
 	g.Occupy = &risk.OccupyState{From: "Alaska", To: "Kamchatka", MinMove: 2, MaxMove: 4}
 
 	strat := NewKillbotStrategy()
@@ -134,12 +151,19 @@ func TestKillbotStrategyOccupyDelegatesToPixieLogic(t *testing.T) {
 	if cmd.Action != ActionOccupy {
 		t.Fatalf("expected occupy, got %s", cmd.Action)
 	}
-	if cmd.Armies != 2 {
-		t.Fatalf("expected the legal minimum (2): Alaska(2 enemies) more threatened than Kamchatka(1), got %d", cmd.Armies)
+	if cmd.Armies != 4 {
+		t.Fatalf("expected the legal maximum (4): Alaska has zero enemy neighbors, Kamchatka has four, got %d", cmd.Armies)
 	}
 }
 
-func TestKillbotStrategyFortifyPrefersMostEnemyNeighborDestination(t *testing.T) {
+// TestKillbotStrategyFortifyDelegatesToBetterPixie confirms fortify()
+// delegates entirely to the BetterPixie backer (not the generic
+// bestFortifyDestination heuristic previously shared with every other
+// Lux-inspired persona -- see Lux_Port_Notes.md's Killbot addendum). pi
+// owns only 3 of Africa's 6 territories, so this exercises
+// betterPixieFortifyDestination's "scraps" branch (weakest-nearby-enemy
+// criterion), not its continent-border-draining one.
+func TestKillbotStrategyFortifyDelegatesToBetterPixie(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseFortify
 	g.Territories["Madagascar"] = risk.TerritoryState{Owner: 0, Armies: 5}
