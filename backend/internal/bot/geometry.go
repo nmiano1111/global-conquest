@@ -326,6 +326,49 @@ func clusterBorder(g *risk.Game, root risk.Territory, pi int) []risk.Territory {
 	return borders
 }
 
+// connectedComponents partitions ts into maximal connected components
+// under board adjacency restricted to membership in ts (two territories
+// share a component iff a path between them exists through only
+// territories also in ts) -- Lux's CountryClusterSet.getAllCountriesOwnedBy/
+// getAllCountriesNotOwnedBy, generalized past "owned by a specific player"
+// to any territory-membership set, since multiple callers need the
+// identical algorithm over different membership sets (targetHasSingleReachableCluster
+// over one player's owned territories, BetterPixieStrategy's placement/
+// occupy logic over every non-owned territory). Each returned component is
+// in canonical board order; components are returned in the order their
+// first member appears in ts.
+func connectedComponents(g *risk.Game, ts []risk.Territory) [][]risk.Territory {
+	member := make(map[risk.Territory]bool, len(ts))
+	for _, t := range ts {
+		member[t] = true
+	}
+	order := orderIndex(g)
+	visited := make(map[risk.Territory]bool, len(ts))
+	var components [][]risk.Territory
+	for _, t := range ts {
+		if visited[t] {
+			continue
+		}
+		var component []risk.Territory
+		queue := []risk.Territory{t}
+		visited[t] = true
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			component = append(component, cur)
+			for other := range g.Board.Adjacent[cur] {
+				if member[other] && !visited[other] {
+					visited[other] = true
+					queue = append(queue, other)
+				}
+			}
+		}
+		sortTerritoriesByOrder(component, order)
+		components = append(components, component)
+	}
+	return components
+}
+
 // continentBorders returns the territories in cont that have at least one
 // neighbor outside cont (Lux's BoardHelper.getContinentBorders), in
 // canonical board order.
@@ -631,4 +674,22 @@ func killTarget(g *risk.Game, pi int) (target int, ok bool) {
 		return 0, false
 	}
 	return target, true
+}
+
+// targetHasSingleReachableCluster reports whether target's territory
+// forms one connected landmass no larger than 20 -- Lux's
+// Vulture.placeToKill gate (CountryClusterSet.getAllCountriesOwnedBy(
+// toKillPlayer, ...).numberOfClusters() == 1, plus the "cluster.size() <
+// 21" cap Vulture.java's own comment attributes to avoiding a search that
+// "can hang the app on large search-spaces"). Ported as a straight gate
+// here since, unlike Lux, nothing downstream of it does a search whose
+// cost scales with cluster size: cheapestAttackHopToPlayer stays a single
+// Dijkstra hop regardless of how fragmented or large target's territory
+// is. The cap is kept anyway, since a fragmented, 20+-territory rival is
+// exactly the case Lux's own Vulture declines to commit to killing
+// outright -- skipping this gate would let killTarget's selection logic
+// resolve to attempts the real Lux AI would never make.
+func targetHasSingleReachableCluster(g *risk.Game, target int) bool {
+	components := connectedComponents(g, ownedTerritories(g, target))
+	return len(components) == 1 && len(components[0]) < 21
 }

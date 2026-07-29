@@ -140,6 +140,22 @@ type OccupyState struct {
 	MaxMove int `json:"max_move"`
 }
 
+// KillPlan is one player's turn-scoped commitment to eliminate a specific
+// rival -- see Game.KillPlans and SetKillPlan.
+type KillPlan struct {
+	// Target is the player index this commitment targets.
+	Target int `json:"target"`
+	// Committed reports whether this is an active commitment for the
+	// current turn -- Lux's placedToKill. Entries are removed outright
+	// (not just marked false) once the committing player's turn ends
+	// (see startTurn), so in practice this is only ever true when
+	// present at all; kept as an explicit field, not map-key-presence
+	// alone, to self-document intent against Lux's own two named fields
+	// and leave room for a non-committed "considered but rejected" state
+	// later without a representation change.
+	Committed bool `json:"committed"`
+}
+
 // AttackResult reports the outcome of a single call to Attack: dice rolled,
 // losses on each side, and whether the target territory was conquered.
 type AttackResult struct {
@@ -216,6 +232,18 @@ type Game struct {
 	// Phase is PhaseOccupy.
 	Occupy *OccupyState `json:"occupy"`
 
+	// KillPlans holds each player's own turn-scoped commitment to
+	// eliminate a specific rival, keyed by player index (matching
+	// SetupReserves' existing map[int]V convention on this struct) --
+	// Lux's Vulture toKillPlayer/placedToKill instance fields, made a
+	// real persisted field rather than a Strategy-local one because a
+	// Strategy has no channel to write to authoritative state except the
+	// Command it returns (see SetKillPlan). Cleared for the incoming
+	// player by startTurn; a stale entry for an eliminated player is
+	// harmless, bounded garbage (advanceToNextPlayer already permanently
+	// skips them, so it's never read again).
+	KillPlans map[int]KillPlan `json:"kill_plans,omitempty"`
+
 	// Deck holds the face-down draw pile of cards not yet dealt to any player.
 	Deck []Card `json:"deck"`
 	// Discard holds cards that have been traded in and are eligible to be
@@ -255,6 +283,7 @@ func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {
 		CurrentPlayer: 0,
 		Phase:         PhaseSetupClaim,
 		SetupReserves: map[int]int{},
+		KillPlans:     map[int]KillPlan{},
 		Deck:          ClassicDeck(b.Order),
 		rng:           rng,
 	}
@@ -532,6 +561,32 @@ func (g *Game) PlaceReinforcement(playerID string, t Territory, armies int) erro
 	return nil
 }
 
+// SetKillPlan records playerID's turn-scoped commitment to eliminate
+// targetID -- Lux's Vulture toKillPlayer/placedToKill, persisted as a
+// side effect of the same PlaceReinforcement call that carries out the
+// commitment (see service.GamesService.ApplyGameAction's
+// "place_reinforcement" case), since a Strategy has no other channel to
+// write to authoritative state. Deliberately has no Phase != PhaseReinforce
+// gate: by the time this is called, Phase may have already advanced to
+// PhaseAttack if the preceding PlaceReinforcement call consumed the last
+// PendingReinforcements (which it always does for a bot committing to a
+// kill) -- requireCurrentPlayer alone is the correct legality check here.
+func (g *Game) SetKillPlan(playerID, targetID string) error {
+	pi, err := g.requireCurrentPlayer(playerID)
+	if err != nil {
+		return err
+	}
+	ti := indexOfPlayer(g, targetID)
+	if ti < 0 || g.Players[ti].Eliminated {
+		return fmt.Errorf("%w: invalid kill target", ErrInvalidMove)
+	}
+	if g.KillPlans == nil {
+		g.KillPlans = make(map[int]KillPlan)
+	}
+	g.KillPlans[pi] = KillPlan{Target: ti, Committed: true}
+	return nil
+}
+
 // Attack resolves one round of combat from an owned territory against an
 // adjacent enemy territory, enforcing the standard Risk dice rules: up to 3
 // attacker dice (never more than one less than the source's army count)
@@ -788,6 +843,7 @@ func (g *Game) startTurn() {
 	g.HasFortified = false
 	g.ForcedCardTrade = false
 	g.Occupy = nil
+	delete(g.KillPlans, g.CurrentPlayer)
 	g.PendingReinforcements = g.reinforcementsFor(g.CurrentPlayer)
 }
 

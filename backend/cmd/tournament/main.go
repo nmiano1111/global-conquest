@@ -50,6 +50,7 @@ func run(args []string) (completed bool, err error) {
 	gameMode := fs.String("game-mode", "auto_start", "Game construction mode: auto_start|manual")
 	maxTurns := fs.Int("max-turns", 0, "Override the default turn safety limit per game (0 = use the default)")
 	maxCommands := fs.Int("max-commands", 0, "Override the default command safety limit per game (0 = use the default)")
+	maxDuration := fs.Duration("max-duration", 0, "Override the default wall-clock safety limit per game (0 = use the default)")
 	format := fs.String("format", "text", "Aggregate output format: text|json")
 	output := fs.String("output", "", "Write the aggregate summary to this file instead of stdout")
 	rawOutput := fs.String("raw-output", "", "If set, write one JSON-encoded simulation.Result per line (JSONL) to this path as each game completes")
@@ -65,7 +66,7 @@ func run(args []string) (completed bool, err error) {
 
 	directFlags := map[string]bool{
 		"strategies": true, "games": true, "seed-start": true, "parallel": true,
-		"game-mode": true, "max-turns": true, "max-commands": true, "raw-output": true,
+		"game-mode": true, "max-turns": true, "max-commands": true, "max-duration": true, "raw-output": true,
 	}
 	var conflicting []string
 	fs.Visit(func(f *flag.Flag) {
@@ -79,14 +80,16 @@ func run(args []string) (completed bool, err error) {
 	}
 
 	registry := bot.StrategyRegistry{
-		bot.StrategyBasicV1:   bot.NewBasicStrategy(),
-		bot.StrategyScoredV1:  bot.NewScoredStrategy(bot.DefaultWeights),
-		bot.StrategyAngryV1:   bot.NewAngryStrategy(),
-		bot.StrategyClusterV1: bot.NewClusterStrategy(),
-		bot.StrategyPixieV1:   bot.NewPixieStrategy(),
-		bot.StrategyQuoV1:     bot.NewQuoStrategy(),
-		bot.StrategyBoscoeV1:  bot.NewBoscoeStrategy(),
-		bot.StrategyKillbotV1: bot.NewKillbotStrategy(),
+		bot.StrategyBasicV1:       bot.NewBasicStrategy(),
+		bot.StrategyScoredV1:      bot.NewScoredStrategy(bot.DefaultWeights),
+		bot.StrategyAngryV1:       bot.NewAngryStrategy(),
+		bot.StrategyClusterV1:     bot.NewClusterStrategy(),
+		bot.StrategyPixieV1:       bot.NewPixieStrategy(),
+		bot.StrategyBetterPixieV1: bot.NewBetterPixieStrategy(),
+		bot.StrategyQuoV1:         bot.NewQuoStrategy(),
+		bot.StrategyBoscoeV1:      bot.NewBoscoeStrategy(),
+		bot.StrategyKillbotV1:     bot.NewKillbotStrategy(),
+		bot.StrategyTurtleV1:      bot.NewTurtleStrategy(),
 	}
 	if err := registerWeightsVariants(registry, weightsVariants); err != nil {
 		return false, err
@@ -119,6 +122,9 @@ func run(args []string) (completed bool, err error) {
 	}
 	if *maxCommands > 0 {
 		limits.MaxCommands = *maxCommands
+	}
+	if *maxDuration > 0 {
+		limits.MaxDuration = *maxDuration
 	}
 
 	cfg := tournament.Config{

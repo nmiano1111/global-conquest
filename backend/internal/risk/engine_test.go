@@ -210,6 +210,66 @@ func TestAttackAndOccupy(t *testing.T) {
 	}
 }
 
+func TestKillPlanSurvivesJSONRoundTrip(t *testing.T) {
+	g := mustGame(t)
+	p0, p1 := g.Players[0].ID, g.Players[1].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseAttack
+
+	if err := g.SetKillPlan(p0, p1); err != nil {
+		t.Fatalf("SetKillPlan: %v", err)
+	}
+
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal game: %v", err)
+	}
+	var restored Game
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatalf("unmarshal game: %v", err)
+	}
+
+	plan, ok := restored.KillPlans[0]
+	if !ok || !plan.Committed || plan.Target != 1 {
+		t.Fatalf("expected KillPlans[0] = {Target: 1, Committed: true} to survive the round trip, got %+v (ok=%v)", plan, ok)
+	}
+}
+
+func TestSetKillPlanRejectsInvalidTarget(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseAttack
+
+	if err := g.SetKillPlan(p0, "no-such-player"); err == nil {
+		t.Fatal("expected an error for an unknown target ID")
+	}
+}
+
+func TestSetKillPlanRejectsEliminatedTarget(t *testing.T) {
+	g := mustGame(t)
+	p0, p1 := g.Players[0].ID, g.Players[1].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseAttack
+	g.Players[1].Eliminated = true
+
+	if err := g.SetKillPlan(p0, p1); err == nil {
+		t.Fatal("expected an error when targeting an eliminated player")
+	}
+}
+
+func TestStartTurnClearsIncomingPlayersKillPlan(t *testing.T) {
+	g := mustGame(t)
+	g.CurrentPlayer = 0
+	g.KillPlans[0] = KillPlan{Target: 1, Committed: true}
+
+	g.startTurn()
+
+	if _, ok := g.KillPlans[0]; ok {
+		t.Fatalf("expected startTurn to clear player 0's stale KillPlan entry, got %+v", g.KillPlans)
+	}
+}
+
 func TestAttackAfterJSONRoundTripUsesDefaultRNG(t *testing.T) {
 	g := mustGame(t)
 	g.Phase = PhaseAttack

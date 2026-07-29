@@ -6,9 +6,11 @@
 //
 // Depends only on internal/risk, not internal/bot -- internal/simulation
 // (which already depends on internal/bot) uses this package to capture
-// turn-boundary training data, and a future internal/bot Strategy would
-// import this package too (bot -> tdstate, never the reverse, avoiding an
-// import cycle).
+// turn-boundary training data, and internal/bot itself already imports
+// this package today (strategy_value.go, strategy_turtle.go,
+// afterstate.go all call tdstate.Encode) for its GCN/linear value-function
+// strategies. This package must never import internal/bot in return --
+// that would be a real, immediate cycle, not just a future risk.
 package tdstate
 
 import (

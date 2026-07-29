@@ -8,13 +8,22 @@ import (
 	"github.com/nmiano1111/global-conquest/backend/internal/bot/gcnmodel"
 )
 
-// gcnVariantFlag collects repeated --gcn-variant <strategy-id>=<path>
-// pairs into a flag.Value -- mirrors boardValueVariantFlag exactly.
+// gcnVariantFlag collects repeated
+// --gcn-variant <strategy-id>=<path>[,search-depth=N][,risky=R] entries
+// into a flag.Value -- mirrors boardValueVariantFlag exactly.
 type gcnVariantFlag []gcnVariantEntry
 
 type gcnVariantEntry struct {
-	StrategyID  string
-	WeightsPath string
+	StrategyID           string
+	WeightsPath          string
+	SearchDepth          int
+	Risky                float64
+	SearchBreadth        int
+	Tp                   int
+	Gp                   int
+	ReinforceSearchDepth int
+	OccupySearchBreadth  int
+	FortifySearchBreadth int
 }
 
 func (f *gcnVariantFlag) String() string {
@@ -25,12 +34,24 @@ func (f *gcnVariantFlag) String() string {
 	return strings.Join(parts, ",")
 }
 
+// Set parses "<strategy-id>=<weights-path>[,search-depth=N][,risky=R]" --
+// see searchVariantOptions for the shared suffix-parsing logic
+// boardValueVariantFlag.Set also uses.
 func (f *gcnVariantFlag) Set(value string) error {
-	id, path, ok := strings.Cut(value, "=")
+	fields := strings.Split(value, ",")
+	id, path, ok := strings.Cut(fields[0], "=")
 	if !ok || id == "" || path == "" {
 		return fmt.Errorf("invalid --gcn-variant %q, want <strategy-id>=<weights-path>", value)
 	}
-	*f = append(*f, gcnVariantEntry{StrategyID: id, WeightsPath: path})
+	entry := gcnVariantEntry{StrategyID: id, WeightsPath: path}
+	opts, err := searchVariantOptions("--gcn-variant", value, fields[1:])
+	if err != nil {
+		return err
+	}
+	entry.SearchDepth, entry.Risky, entry.SearchBreadth = opts.depth, opts.risky, opts.breadth
+	entry.Tp, entry.Gp, entry.ReinforceSearchDepth = opts.tp, opts.gp, opts.reinforceSearchDepth
+	entry.OccupySearchBreadth, entry.FortifySearchBreadth = opts.occupySearchBreadth, opts.fortifySearchBreadth
+	*f = append(*f, entry)
 	return nil
 }
 
@@ -51,7 +72,16 @@ func registerGCNVariants(registry bot.StrategyRegistry, variants gcnVariantFlag)
 		if err != nil {
 			return fmt.Errorf("--gcn-variant %s: %w", v.StrategyID, err)
 		}
-		registry[v.StrategyID] = bot.NewBoardValueStrategy(model)
+		bvs := bot.NewBoardValueStrategy(model)
+		bvs.AttackSearchDepth = v.SearchDepth
+		bvs.Risky = v.Risky
+		bvs.AttackSearchBreadth = v.SearchBreadth
+		bvs.Tp = v.Tp
+		bvs.Gp = v.Gp
+		bvs.ReinforceSearchDepth = v.ReinforceSearchDepth
+		bvs.OccupySearchBreadth = v.OccupySearchBreadth
+		bvs.FortifySearchBreadth = v.FortifySearchBreadth
+		registry[v.StrategyID] = bvs
 	}
 	return nil
 }

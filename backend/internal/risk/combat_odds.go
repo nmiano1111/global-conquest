@@ -1,4 +1,4 @@
-package bot
+package risk
 
 import "sort"
 
@@ -25,6 +25,27 @@ type diceOutcome struct {
 	P                          float64
 }
 
+// roundDistributions is every roundDistribution(attackerDice,
+// defenderDice) result, precomputed once at package init rather than
+// recomputed (or even map-cached) on every ForecastAttack call --
+// attackerDice/defenderDice only ever take 4 and 3 possible values
+// respectively (0-3, 0-2), a fixed domain completely independent of
+// army counts, so this is a pure, one-time cost. Indexed
+// [attackerDice][defenderDice]; entries for combinations that can never
+// actually occur (e.g. defenderDice 0) are left nil/unused.
+var roundDistributions = precomputeRoundDistributions()
+
+func precomputeRoundDistributions() [][][]diceOutcome {
+	table := make([][][]diceOutcome, 4)
+	for ad := 1; ad <= 3; ad++ {
+		table[ad] = make([][]diceOutcome, 3)
+		for dd := 1; dd <= 2; dd++ {
+			table[ad][dd] = roundDistribution(ad, dd)
+		}
+	}
+	return table
+}
+
 // ForecastAttack estimates fighting from attackerArmies against
 // defenderArmies to a conclusion, assuming the attacker always commits the
 // maximum legal dice each round (matching how every bot strategy actually
@@ -35,14 +56,28 @@ type diceOutcome struct {
 // without touching actual randomness or engine state; the engine remains
 // authoritative for what really happens when dice are rolled.
 //
-// Computed via memoized recursion over single-round outcome distributions,
-// enumerated fresh per call (at most 6 distinct dice-count pairings, each
-// at most 7776 die combinations — cheap enough not to need a shared cache,
-// which also means no concurrency hazard from multiple games' bot turns
-// calling this in parallel).
+// Computed via memoized recursion, memo indexed by a dense
+// (attackerArmies+1) x (defenderArmies+1) slice rather than a map --
+// this function can be called deep inside hot paths (e.g.
+// tdstate.Encode, called from the Attack Handler's search) at army
+// counts in the hundreds, and a fresh map's per-entry hashing/bucket
+// overhead dominated actual cost far more than the state-space size
+// did (measured: capping army counts an order of magnitude barely
+// moved wall-clock time, while switching this memo from map to slice
+// did). No shared/cross-call cache still, by design -- see below.
 func ForecastAttack(attackerArmies, defenderArmies int) CombatForecast {
-	roundCache := make(map[[2]int][]diceOutcome)
-	memo := make(map[[2]int]CombatForecast)
+	// Flat, single-allocation memo/reached tables (index a*stride+d)
+	// rather than (attackerArmies+1) separate row slices each -- a
+	// nested 2D slice's per-row make() calls are themselves a real,
+	// measured cost at army counts in the hundreds (hundreds of small
+	// heap allocations per ForecastAttack call), on top of the
+	// map-to-slice win already made below. reached[i] is true only if
+	// memo[i] is live; CombatForecast's zero value (all-zero) is
+	// itself a valid forecast (a hopeless attack), so it can't double
+	// as its own "not yet computed" sentinel.
+	stride := defenderArmies + 1
+	memo := make([]CombatForecast, (attackerArmies+1)*stride)
+	reached := make([]bool, (attackerArmies+1)*stride)
 
 	var forecast func(a, d int) CombatForecast
 	forecast = func(a, d int) CombatForecast {
@@ -52,18 +87,14 @@ func ForecastAttack(attackerArmies, defenderArmies int) CombatForecast {
 		if a <= 1 {
 			return CombatForecast{}
 		}
-		key := [2]int{a, d}
-		if cached, ok := memo[key]; ok {
-			return cached
+		idx := a*stride + d
+		if reached[idx] {
+			return memo[idx]
 		}
 
 		attackerDice := min(3, a-1)
 		defenderDice := min(2, d)
-		dist, ok := roundCache[[2]int{attackerDice, defenderDice}]
-		if !ok {
-			dist = roundDistribution(attackerDice, defenderDice)
-			roundCache[[2]int{attackerDice, defenderDice}] = dist
-		}
+		dist := roundDistributions[attackerDice][defenderDice]
 
 		var win, expA, expD float64
 		for _, o := range dist {
@@ -73,7 +104,8 @@ func ForecastAttack(attackerArmies, defenderArmies int) CombatForecast {
 			expD += o.P * (float64(o.DefenderLoss) + sub.ExpectedDefenderLosses)
 		}
 		result := CombatForecast{WinProbability: win, ExpectedAttackerLosses: expA, ExpectedDefenderLosses: expD}
-		memo[key] = result
+		memo[idx] = result
+		reached[idx] = true
 		return result
 	}
 

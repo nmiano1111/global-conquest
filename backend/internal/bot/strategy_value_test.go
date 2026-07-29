@@ -217,6 +217,60 @@ func TestValueStrategyReinforcePrefersHigherScoringCandidateAndBatches(t *testin
 	}
 }
 
+// TestValueStrategyReinforceValueOverridesSharedModel confirms
+// ReinforceValue, when set, drives reinforce()'s candidate scoring
+// instead of the shared model passed to NewBoardValueStrategy -- the
+// shared model here favors Alaska (same setup as the test above), but
+// ReinforceValue favors Argentina instead, and the decision must follow
+// ReinforceValue.
+func TestValueStrategyReinforceValueOverridesSharedModel(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseReinforce
+	g.PendingReinforcements = 4
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 4}
+
+	bvs := NewBoardValueStrategy(singleFeatureBoardValue(t, "territory_Alaska_army_fraction", 10.0))
+	bvs.ReinforceValue = singleFeatureBoardValue(t, "territory_Argentina_army_fraction", 10.0)
+
+	cmd, _, err := bvs.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionPlaceReinforcement || cmd.Territory != "Argentina" {
+		t.Fatalf("expected ReinforceValue's preference (Argentina) to override the shared model's (Alaska), got %+v", cmd)
+	}
+}
+
+// TestValueStrategyReinforceSearchDepthZeroMatchesSingleBatchBaseline
+// confirms ReinforceSearchDepth's zero value (the default) leaves
+// reinforce() on the original, already-validated SingleBatchReinforcer
+// path -- same scenario/assertions as
+// TestValueStrategyReinforcePrefersHigherScoringCandidateAndBatches, just
+// with the new fields explicitly set to make the "Tp/Gp search is opt-in"
+// contract visible in this file too (Phase 4 of
+// Search_Integration_Roadmap_with_References.md).
+func TestValueStrategyReinforceSearchDepthZeroMatchesSingleBatchBaseline(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseReinforce
+	g.PendingReinforcements = 4
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 4}
+
+	bvs := NewBoardValueStrategy(singleFeatureBoardValue(t, "territory_Alaska_army_fraction", 10.0))
+	bvs.ReinforceSearchDepth = 0
+	cmd, _, err := bvs.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionPlaceReinforcement || cmd.Territory != "Alaska" {
+		t.Fatalf("expected the unchanged single-batch decision (place at Alaska), got %+v", cmd)
+	}
+	if cmd.Armies != max(1, 4/3) {
+		t.Errorf("expected the same batching rule as before Phase 4, got Armies=%d", cmd.Armies)
+	}
+}
+
 func TestValueStrategySetupReinforceReturnsLegalPlacement(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseSetupReinforce
@@ -252,6 +306,30 @@ func TestValueStrategyOccupyPrefersHigherScoringCandidate(t *testing.T) {
 	}
 }
 
+// TestValueStrategyOccupySearchBreadthCapsCandidates confirms
+// OccupySearchBreadth (Phase 4/Ga) actually narrows which army counts get
+// scored: same setup as the unlimited-default test above (where the
+// unconstrained best is 9), but OccupySearchBreadth=1 collapses
+// occupyArmyCounts to just [MinMove] (interpolatedCounts' n==1 case), so
+// the only candidate left is 1, not 9.
+func TestValueStrategyOccupySearchBreadthCapsCandidates(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseOccupy
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 10}
+	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 0, Armies: 1}
+	g.Occupy = &risk.OccupyState{From: "Alaska", To: "Kamchatka", MinMove: 1, MaxMove: 9}
+
+	bvs := NewBoardValueStrategy(singleFeatureBoardValue(t, "territory_Kamchatka_army_fraction", 10.0))
+	bvs.OccupySearchBreadth = 1
+	cmd, _, err := bvs.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionOccupy || cmd.Armies != 1 {
+		t.Fatalf("expected OccupySearchBreadth=1 to collapse candidates to just the minimum (1), got %+v", cmd)
+	}
+}
+
 func TestValueStrategyFortifyEndsTurnWhenNoLegalMove(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseFortify
@@ -281,5 +359,31 @@ func TestValueStrategyFortifyPrefersHigherScoringCandidate(t *testing.T) {
 	}
 	if cmd.Action != ActionFortify {
 		t.Fatalf("expected a fortify move (South Africa's own army fraction is directly rewarded), got %+v", cmd)
+	}
+	if cmd.Armies != 4 {
+		t.Errorf("expected the default (FortifySearchBreadth unset) to move the max legal armies (4), got Armies=%d", cmd.Armies)
+	}
+}
+
+// TestValueStrategyFortifySearchBreadthCapsArmyCountVariation confirms
+// FortifySearchBreadth (Phase 4/Gf) actually varies the moved army count
+// instead of always using MaxArmies: same setup as the test above (whose
+// default moves all 4 legal armies), but FortifySearchBreadth=1 collapses
+// fortifyArmyCounts to just [1] (interpolatedCounts(1, MaxArmies,
+// 1)'s n==1 case), so only 1 army gets moved instead of 4.
+func TestValueStrategyFortifySearchBreadthCapsArmyCountVariation(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseFortify
+	g.Territories["Madagascar"] = risk.TerritoryState{Owner: 0, Armies: 5}
+	g.Territories["South Africa"] = risk.TerritoryState{Owner: 0, Armies: 1}
+
+	bvs := NewBoardValueStrategy(singleFeatureBoardValue(t, "territory_South Africa_army_fraction", 10.0))
+	bvs.FortifySearchBreadth = 1
+	cmd, _, err := bvs.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionFortify || cmd.Armies != 1 {
+		t.Fatalf("expected FortifySearchBreadth=1 to collapse candidates to just 1 army moved, got %+v", cmd)
 	}
 }

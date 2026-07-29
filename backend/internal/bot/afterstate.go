@@ -7,13 +7,14 @@ import (
 
 // copyGameState deep-copies exactly the mutable, reference-typed fields of
 // g (Territories, Players including each player's own Cards slice,
-// SetupReserves, Occupy, Deck, Discard) so a candidate move can be
-// applied to the copy without mutating g. Board is static (never mutated
-// by any risk.Game method) and is shared, not copied. The unexported rng
-// field is carried over as-is by the struct copy -- callers must never
-// exercise a code path on the copy that consumes it (see this file's
-// package-level doc note in strategy_value.go for why that's a real
-// constraint, and how ValueStrategy's design avoids it entirely).
+// SetupReserves, KillPlans, Occupy, Deck, Discard) so a candidate move
+// can be applied to the copy without mutating g. Board is static (never
+// mutated by any risk.Game method) and is shared, not copied. The
+// unexported rng field is carried over as-is by the struct copy --
+// callers must never exercise a code path on the copy that consumes it
+// (see this file's package-level doc note in strategy_value.go for why
+// that's a real constraint, and how ValueStrategy's design avoids it
+// entirely).
 func copyGameState(g *risk.Game) *risk.Game {
 	g2 := *g
 
@@ -31,6 +32,11 @@ func copyGameState(g *risk.Game) *risk.Game {
 	g2.SetupReserves = make(map[int]int, len(g.SetupReserves))
 	for k, v := range g.SetupReserves {
 		g2.SetupReserves[k] = v
+	}
+
+	g2.KillPlans = make(map[int]risk.KillPlan, len(g.KillPlans))
+	for k, v := range g.KillPlans {
+		g2.KillPlans[k] = v
 	}
 
 	if g.Occupy != nil {
@@ -89,7 +95,25 @@ func fortifyAfterstate(g *risk.Game, playerID string, from, to risk.Territory, a
 // rng); both hypothetical states are built by directly overwriting
 // Territories entries on a copy.
 func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 {
-	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
+	return attackAfterstateBlendWithForecast(g, pi, a, risk.ForecastAttack)
+}
+
+// attackAfterstateBlendWithForecast is attackAfterstateBlend generalized
+// over which function computes each candidate's CombatForecast --
+// exists so the sequence search (attack_search.go) can inject a
+// per-decision memoized forecaster instead of always calling
+// ForecastAttack directly. ForecastAttack only memoizes *within* one
+// call; the search's candidate-ranking pass (candidateAttacks) calls
+// this once per legal attack at every tree node it visits, and once
+// armies reach the scale a long game can produce, repeatedly
+// re-deriving the same (or a nearby) (a, d) forecast at many different
+// nodes becomes a real, measured cost (a depth=3 search's ranking
+// passes alone didn't finish within 30 minutes on one real decision
+// before this existed). attackAfterstateBlend itself is unchanged --
+// existing callers keep ForecastAttack's own call-scoped memoization,
+// no behavior change.
+func attackAfterstateBlendWithForecast(g *risk.Game, pi int, a risk.AttackAction, forecastFn func(attackerArmies, defenderArmies int) risk.CombatForecast) []float64 {
+	forecast := forecastFn(a.SourceArmies, a.TargetArmies)
 	targetOwner := g.Territories[a.To].Owner
 
 	attackerRemaining := max(1, a.SourceArmies-round(forecast.ExpectedAttackerLosses))
@@ -116,4 +140,33 @@ func attackAfterstateBlend(g *risk.Game, pi int, a risk.AttackAction) []float64 
 
 func round(f float64) int {
 	return int(f + 0.5)
+}
+
+// applyTerminalOutcome materializes one Attack Handler TerminalState (a
+// concrete, real fight-to-a-conclusion result -- see attack_handler.go)
+// into a copy of g. Unlike attackAfterstateBlend, which averages the
+// "conquered" and "held" branches into a single feature vector for
+// one-shot scoring, this produces an actual valid *risk.Game so a
+// sequence search (attack_search.go) can keep reasoning from it as a
+// real board state instead of chaining approximations of
+// approximations.
+//
+// Deliberately does not model the real engine's PhaseOccupy sub-step:
+// on conquest, occupyArmies moves into a.To immediately, matching
+// attackAfterstateBlend's existing MaxAttackerDice heuristic rather than
+// searching the real occupy choice space -- occupy()'s own
+// LegalOccupations search stays authoritative once the real engine
+// actually gets there. This keeps the sequence search scoped to "which
+// attacks," not also "how many armies to occupy with," per
+// Search_Integration_Roadmap_with_References.md's Phase 2 scoping.
+func applyTerminalOutcome(g *risk.Game, pi int, a risk.AttackAction, outcome risk.TerminalState, occupyArmies int) *risk.Game {
+	c := copyGameState(g)
+	if outcome.DefenderRemaining == 0 {
+		c.Territories[a.To] = risk.TerritoryState{Owner: pi, Armies: occupyArmies}
+		c.Territories[a.From] = risk.TerritoryState{Owner: pi, Armies: max(1, outcome.AttackerRemaining-occupyArmies)}
+		return c
+	}
+	c.Territories[a.From] = risk.TerritoryState{Owner: pi, Armies: outcome.AttackerRemaining}
+	c.Territories[a.To] = risk.TerritoryState{Owner: g.Territories[a.To].Owner, Armies: outcome.DefenderRemaining}
+	return c
 }

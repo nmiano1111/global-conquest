@@ -10,6 +10,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
+	"github.com/nmiano1111/global-conquest/backend/internal/bot/gcnmodel"
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/nmiano1111/global-conquest/backend/internal/game"
 	"github.com/nmiano1111/global-conquest/backend/internal/httpapi"
@@ -85,6 +86,7 @@ func main() {
 		bot.StrategyScoredV1:  bot.NewScoredStrategy(bot.DefaultWeights), // kept registered: existing in-progress games may already have bots persisted with this strategy
 		bot.StrategyKillbotV1: bot.NewKillbotStrategy(),
 	}
+	registerGCNStrategy(strategies, gamesSvc)
 	botRunner := bot.NewRunner(botLoader, s, strategies, bot.RealSleeper{}, bot.DefaultPacingConfig())
 	botManager := bot.NewManager(context.Background(), botRunner, bot.ExecutionLive)
 	s.SetBotTrigger(botManager.Trigger)
@@ -100,6 +102,33 @@ func main() {
 	r := httpapi.NewRouter(h)
 
 	log.Fatal(r.Run(":8080"))
+}
+
+// registerGCNStrategy opts a running server into a locally-trained GCN
+// value function, entirely inert unless GCN_MODEL_PATH is set -- there is
+// no compiled-in default weights file, unlike basic-v1/scored-v1/killbot-v1.
+// Win rate depends heavily on how the model was trained/calibrated (a
+// naive supervised objective plus median-based margin calibration stayed
+// at 0% across hundreds of evaluation games; TD(lambda) training plus
+// --percentile 0 calibration reached a real, reproducible ~17% -- see
+// internal/bot.StrategyGCNV1's doc comment and models/ for whichever
+// export this path points at), so this stays local-experimentation-only,
+// not a compiled-in production default. When set, registers
+// bot.StrategyGCNV1 in strategies and makes it every new bot's default
+// persona (gamesSvc.SetDefaultBotStrategy) so a locally-created game is
+// actually playable against it without any create-game UI changes.
+func registerGCNStrategy(strategies bot.StrategyRegistry, gamesSvc *service.GamesService) {
+	path := os.Getenv("GCN_MODEL_PATH")
+	if path == "" {
+		return
+	}
+	model, err := gcnmodel.LoadModel(path)
+	if err != nil {
+		log.Fatalf("GCN_MODEL_PATH=%s: %v", path, err)
+	}
+	strategies[bot.StrategyGCNV1] = bot.NewBoardValueStrategy(model)
+	gamesSvc.SetDefaultBotStrategy(bot.StrategyGCNV1)
+	log.Printf("bots: GCN_MODEL_PATH=%s loaded as %s, now the default bot persona", path, bot.StrategyGCNV1)
 }
 
 // recoverBotGames restarts a runner for every in_progress game after a

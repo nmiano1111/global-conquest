@@ -61,6 +61,21 @@ type Limits struct {
 	// consecutive commands pass with neither CurrentPlayer nor Phase
 	// changing — a cheap first-line stall detector, checked before the
 	// more expensive repeated-state-hash check (see statehash.go).
+	//
+	// This is a coarse heuristic, not a precise "nothing is happening"
+	// signal: within a single attack phase, every individual dice round
+	// is its own command, and CurrentPlayer/Phase legitimately stay
+	// unchanged for as many commands as the fight takes to resolve.
+	// Confirmed by tracing an actual failure this heuristic caused: a
+	// real, steadily-progressing fight between two armies in the
+	// hundreds (accumulated over 200+ turns) needed on the order of a
+	// thousand consecutive same-phase commands to resolve, well past the
+	// old default of 500 — MaxRepeatedStates (below) is the check that
+	// actually detects genuine non-progress (an *identical* state
+	// recurring), since real combat changes army counts, hence the state
+	// fingerprint, every round; this value only needs to be generous
+	// enough not to misfire on legitimately long fights before that
+	// check (or MaxCommands) would catch a truly pathological case.
 	MaxCommandsWithoutProgress int
 	// MaxRepeatedStates stops the simulation once the same state
 	// fingerprint (statehash.go) has recurred this many times.
@@ -87,7 +102,7 @@ func DefaultLimits() Limits {
 	return Limits{
 		MaxCommands:                20000,
 		MaxTurns:                   2000,
-		MaxCommandsWithoutProgress: 500,
+		MaxCommandsWithoutProgress: 5000,
 		MaxRepeatedStates:          3,
 		MaxDuration:                30 * time.Second,
 	}

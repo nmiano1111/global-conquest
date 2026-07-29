@@ -146,19 +146,56 @@ e2e: ## Run DB-backed end-to-end tests (requires E2E_ADMIN_DSN)
 seed-go: ## Seed DB with test users/games (hashes password='password' via auth module)
 	$(GO) run ./cmd/seed
 
-tdtraindata-diverse: ## Generate a diversified TD(lambda) training set across rotating strategy lineups (override TD_GAMES to change games-per-lineup, default 200)
+tdtraindata-diverse: ## Generate a TD(lambda) training set using the paper's exact 6-Lux-persona opponent pool (override TD_GAMES to change games-per-lineup, default 200)
 	@mkdir -p $(TD_OUTPUT_DIR)
-	@echo "==> Generating diversified tdtraindata set ($(TD_GAMES) games per lineup) into $(TD_OUTPUT_DIR)"
+	@echo "==> Generating Lux-6 tdtraindata set ($(TD_GAMES) games per lineup) into $(TD_OUTPUT_DIR)"
+	# Restricted to exactly the 6 personas Carr (2020) Section 3.4.3 used to
+	# generate the paper's own training data -- "the Angry, Pixie, Cluster,
+	# Quo, Killbot and Boscoe AIs inbuilt with Lux... chosen due to their
+	# varying skill and playstyles". Previously this target also mixed in
+	# basic-v1/scored-v1/turtle-v1 (none of which are Lux personas) across
+	# 11 of its 12 lineups, diluting that curated pool across most of the
+	# data. Player count is fixed per lineup (= len(--strategies)), and
+	# encode.go's enemySeatCount=5 owner-slot/fraction features only get
+	# populated up to numPlayers-1 enemies -- so seat coverage across the
+	# whole set depends on how many lineups exist at each player count.
+	# Kept at 3 lineups per count for 3/4/5 players, each rotating which of
+	# the 6 personas gets excluded so every persona gets balanced exposure
+	# (impossible to make perfectly even since 9/12/15 slots don't divide
+	# evenly by 6, but no persona is excluded from more than one tier's
+	# rotation). 6 players only has one possible composition (all 6, and
+	# also the paper's own game size -- Section 3.2, "All games will
+	# feature 6 players") -- run across 3 non-overlapping seed ranges
+	# instead of 3 distinct lineups, to match the other tiers' total volume.
+	#
+	# -- 3 players (seats 1-2 populated) --
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,cluster-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux3_a_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies killbot-v1,quo-v1,boscoe-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux3_b_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,killbot-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux3_c_train.jsonl
+	# -- 4 players (seats 1-3 populated) --
+	$(GO) run ./cmd/tdtraindata --strategies cluster-v1,quo-v1,killbot-v1,boscoe-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux4_a_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,killbot-v1,boscoe-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux4_b_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,cluster-v1,quo-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux4_c_train.jsonl
+	# -- 5 players (seats 1-4 populated) --
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,cluster-v1,quo-v1,boscoe-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux5_a_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,cluster-v1,quo-v1,killbot-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux5_b_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,pixie-v1,quo-v1,killbot-v1,boscoe-v1 \
+		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux5_c_train.jsonl
+	# -- 6 players (seats 1-5 populated) -- the paper's exact opponent pool
+	# and game size, run 3x across disjoint seed ranges for volume parity
+	# with the other tiers.
 	$(GO) run ./cmd/tdtraindata --strategies angry-v1,cluster-v1,pixie-v1,quo-v1,boscoe-v1,killbot-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/lux_all_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,angry-v1,cluster-v1,pixie-v1,quo-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_a_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies cluster-v1,pixie-v1,boscoe-v1,scored-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_b_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies angry-v1,quo-v1,killbot-v1,basic-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/mix_c_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies scored-v1,boscoe-v1,killbot-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/small_a_train.jsonl
-	$(GO) run ./cmd/tdtraindata --strategies basic-v1,scored-v1,scored-v1 \
-		--games $(TD_GAMES) --output $(TD_OUTPUT_DIR)/baseline_train.jsonl
+		--games $(TD_GAMES) --seed-start 1 --output $(TD_OUTPUT_DIR)/lux6_a_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,cluster-v1,pixie-v1,quo-v1,boscoe-v1,killbot-v1 \
+		--games $(TD_GAMES) --seed-start $$(($(TD_GAMES)+1)) --output $(TD_OUTPUT_DIR)/lux6_b_train.jsonl
+	$(GO) run ./cmd/tdtraindata --strategies angry-v1,cluster-v1,pixie-v1,quo-v1,boscoe-v1,killbot-v1 \
+		--games $(TD_GAMES) --seed-start $$((2*$(TD_GAMES)+1)) --output $(TD_OUTPUT_DIR)/lux6_c_train.jsonl
 	@echo "==> Done. Fit against the whole set from analytics/ with: poetry run fit-gcn --output /tmp/gcn.json"

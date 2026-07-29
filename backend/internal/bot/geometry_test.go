@@ -620,3 +620,119 @@ func TestKillTargetCardAdjustmentChangesSelection(t *testing.T) {
 		t.Fatalf("expected player 2 (card discount lowers their adjusted armies below player 1's, despite tying on raw armies and being checked second), got %d", target)
 	}
 }
+
+func TestConnectedComponentsSingleComponent(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Alaska - Northwest Territory - Alberta are all mutually adjacent.
+	ts := []risk.Territory{"Alaska", "Northwest Territory", "Alberta"}
+
+	got := connectedComponents(g, ts)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 component, got %d: %v", len(got), got)
+	}
+	want := []risk.Territory{"Alaska", "Northwest Territory", "Alberta"}
+	if !slices.Equal(got[0], sortedByBoardOrder(g, want)) {
+		t.Fatalf("expected component %v, got %v", sortedByBoardOrder(g, want), got[0])
+	}
+}
+
+func TestConnectedComponentsMultipleComponents(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Alaska/Northwest Territory are mutually adjacent; Japan is not
+	// adjacent to either (it borders Kamchatka/Mongolia, not the
+	// Alaska/Northwest Territory pair), so it forms its own component.
+	ts := []risk.Territory{"Alaska", "Northwest Territory", "Japan"}
+
+	got := connectedComponents(g, ts)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 components, got %d: %v", len(got), got)
+	}
+	foundPair, foundJapan := false, false
+	for _, c := range got {
+		if slices.Equal(c, sortedByBoardOrder(g, []risk.Territory{"Alaska", "Northwest Territory"})) {
+			foundPair = true
+		}
+		if slices.Equal(c, []risk.Territory{"Japan"}) {
+			foundJapan = true
+		}
+	}
+	if !foundPair || !foundJapan {
+		t.Fatalf("expected components {Alaska, Northwest Territory} and {Japan}, got %v", got)
+	}
+}
+
+func TestConnectedComponentsEmptyInput(t *testing.T) {
+	g, _ := newTestGame(t)
+	got := connectedComponents(g, nil)
+	if len(got) != 0 {
+		t.Fatalf("expected no components for empty input, got %v", got)
+	}
+}
+
+// sortedByBoardOrder returns ts sorted by canonical board order, for
+// building expected-value slices that match connectedComponents' own
+// per-component ordering guarantee.
+func sortedByBoardOrder(g *risk.Game, ts []risk.Territory) []risk.Territory {
+	out := append([]risk.Territory(nil), ts...)
+	sortTerritoriesByOrder(out, orderIndex(g))
+	return out
+}
+
+// setOwner assigns owner to every territory in ts, at 1 army each.
+func setOwner(g *risk.Game, owner int, ts ...risk.Territory) {
+	for _, t := range ts {
+		g.Territories[t] = risk.TerritoryState{Owner: owner, Armies: 1}
+	}
+}
+
+func TestTargetHasSingleReachableClusterTrueForSmallSingleCluster(t *testing.T) {
+	g, _ := newTestGame(t)
+	// Everything defaults to owner=1 in newTestGame; reassign the rest to
+	// player 2 so player 1's owned set is exactly Australia (4
+	// territories, one connected cluster, well under the 21 cap).
+	for _, t2 := range g.Board.Order {
+		g.Territories[t2] = risk.TerritoryState{Owner: 2, Armies: 1}
+	}
+	setOwner(g, 1, "Indonesia", "New Guinea", "Western Australia", "Eastern Australia")
+
+	if !targetHasSingleReachableCluster(g, 1) {
+		t.Fatal("expected a single 4-territory cluster to pass the gate")
+	}
+}
+
+func TestTargetHasSingleReachableClusterFalseForMultipleClusters(t *testing.T) {
+	g, _ := newTestGame(t)
+	for _, t2 := range g.Board.Order {
+		g.Territories[t2] = risk.TerritoryState{Owner: 2, Armies: 1}
+	}
+	// Australia (4 territories) and Iceland (not adjacent to any of
+	// them) form two disconnected clusters.
+	setOwner(g, 1, "Indonesia", "New Guinea", "Western Australia", "Eastern Australia", "Iceland")
+
+	if targetHasSingleReachableCluster(g, 1) {
+		t.Fatal("expected two disconnected clusters to fail the gate")
+	}
+}
+
+func TestTargetHasSingleReachableClusterFalseAtOrAboveTwentyOneTerritories(t *testing.T) {
+	g, _ := newTestGame(t)
+	for _, t2 := range g.Board.Order {
+		g.Territories[t2] = risk.TerritoryState{Owner: 2, Armies: 1}
+	}
+	// North America (9) + South America (4, via Central America ->
+	// Venezuela) + Europe (7, via Greenland -> Iceland) + North Africa (1,
+	// via Western/Southern Europe) = 21 territories, all one connected
+	// cluster (North Africa also touches Brazil, so there's redundant
+	// connectivity, but it's still a single component either way).
+	setOwner(g, 1,
+		"Alaska", "Northwest Territory", "Greenland", "Alberta", "Ontario",
+		"Quebec", "Western United States", "Eastern United States", "Central America",
+		"Venezuela", "Peru", "Brazil", "Argentina",
+		"Iceland", "Scandinavia", "Ukraine", "Great Britain", "Northern Europe", "Western Europe", "Southern Europe",
+		"North Africa",
+	)
+
+	if targetHasSingleReachableCluster(g, 1) {
+		t.Fatal("expected a single cluster of exactly 21 territories to fail the < 21 cap")
+	}
+}

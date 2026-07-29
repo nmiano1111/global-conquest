@@ -133,6 +133,13 @@ type GameActionInput struct {
 	// CardIndices identifies the up-to-three cards selected from the
 	// player's hand, for card-trading actions.
 	CardIndices [3]int
+	// KillTarget, when non-empty, is a rival's player ID the acting
+	// player is committing to try to eliminate this turn -- only
+	// meaningful alongside a "place_reinforcement" Action (see
+	// service.GamesService.ApplyGameAction and risk.Game.SetKillPlan).
+	// No human client ever sets this; it defaults to "" (a no-op) for
+	// every WebSocket-originated action.
+	KillTarget string
 }
 
 // GameActionPlayer is the per-player state included in a GameActionUpdate.

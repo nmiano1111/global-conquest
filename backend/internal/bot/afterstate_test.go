@@ -65,6 +65,22 @@ func TestCopyGameStateSetupReservesAndDeckIndependent(t *testing.T) {
 	}
 }
 
+func TestCopyGameStateKillPlansIndependent(t *testing.T) {
+	g, _ := newTestGame(t)
+	g.KillPlans[0] = risk.KillPlan{Target: 1, Committed: true}
+
+	c := copyGameState(g)
+	c.KillPlans[0] = risk.KillPlan{Target: 2, Committed: true}
+	c.KillPlans[1] = risk.KillPlan{Target: 0, Committed: true}
+
+	if g.KillPlans[0].Target != 1 {
+		t.Errorf("expected the original KillPlans[0] to be unaffected, got %+v", g.KillPlans[0])
+	}
+	if _, ok := g.KillPlans[1]; ok {
+		t.Errorf("expected the original KillPlans to not gain the copy's new entry, got %+v", g.KillPlans)
+	}
+}
+
 func TestReinforceAfterstateAppliesWithoutMutatingOriginal(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseReinforce
@@ -127,7 +143,7 @@ func TestAttackAfterstateBlendWeightsByWinProbability(t *testing.T) {
 	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 30}
 	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 1}
 
-	forecast := ForecastAttack(a.SourceArmies, a.TargetArmies)
+	forecast := risk.ForecastAttack(a.SourceArmies, a.TargetArmies)
 	if forecast.WinProbability < 0.95 {
 		t.Fatalf("expected this matchup to be hugely favorable, got WinProbability=%v", forecast.WinProbability)
 	}
