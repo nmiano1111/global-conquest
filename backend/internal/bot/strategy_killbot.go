@@ -59,16 +59,21 @@ func (k *KillbotStrategy) nextCommand(g *risk.Game, playerID string) (Command, e
 }
 
 // setupReinforce places the one initial army: if killTarget finds a
-// rival to eliminate, the owned territory that starts the cheapest
-// attack route toward them (cheapestAttackHopToPlayer's from -- Lux's
-// placeToKill, simplified per Lux_Port_Notes.md's Killbot addendum);
-// otherwise delegates entirely to the backer's own setupReinforce --
-// Lux's placeInitialArmies delegates straight to placeArmies, which
-// itself falls through to backer.placeArmies whenever toKillPlayer is
-// unset.
+// rival to eliminate whose territory is reachable as a single cluster
+// (targetHasSingleReachableCluster -- Lux's Vulture.placeToKill gate,
+// see geometry.go), the owned territory that starts the cheapest attack
+// route toward them (cheapestAttackHopToPlayer's from); otherwise
+// delegates entirely to the backer's own setupReinforce -- Lux's
+// placeInitialArmies delegates straight to placeArmies, which itself
+// falls through to backer.placeArmies whenever toKillPlayer is unset.
+// This phase has no turn-scoped commitment to record (setup happens
+// before any real turn cycle exists, and ApplyGameAction's
+// "place_initial_army" case never consults Command.KillTarget), so it
+// just recomputes the routing decision live each call, same as before
+// Part B.
 func (k *KillbotStrategy) setupReinforce(g *risk.Game, playerID string) (Command, error) {
 	pi := playerIndex(g, playerID)
-	if target, ok := killTarget(g, pi); ok {
+	if target, ok := killTarget(g, pi); ok && targetHasSingleReachableCluster(g, target) {
 		if from, _, _, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
 			return Command{Action: ActionPlaceInitialArmy, Territory: string(from)}, nil
 		}
@@ -79,41 +84,65 @@ func (k *KillbotStrategy) setupReinforce(g *risk.Game, playerID string) (Command
 // reinforce trades cards whenever a legal set exists (voluntaryCardTurnIn,
 // shared with Quo/Boscoe -- Killbot's Lux cardsPhase delegates straight to
 // its backer's cardsPhase, BetterPixie's own voluntary cash), then either
-// places the whole pending batch on the cheapest route toward killTarget's
-// rival, or delegates the whole placement decision to the backer's own
-// reinforce -- BetterPixie's placement genuinely needs multiple chunked
-// calls across a turn (see strategy_betterpixie.go's betterPixiePlacement),
-// so this can't collapse to "pick one territory, dump everything on it"
-// the way the plain-Pixie-backed version could.
+// commits to a kill this turn or delegates the whole placement decision
+// to the backer -- BetterPixie's placement genuinely needs multiple
+// chunked calls across a turn (see strategy_betterpixie.go's
+// betterPixiePlacement), so this can't collapse to "pick one territory,
+// dump everything on it" the way the plain-Pixie-backed version could.
+//
+// Committing (Lux's Vulture.setToKillPlayer + placeToKill, called once
+// per turn from placeArmies) requires: a target killTarget still finds
+// (recomputed fresh, since this engine has no turn-cached toKillPlayer
+// field), whose territory is reachable as a single cluster
+// (targetHasSingleReachableCluster), and enough armies -- current plus
+// this whole pending batch -- to beat the route's cost (Lux's own
+// "placeOnCountry.getArmies() + numberOfArmies > ..." gate, previously
+// missing from this port entirely). Command.KillTarget records the
+// commitment as a side effect of this same PlaceReinforcement call (see
+// risk.Game.SetKillPlan) -- attack() then reads it back from
+// g.KillPlans instead of re-deciding.
 func (k *KillbotStrategy) reinforce(g *risk.Game, playerID string) (Command, error) {
 	if cmd, ok := voluntaryCardTurnIn(g, playerID); ok {
 		return cmd, nil
 	}
 	pi := playerIndex(g, playerID)
-	if target, ok := killTarget(g, pi); ok {
-		if from, _, _, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
-			return Command{Action: ActionPlaceReinforcement, Territory: string(from), Armies: g.PendingReinforcements}, nil
+	if target, ok := killTarget(g, pi); ok && targetHasSingleReachableCluster(g, target) {
+		if from, _, cost, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
+			src := g.Territories[from]
+			if src.Armies+g.PendingReinforcements > cost {
+				return Command{
+					Action:     ActionPlaceReinforcement,
+					Territory:  string(from),
+					Armies:     g.PendingReinforcements,
+					KillTarget: g.Players[target].ID,
+				}, nil
+			}
 		}
 	}
 	return k.backer.reinforce(g, playerID)
 }
 
-// attack tries killTarget's route first (Lux's Vulture.attackPhase, which
-// tries attackToKillPlayer before falling back to the backer's own
-// attackPhase entirely), then delegates the whole attack decision to the
-// backer -- Vulture.attackPhase calls attackHogWild() unconditionally
-// after either branch, not only as a last resort the way
-// ClusterStrategy/QuoStrategy/BoscoeStrategy gate it behind their own
-// fallback failing, but that distinction only matters while a kill is in
-// progress (see Part B of the kill-commitment work, not yet landed) --
-// the no-target fallback here is a full, single delegation to the
-// backer's own attack, which already ends with its own
-// shouldGoHogWild/attackAsMuchAsPossible.
+// attack is a hard binary branch matching Lux's Vulture.attackPhase
+// exactly: if this turn's reinforce call committed to a kill (g.KillPlans,
+// set via SetKillPlan as a side effect of that PlaceReinforcement call --
+// see reinforce), walk the route and never fall through to the backer at
+// all, only a bare shouldGoHogWild/attackAsMuchAsPossible afterward
+// (Vulture.attackPhase calls attackHogWild() unconditionally after either
+// branch, not only as a last resort the way ClusterStrategy/QuoStrategy/
+// BoscoeStrategy gate it behind their own fallback failing); otherwise
+// delegate the whole decision to the backer, which already ends with its
+// own shouldGoHogWild/attackAsMuchAsPossible. The commitment is treated
+// as spent (falling through to the backer for the rest of this call)
+// once the target is eliminated -- cheapestAttackHopToPlayer would
+// naturally stop finding a route at that point anyway (the target no
+// longer owns anything to search from), but the explicit check avoids
+// getting stuck choosing only between hogwild and ending the attack
+// phase for the rest of the turn once the kill is already done.
 func (k *KillbotStrategy) attack(g *risk.Game, playerID string) (Command, error) {
 	pi := playerIndex(g, playerID)
 
-	if target, ok := killTarget(g, pi); ok {
-		if from, to, cost, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
+	if plan, ok := g.KillPlans[pi]; ok && plan.Committed && !g.Players[plan.Target].Eliminated {
+		if from, to, cost, ok := cheapestAttackHopToPlayer(g, pi, plan.Target); ok {
 			src := g.Territories[from]
 			// src.Armies must exceed both the route's cost and 1
 			// (risk.Game.Attack's own hard minimum to attack at all --
@@ -125,15 +154,44 @@ func (k *KillbotStrategy) attack(g *risk.Game, playerID string) (Command, error)
 				return Command{Action: ActionAttack, From: string(from), To: string(to), AttackerDice: min(3, src.Armies-1)}, nil
 			}
 		}
+		if shouldGoHogWild(g, pi) {
+			if cmd, ok := attackAsMuchAsPossible(g, pi); ok {
+				return cmd, nil
+			}
+		}
+		return Command{Action: ActionEndAttack}, nil
 	}
 
 	return k.backer.attack(g, playerID)
 }
 
-// occupy delegates straight to the backer -- Lux's Vulture.moveArmiesIn
-// calls backer.moveArmiesIn(...) unconditionally, with no kill-specific
-// override at all.
+// occupy forces the maximum legal army count whenever this player has an
+// active, uneliminated kill commitment, instead of delegating to the
+// backer -- Lux's Vulture.attackAlongRoute sets
+// (backer).moveInMemory = 1000000 before every attack along the kill
+// route, forcing the backer's own moveArmiesIn to move everyone in via
+// its memoryMoveArmiesInTest short-circuit, so the pursuing stack is
+// never diluted mid-chase. moveInMemory itself was already noted
+// (Lux_Port_Notes.md's Pixie addendum) as not needing a port -- true for
+// Cluster/Pixie's own single-call use of it, but that decision predates
+// Killbot's specific repurposing of the same flag for this route-wide
+// effect, which needs its own explicit handling here instead.
+// Simplification: this forces max armies for any conquest while a kill
+// is committed, not only conquests along the specific routed hop (Lux's
+// own attackHogWild, called only after the route completes or fails,
+// does not get this treatment) -- committed-mode hogwild conquests only
+// happen when the routed hop itself couldn't fire this turn, so treating
+// them the same way is a deliberate, minor over-application, not a
+// meaningfully different posture.
 func (k *KillbotStrategy) occupy(g *risk.Game, playerID string) (Command, error) {
+	pi := playerIndex(g, playerID)
+	if plan, ok := g.KillPlans[pi]; ok && plan.Committed && !g.Players[plan.Target].Eliminated {
+		actions := risk.LegalOccupations(g, playerID)
+		if len(actions) == 0 {
+			return Command{}, fmt.Errorf("bot: no legal occupation for player %s", playerID)
+		}
+		return Command{Action: ActionOccupy, Armies: actions[len(actions)-1].Armies}, nil
+	}
 	return k.backer.occupy(g, playerID)
 }
 

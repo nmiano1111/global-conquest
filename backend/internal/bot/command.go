@@ -47,6 +47,13 @@ type Command struct {
 	// CardIndices identifies the up-to-three cards selected from the
 	// player's hand, for card-trading actions.
 	CardIndices [3]int
+	// KillTarget, when non-empty, is a rival's player ID this command's
+	// actor is committing to try to eliminate this turn -- only ever set
+	// alongside ActionPlaceReinforcement (see KillbotStrategy.reinforce),
+	// consumed as a side effect of that action via risk.Game.SetKillPlan.
+	// Empty is a no-op for every other action, the same convention every
+	// other unused-per-action GameActionInput field already follows.
+	KillTarget string
 }
 
 // toGameActionInput attaches the game and actor identity the runner knows
@@ -63,5 +70,6 @@ func (c Command) toGameActionInput(gameID, playerID string) game.GameActionInput
 		AttackerDice: c.AttackerDice,
 		DefenderDice: c.DefenderDice,
 		CardIndices:  c.CardIndices,
+		KillTarget:   c.KillTarget,
 	}
 }

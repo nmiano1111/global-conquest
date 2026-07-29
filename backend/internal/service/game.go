@@ -316,6 +316,12 @@ type GameActionInput struct {
 	DefenderDice int
 	// CardIndices are the three hand indices to trade in for "trade_cards".
 	CardIndices [3]int
+	// KillTarget, when non-empty, is a rival's player ID PlayerUserID is
+	// committing to try to eliminate this turn -- only consulted
+	// alongside "place_reinforcement" (see the "place_reinforcement" case
+	// in ApplyGameAction and risk.Game.SetKillPlan). Empty is a no-op for
+	// every other action.
+	KillTarget string
 }
 
 // GameActionPlayer is one player's post-action projection returned as part
@@ -1107,6 +1113,11 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			if err := engine.PlaceReinforcement(in.PlayerUserID, risk.Territory(in.Territory), in.Armies); err != nil {
 				return err
+			}
+			if in.KillTarget != "" {
+				if err := engine.SetKillPlan(in.PlayerUserID, in.KillTarget); err != nil {
+					return err
+				}
 			}
 			actionTerritory = in.Territory
 			eventType = "reinforcement_placed"

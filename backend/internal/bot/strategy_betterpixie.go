@@ -246,16 +246,16 @@ func (bp *BetterPixieStrategy) setupReinforce(g *risk.Game, playerID string) (Co
 	return Command{Action: ActionPlaceInitialArmy, Territory: string(t)}, nil
 }
 
-// reinforce only trades cards when a set is mandatory -- BetterPixie's
-// Lux cardsPhase calls cashCardsIfPossible via super.cardsPhase, but
-// (like every persona ported so far) this project's card-timing policy
-// is handled uniformly via risk.CardTurnInRequired, not per-persona.
+// reinforce trades any legal card set whenever one exists, not just
+// mandatory ones -- Lux's BetterPixie.cardsPhase calls
+// cashCardsIfPossible via super.cardsPhase, so voluntaryCardTurnIn
+// (shared with Killbot/Quo/Boscoe, whose own Lux sources have the
+// identical override) is the faithful port here, not the mandatory-only
+// risk.CardTurnInRequired gate other, non-cashing personas use.
 // Placement is one betterPixiePlacement decision per call.
 func (bp *BetterPixieStrategy) reinforce(g *risk.Game, playerID string) (Command, error) {
-	if risk.CardTurnInRequired(g, playerID) {
-		if sets := risk.LegalCardTurnIns(g, playerID); len(sets) > 0 {
-			return Command{Action: ActionTradeCards, CardIndices: sets[0].Indices}, nil
-		}
+	if cmd, ok := voluntaryCardTurnIn(g, playerID); ok {
+		return cmd, nil
 	}
 	actions := risk.LegalReinforcements(g, playerID)
 	if len(actions) == 0 {

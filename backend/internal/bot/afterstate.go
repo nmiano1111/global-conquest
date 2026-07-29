@@ -7,13 +7,14 @@ import (
 
 // copyGameState deep-copies exactly the mutable, reference-typed fields of
 // g (Territories, Players including each player's own Cards slice,
-// SetupReserves, Occupy, Deck, Discard) so a candidate move can be
-// applied to the copy without mutating g. Board is static (never mutated
-// by any risk.Game method) and is shared, not copied. The unexported rng
-// field is carried over as-is by the struct copy -- callers must never
-// exercise a code path on the copy that consumes it (see this file's
-// package-level doc note in strategy_value.go for why that's a real
-// constraint, and how ValueStrategy's design avoids it entirely).
+// SetupReserves, KillPlans, Occupy, Deck, Discard) so a candidate move
+// can be applied to the copy without mutating g. Board is static (never
+// mutated by any risk.Game method) and is shared, not copied. The
+// unexported rng field is carried over as-is by the struct copy --
+// callers must never exercise a code path on the copy that consumes it
+// (see this file's package-level doc note in strategy_value.go for why
+// that's a real constraint, and how ValueStrategy's design avoids it
+// entirely).
 func copyGameState(g *risk.Game) *risk.Game {
 	g2 := *g
 
@@ -31,6 +32,11 @@ func copyGameState(g *risk.Game) *risk.Game {
 	g2.SetupReserves = make(map[int]int, len(g.SetupReserves))
 	for k, v := range g.SetupReserves {
 		g2.SetupReserves[k] = v
+	}
+
+	g2.KillPlans = make(map[int]risk.KillPlan, len(g.KillPlans))
+	for k, v := range g.KillPlans {
+		g2.KillPlans[k] = v
 	}
 
 	if g.Occupy != nil {

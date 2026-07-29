@@ -65,6 +65,22 @@ func TestCopyGameStateSetupReservesAndDeckIndependent(t *testing.T) {
 	}
 }
 
+func TestCopyGameStateKillPlansIndependent(t *testing.T) {
+	g, _ := newTestGame(t)
+	g.KillPlans[0] = risk.KillPlan{Target: 1, Committed: true}
+
+	c := copyGameState(g)
+	c.KillPlans[0] = risk.KillPlan{Target: 2, Committed: true}
+	c.KillPlans[1] = risk.KillPlan{Target: 0, Committed: true}
+
+	if g.KillPlans[0].Target != 1 {
+		t.Errorf("expected the original KillPlans[0] to be unaffected, got %+v", g.KillPlans[0])
+	}
+	if _, ok := g.KillPlans[1]; ok {
+		t.Errorf("expected the original KillPlans to not gain the copy's new entry, got %+v", g.KillPlans)
+	}
+}
+
 func TestReinforceAfterstateAppliesWithoutMutatingOriginal(t *testing.T) {
 	g, p0 := newTestGame(t)
 	g.Phase = risk.PhaseReinforce
