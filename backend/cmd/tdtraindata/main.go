@@ -89,6 +89,7 @@ func run(args []string) (completed bool, err error) {
 		bot.StrategyQuoV1:         bot.NewQuoStrategy(),
 		bot.StrategyBoscoeV1:      bot.NewBoscoeStrategy(),
 		bot.StrategyKillbotV1:     bot.NewKillbotStrategy(),
+		bot.StrategyKillbotOldV1:  bot.NewKillbotOldStrategy(),
 		bot.StrategyTurtleV1:      bot.NewTurtleStrategy(),
 	}
 	if err := baseCfg.Validate(registry); err != nil {
