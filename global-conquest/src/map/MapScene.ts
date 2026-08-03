@@ -34,7 +34,10 @@ import {
   type Velocity,
   zoomToward,
 } from "./cameraMath";
+import { MapEditorController, type MapEditorSnapshot } from "./mapEditor";
 import { TerritoryNode } from "./TerritoryNode";
+import { TerritoryPolygon } from "./TerritoryPolygon";
+import { territoryShapes } from "./territoryShapes";
 import type { TerritoryDisplayState, TerritoryHighlightKind } from "./types";
 
 const MAX_ZOOM = 4.0;
@@ -85,7 +88,15 @@ export class MapScene {
    * positioning detail; it is not part of the camera.
    */
   private readonly overlayContainer: Container;
-  private readonly nodes: Map<string, TerritoryNode> = new Map();
+  /**
+   * Territories with traced polygon shape data (territoryShapes.ts). Lives
+   * directly in worldContainer space — normalized shape coordinates
+   * denormalize 1:1 onto risk0.png pixels, which is exactly worldContainer's
+   * coordinate system, so no overlay transform is needed for these.
+   */
+  private readonly polygonContainer: Container;
+  private readonly legacyNodes: Map<string, TerritoryNode> = new Map();
+  private readonly polygonNodes: Map<string, TerritoryPolygon> = new Map();
   private readonly connectorGfx: Graphics;
 
   // Camera state — always kept in sync with worldContainer via applyCamera().
@@ -112,11 +123,18 @@ export class MapScene {
   private pulsePhase = 0;
   private readonly initialFit: "contain" | "cover";
 
+  // Dev-only polygon tracing tool (see mapEditor.ts / MAP_EDITOR.md). Null
+  // outside of ?mapEditor=true dev sessions.
+  private editor: MapEditorController | null = null;
+  private editorGfx: Graphics | null = null;
+  private editorDragging = false;
+
   private constructor(app: Application, initialFit: "contain" | "cover") {
     this.app = app;
     this.initialFit = initialFit;
     this.worldContainer = new Container();
     this.overlayContainer = new Container();
+    this.polygonContainer = new Container();
     this.connectorGfx = new Graphics();
     this.reducedMotion =
       typeof window !== "undefined" &&
@@ -157,6 +175,11 @@ export class MapScene {
     bg.height = MAP_VIEWBOX_HEIGHT;
     this.worldContainer.addChild(bg);
 
+    // --- Polygon territories (world space, directly aligned to risk0.png) ---
+    // Added before overlayContainer so polygon fills sit beneath the legacy
+    // circular tokens of neighboring un-traced territories at shared edges.
+    this.worldContainer.addChild(this.polygonContainer);
+
     // --- Territory overlay (static alignment transform, not part of the camera) ---
     // Territory coordinates in MAP_TERRITORIES are in SVG space. This transform
     // maps them onto the correct positions over the background sprite, mirroring
@@ -173,13 +196,24 @@ export class MapScene {
     this.overlayContainer.addChild(this.connectorGfx);
 
     // --- Territory nodes ---
+    // Territories with traced polygon shape data render as a shaped overlay;
+    // everything else falls back to the legacy circular token until traced
+    // (see territoryShapes.ts / MAP_EDITOR.md).
+    const guardedClick = (n: string) => {
+      if (this.dragSuppressesClick) return;
+      onTerritoryClick(n);
+    };
     for (const [name, pos] of Object.entries(MAP_TERRITORIES)) {
-      const node = new TerritoryNode(name, pos.x, pos.y, (n) => {
-        if (this.dragSuppressesClick) return;
-        onTerritoryClick(n);
-      });
-      this.nodes.set(name, node);
-      this.overlayContainer.addChild(node);
+      const shape = territoryShapes[name];
+      if (shape) {
+        const polygon = new TerritoryPolygon(shape, guardedClick);
+        this.polygonNodes.set(name, polygon);
+        this.polygonContainer.addChild(polygon);
+      } else {
+        const node = new TerritoryNode(name, pos.x, pos.y, guardedClick);
+        this.legacyNodes.set(name, node);
+        this.overlayContainer.addChild(node);
+      }
     }
 
     this.app.stage.addChild(this.worldContainer);
@@ -197,7 +231,10 @@ export class MapScene {
 
   private readonly onTick = () => {
     this.pulsePhase += 0.06;
-    for (const node of this.nodes.values()) {
+    for (const node of this.legacyNodes.values()) {
+      node.tickPulse(this.pulsePhase);
+    }
+    for (const node of this.polygonNodes.values()) {
       node.tickPulse(this.pulsePhase);
     }
 
@@ -345,6 +382,17 @@ export class MapScene {
       }
       pointers.set(e.pointerId, { x: e.globalX, y: e.globalY });
 
+      // Editor mode: a press on an existing vertex of the territory being
+      // traced starts a vertex drag instead of a pan. Only checked for the
+      // first finger down — a second finger always means pinch-zoom.
+      if (this.editor && pointers.size === 1) {
+        const worldPt = this.worldContainer.toLocal({ x: e.globalX, y: e.globalY });
+        if (this.editor.tryStartDrag(worldPt, 12 / this.camScale)) {
+          this.editorDragging = true;
+          return;
+        }
+      }
+
       if (pointers.size === 2) {
         // Transition from pan to pinch.
         panActive = false;
@@ -361,6 +409,12 @@ export class MapScene {
     stage.on("pointermove", (e: FederatedPointerEvent) => {
       if (!pointers.has(e.pointerId)) return;
       pointers.set(e.pointerId, { x: e.globalX, y: e.globalY });
+
+      if (this.editorDragging) {
+        const worldPt = this.worldContainer.toLocal({ x: e.globalX, y: e.globalY });
+        this.editor?.updateDrag(worldPt);
+        return;
+      }
 
       if (pointers.size === 2) {
         this.dragSuppressesClick = true;
@@ -386,6 +440,13 @@ export class MapScene {
     });
 
     const onPointerUp = (e: FederatedPointerEvent) => {
+      if (this.editorDragging) {
+        this.editorDragging = false;
+        this.editor?.endDrag();
+        pointers.delete(e.pointerId);
+        return;
+      }
+
       const wasPanning = panActive;
       pointers.delete(e.pointerId);
 
@@ -409,7 +470,12 @@ export class MapScene {
         // explicit button, never a map tap).
         if (!this.dragSuppressesClick && e.target === stage) {
           const tap: TapRecord = { x: e.globalX, y: e.globalY, timeMs: Date.now() };
-          if (isDoubleTap(this.lastTap, tap)) {
+          if (this.editor) {
+            // Editor mode: every clean tap adds a vertex (or sets the label
+            // position) — double-tap-zoom is suppressed entirely so it
+            // can't be mistaken for a second vertex placement.
+            this.editor.handleTap(this.worldContainer.toLocal({ x: tap.x, y: tap.y }));
+          } else if (isDoubleTap(this.lastTap, tap)) {
             this.zoomToward(this.camScale * DOUBLE_TAP_ZOOM_FACTOR, tap.x, tap.y);
             this.lastTap = null;
           } else {
@@ -499,7 +565,7 @@ export class MapScene {
     const { selectedSource, selectedTarget, legalTargets, recentCombat, recentCapture, passive } =
       highlight;
 
-    for (const [name, node] of this.nodes) {
+    const applyState = (name: string, node: { update(s: TerritoryDisplayState, colors: string[]): void }) => {
       const raw = territoryStates?.[name];
       const t =
         raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
@@ -518,20 +584,38 @@ export class MapScene {
         highlight: kind,
       };
       node.update(state, playerColors);
-    }
+    };
+
+    for (const [name, node] of this.legacyNodes) applyState(name, node);
+    for (const [name, node] of this.polygonNodes) applyState(name, node);
 
     this.drawConnector(selectedSource, selectedTarget);
+  }
+
+  /**
+   * Anchor point for a territory, expressed in overlayContainer-local space
+   * (what connectorGfx draws in). Legacy nodes' own .position is already in
+   * that space; polygon anchors live in worldContainer space instead (see
+   * polygonContainer's doc comment), so they're converted via Pixi's
+   * transform-aware toLocal rather than a hand-rolled matrix.
+   */
+  private connectorAnchor(name: string): { x: number; y: number } | null {
+    const legacy = this.legacyNodes.get(name);
+    if (legacy) return { x: legacy.position.x, y: legacy.position.y };
+    const polygon = this.polygonNodes.get(name);
+    if (polygon) return this.overlayContainer.toLocal(polygon.anchorPoint, this.worldContainer);
+    return null;
   }
 
   private drawConnector(source?: string, target?: string) {
     this.connectorGfx.clear();
     if (!source || !target) return;
-    const from = this.nodes.get(source);
-    const to = this.nodes.get(target);
+    const from = this.connectorAnchor(source);
+    const to = this.connectorAnchor(target);
     if (!from || !to) return;
     this.connectorGfx
-      .moveTo(from.position.x, from.position.y)
-      .lineTo(to.position.x, to.position.y)
+      .moveTo(from.x, from.y)
+      .lineTo(to.x, to.y)
       .stroke({ color: 0xfbbf24, width: 3, alpha: 0.55 });
   }
 
@@ -549,6 +633,60 @@ export class MapScene {
 
   resetZoom() {
     this.fitToViewport();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dev-only polygon editor (see mapEditor.ts / MAP_EDITOR.md)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Enables or disables editor mode. While enabled, territory Graphics stop
+   * capturing pointer events (set eventMode "none" on their containers) so
+   * every tap reaches the stage and is routed to the editor instead of
+   * territory selection; while disabled, normal gameplay interaction and
+   * territory click-through resume unchanged.
+   */
+  setEditorMode(enabled: boolean, onChange?: (snapshot: MapEditorSnapshot) => void) {
+    if (enabled) {
+      if (!this.editor) {
+        this.editorGfx = new Graphics();
+        this.worldContainer.addChild(this.editorGfx);
+        this.editor = new MapEditorController(this.editorGfx, onChange ?? (() => {}));
+      }
+      this.polygonContainer.eventMode = "none";
+      this.overlayContainer.eventMode = "none";
+    } else if (this.editor) {
+      this.editorGfx?.destroy();
+      this.editorGfx = null;
+      this.editor = null;
+      this.polygonContainer.eventMode = "passive";
+      this.overlayContainer.eventMode = "passive";
+    }
+  }
+
+  editorSelectTerritory(name: string) {
+    this.editor?.selectTerritory(name);
+  }
+
+  editorStartNewPolygon() {
+    this.editor?.startNewPolygon();
+  }
+
+  editorUndo() {
+    this.editor?.undoPoint();
+  }
+
+  editorClear() {
+    this.editor?.clearCurrentTerritory();
+  }
+
+  editorSetLabelMode(enabled: boolean) {
+    this.editor?.setLabelMode(enabled);
+  }
+
+  /** Pretty-printed TS source for the full traced shape set, ready to paste into territoryShapes.ts. */
+  editorExport(): string {
+    return this.editor?.exportSource() ?? "";
   }
 
   destroy() {

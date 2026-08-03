@@ -1,6 +1,19 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { GameBootstrap } from "../api/games";
+import { MapEditorPanel } from "./MapEditorPanel";
+import type { MapEditorSnapshot } from "./mapEditor";
 import { MapScene } from "./MapScene";
+
+/**
+ * Dev-only polygon tracing tool, gated on both a dev build and an explicit
+ * opt-in query param so it can never appear for a real player and is dead
+ * code (tree-shaken via the static import.meta.env.DEV check) in prod
+ * builds. See MAP_EDITOR.md for the tracing workflow.
+ */
+const MAP_EDITOR_ENABLED =
+  import.meta.env.DEV &&
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("mapEditor") === "true";
 
 interface GameMapProps {
   game: GameBootstrap | null;
@@ -70,6 +83,10 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<MapScene | null>(null);
+  // Only populated in a MAP_EDITOR_ENABLED dev session — mirrors sceneRef as
+  // React state purely so MapEditorPanel re-renders once the scene mounts.
+  const [editorScene, setEditorScene] = useState<MapScene | null>(null);
+  const [editorSnapshot, setEditorSnapshot] = useState<MapEditorSnapshot | null>(null);
 
   // Always-current snapshot of props so the async init handler can apply
   // initial game state without needing to redeclare the init effect. Kept
@@ -139,6 +156,11 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
         container.appendChild(canvas);
 
         sceneRef.current = scene;
+
+        if (MAP_EDITOR_ENABLED) {
+          scene.setEditorMode(true, setEditorSnapshot);
+          setEditorScene(scene);
+        }
 
         // Re-measure now rather than trusting the w/h captured before this
         // async init started: Pixi's WebGL context + texture load can take
@@ -226,6 +248,8 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
       ref={containerRef}
       className={className}
       style={{ touchAction: "none" }}
-    />
+    >
+      {MAP_EDITOR_ENABLED && <MapEditorPanel scene={editorScene} snapshot={editorSnapshot} />}
+    </div>
   );
 });
