@@ -32,6 +32,9 @@ type Game struct {
 	// excluding the game from ListGames for everyone but admins and its
 	// own creator. See GameListFilter for how this drives visibility.
 	IsHidden bool `json:"is_hidden"`
+	// MapID is the UUID of the custom map this game was created with, or
+	// empty for the classic board.
+	MapID string `json:"map_id,omitempty"`
 	// CreatedAt is when the game row was inserted.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is when the game row was last updated.
@@ -53,6 +56,9 @@ type NewGame struct {
 	// IsHidden sets the created game's IsHidden flag. Only ever true when
 	// an admin explicitly requested it (validated in httpapi.Handler.CreateGame).
 	IsHidden bool
+	// MapID is the UUID of the custom map to create this game with, or
+	// empty for the classic board.
+	MapID string
 }
 
 // UpdateGameState is the input for updating a game's status and state via UpdateState.
@@ -113,13 +119,13 @@ func NewPostgresGamesStore() *PostgresGamesStore { return &PostgresGamesStore{} 
 // Create inserts a new game row and returns it as stored.
 func (s *PostgresGamesStore) Create(ctx context.Context, exec db.Querier, in NewGame) (Game, error) {
 	const stmt = `
-		INSERT INTO games (owner_user_id, name, status, state, is_sandboxed, is_hidden)
-		VALUES ($1::uuid, $2, $3, $4::jsonb, $5, $6)
-		RETURNING id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, created_at, updated_at
+		INSERT INTO games (owner_user_id, name, status, state, is_sandboxed, is_hidden, map_id)
+		VALUES ($1::uuid, $2, $3, $4::jsonb, $5, $6, NULLIF($7, '')::uuid)
+		RETURNING id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, COALESCE(map_id::text, ''), created_at, updated_at
 	`
 	var g Game
-	err := exec.QueryRow(ctx, stmt, in.OwnerUserID, in.Name, in.Status, in.State, in.IsSandboxed, in.IsHidden).Scan(
-		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.CreatedAt, &g.UpdatedAt,
+	err := exec.QueryRow(ctx, stmt, in.OwnerUserID, in.Name, in.Status, in.State, in.IsSandboxed, in.IsHidden, in.MapID).Scan(
+		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.MapID, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
 }
@@ -128,13 +134,13 @@ func (s *PostgresGamesStore) Create(ctx context.Context, exec db.Querier, in New
 // to mutate the game within a transaction must use GetByIDForUpdate instead.
 func (s *PostgresGamesStore) GetByID(ctx context.Context, exec db.Querier, gameID string) (Game, error) {
 	const stmt = `
-		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, created_at, updated_at
+		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, COALESCE(map_id::text, ''), created_at, updated_at
 		FROM games
 		WHERE id = $1::uuid
 	`
 	var g Game
 	err := exec.QueryRow(ctx, stmt, gameID).Scan(
-		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.MapID, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
 }
@@ -145,14 +151,14 @@ func (s *PostgresGamesStore) GetByID(ctx context.Context, exec db.Querier, gameI
 // WithTxQ) before any read-modify-write mutation of game state.
 func (s *PostgresGamesStore) GetByIDForUpdate(ctx context.Context, exec db.Querier, gameID string) (Game, error) {
 	const stmt = `
-		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, created_at, updated_at
+		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, COALESCE(map_id::text, ''), created_at, updated_at
 		FROM games
 		WHERE id = $1::uuid
 		FOR UPDATE
 	`
 	var g Game
 	err := exec.QueryRow(ctx, stmt, gameID).Scan(
-		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.MapID, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
 }
@@ -175,7 +181,7 @@ func (s *PostgresGamesStore) List(ctx context.Context, exec db.Querier, filter G
 	}
 
 	stmt := `
-		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, created_at, updated_at
+		SELECT id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, COALESCE(map_id::text, ''), created_at, updated_at
 		FROM games
 	`
 	conds := make([]string, 0, 3)
@@ -214,7 +220,7 @@ func (s *PostgresGamesStore) List(ctx context.Context, exec db.Querier, filter G
 	out := make([]Game, 0, limit)
 	for rows.Next() {
 		var g Game
-		if err := rows.Scan(&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.MapID, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -236,11 +242,11 @@ func (s *PostgresGamesStore) UpdateState(ctx context.Context, exec db.Querier, i
 		    state = $3::jsonb,
 		    updated_at = now()
 		WHERE id = $1::uuid
-		RETURNING id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, created_at, updated_at
+		RETURNING id::text, owner_user_id::text, name, status, state, is_sandboxed, is_hidden, COALESCE(map_id::text, ''), created_at, updated_at
 	`
 	var g Game
 	err := exec.QueryRow(ctx, stmt, in.GameID, in.Status, in.State).Scan(
-		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.CreatedAt, &g.UpdatedAt,
+		&g.ID, &g.OwnerUserID, &g.Name, &g.Status, &g.State, &g.IsSandboxed, &g.IsHidden, &g.MapID, &g.CreatedAt, &g.UpdatedAt,
 	)
 	return g, err
 }

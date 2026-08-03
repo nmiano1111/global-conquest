@@ -47,6 +47,7 @@ function makeGame(overrides: Partial<GameBootstrap> = {}): GameBootstrap {
     },
     events: [],
     replayAvailable: false,
+    board: null,
     createdAt: "",
     updatedAt: "",
     ...overrides,

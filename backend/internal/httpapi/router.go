@@ -92,6 +92,10 @@ func NewRouter(h *Handler) *gin.Engine {
 			admin.POST("/users/:id/revoke-sessions", h.RevokeUserSessions)
 			admin.GET("/bot-tuning", h.GetBotTuningConfig)
 			admin.PUT("/bot-tuning", h.UpdateBotTuningConfig)
+			admin.POST("/maps", h.CreateMap)
+			admin.GET("/maps", h.ListMaps)
+			admin.GET("/maps/:id", h.GetMap)
+			admin.DELETE("/maps/:id", h.DeleteMap)
 		}
 
 	}

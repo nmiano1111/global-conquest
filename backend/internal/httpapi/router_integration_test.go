@@ -29,6 +29,7 @@ type fakeUsersService struct {
 
 type fakeGamesService struct {
 	createClassicGameFn     func(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool) (store.Game, error)
+	createGameWithMapFn     func(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool, mapID string) (store.Game, error)
 	joinClassicGameFn       func(ctx context.Context, gameID, playerID string) (store.Game, error)
 	getGameFn               func(ctx context.Context, gameID string) (store.Game, error)
 	getGameBootstrapFn      func(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
@@ -97,6 +98,13 @@ func (f *fakeUsersService) Login(ctx context.Context, userName, password string)
 }
 
 func (f *fakeGamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool) (store.Game, error) {
+	return f.createClassicGameFn(ctx, ownerUserID, playerCount, setupMode, botCount, allBots, hidden)
+}
+
+func (f *fakeGamesService) CreateGameWithMap(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool, mapID string) (store.Game, error) {
+	if f.createGameWithMapFn != nil {
+		return f.createGameWithMapFn(ctx, ownerUserID, playerCount, setupMode, botCount, allBots, hidden, mapID)
+	}
 	return f.createClassicGameFn(ctx, ownerUserID, playerCount, setupMode, botCount, allBots, hidden)
 }
 

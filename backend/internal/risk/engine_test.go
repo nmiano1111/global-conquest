@@ -160,6 +160,74 @@ func TestNewClassicGamePlayerCountBounds(t *testing.T) {
 	}
 }
 
+func smallCustomBoard() Board {
+	continents := map[Continent]ContinentInfo{
+		"redland":  {Bonus: 2, Territories: []Territory{"Red 1", "Red 2"}},
+		"blueland": {Bonus: 1, Territories: []Territory{"Blue 1", "Blue 2"}},
+	}
+	order := []Territory{"Red 1", "Red 2", "Blue 1", "Blue 2"}
+	adj := map[Territory][]Territory{
+		"Red 1":  {"Red 2", "Blue 1"},
+		"Red 2":  {"Red 1"},
+		"Blue 1": {"Blue 2", "Red 1"},
+		"Blue 2": {"Blue 1"},
+	}
+	a := make(map[Territory]map[Territory]struct{}, len(adj))
+	for t, ns := range adj {
+		a[t] = map[Territory]struct{}{}
+		for _, n := range ns {
+			a[t][n] = struct{}{}
+		}
+	}
+	return Board{Continents: continents, Adjacent: a, Order: order}
+}
+
+func TestNewGameWithCustomBoard(t *testing.T) {
+	b := smallCustomBoard()
+	g, err := NewGame(b, []string{"p1", "p2", "p3"}, &seqRNG{v: []int{0}})
+	if err != nil {
+		t.Fatalf("NewGame with custom board: %v", err)
+	}
+	if len(g.Territories) != 4 {
+		t.Fatalf("expected 4 territories from custom board, got %d", len(g.Territories))
+	}
+	if g.Board.Continents["redland"].Bonus != 2 {
+		t.Fatalf("expected custom continent bonus to survive into game state")
+	}
+}
+
+func TestNewAutoStartGameWithCustomBoard(t *testing.T) {
+	b := smallCustomBoard()
+	g, err := NewAutoStartGame(b, []string{"p1", "p2", "p3"}, &seqRNG{v: []int{0}})
+	if err != nil {
+		t.Fatalf("NewAutoStartGame with custom board: %v", err)
+	}
+	if g.Phase != PhaseReinforce {
+		t.Fatalf("expected reinforce phase, got %s", g.Phase)
+	}
+	for _, ts := range g.Territories {
+		if ts.Owner < 0 {
+			t.Fatalf("found unowned territory in auto-start state")
+		}
+	}
+}
+
+func TestNewRandomTerritoryGameWithCustomBoard(t *testing.T) {
+	b := smallCustomBoard()
+	g, err := NewRandomTerritoryGame(b, []string{"p1", "p2", "p3"}, &seqRNG{v: []int{0}})
+	if err != nil {
+		t.Fatalf("NewRandomTerritoryGame with custom board: %v", err)
+	}
+	if g.Phase != PhaseSetupReinforce {
+		t.Fatalf("expected setup_reinforce phase, got %s", g.Phase)
+	}
+	for _, ts := range g.Territories {
+		if ts.Owner < 0 {
+			t.Fatalf("found unowned territory in random-territory state")
+		}
+	}
+}
+
 func TestReinforcementIncludesContinentBonus(t *testing.T) {
 	g := mustGame(t)
 	for _, t := range g.Board.Order {

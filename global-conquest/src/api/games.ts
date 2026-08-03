@@ -28,6 +28,8 @@ export type CreateGameRequest = {
   allBots?: boolean;
   /** Admin-only: excludes the created game from other players' game lists. */
   hidden?: boolean;
+  /** Starts the game on a custom map instead of the classic board. Admin-only (backend enforced). */
+  mapId?: string;
 };
 
 export type Card = {
@@ -62,6 +64,16 @@ export type GameEventEntry = {
   createdAt: string;
 };
 
+/** Per-game board topology, present only for games created on a custom
+ * (admin-authored) map; classic games render from the static constants in
+ * gameShared.ts instead and never populate this. */
+export type GameBoard = {
+  mapId: string;
+  order: string[];
+  territories: Record<string, { x: number; y: number }>;
+  edges: Array<[string, string]>;
+};
+
 export type GameBootstrap = {
   id: string;
   ownerUserId: string;
@@ -77,6 +89,7 @@ export type GameBootstrap = {
   territories: Record<string, unknown>;
   events: GameEventEntry[];
   replayAvailable: boolean;
+  board: GameBoard | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -185,6 +198,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
       territories: {},
       events: [],
       replayAvailable: false,
+      board: null,
       createdAt: "",
       updatedAt: "",
     };
@@ -240,6 +254,34 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
       body: readString(e.body ?? e.Body),
       createdAt: readString(e.created_at ?? e.createdAt),
     }));
+
+  const mapId = readString(record.map_id ?? record.mapId);
+  const boardRaw = asRecord(record.board);
+  const layoutRaw = asRecord(record.map_layout ?? record.mapLayout);
+  let board: GameBoard | null = null;
+  if (mapId && boardRaw) {
+    const orderRaw = boardRaw.order;
+    const order = Array.isArray(orderRaw) ? orderRaw.filter((t): t is string => typeof t === "string") : [];
+    const boardTerritories: Record<string, { x: number; y: number }> = {};
+    for (const [name, pos] of Object.entries(layoutRaw ?? {})) {
+      const posRecord = asRecord(pos);
+      boardTerritories[name] = { x: readNumber(posRecord?.x), y: readNumber(posRecord?.y) };
+    }
+    const adjacentRaw = asRecord(boardRaw.adjacent) ?? {};
+    const edges: Array<[string, string]> = [];
+    const seen = new Set<string>();
+    for (const [from, neighbors] of Object.entries(adjacentRaw)) {
+      const neighborsRecord = asRecord(neighbors) ?? {};
+      for (const to of Object.keys(neighborsRecord)) {
+        const key = from < to ? `${from}|${to}` : `${to}|${from}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push(from < to ? [from, to] : [to, from]);
+      }
+    }
+    board = { mapId, order, territories: boardTerritories, edges };
+  }
+
   return {
     id: readString(record.id ?? record.ID),
     ownerUserId: readString(record.owner_user_id ?? record.OwnerUserID),
@@ -255,6 +297,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     territories,
     events,
     replayAvailable: record.replay_available === true || record.replayAvailable === true,
+    board,
     createdAt: readString(record.created_at ?? record.CreatedAt),
     updatedAt: readString(record.updated_at ?? record.UpdatedAt),
   };
@@ -284,6 +327,7 @@ export async function createGame(input: CreateGameRequest): Promise<GameRecord> 
   if (input.botCount) data.bot_count = input.botCount;
   if (input.allBots) data.all_bots = true;
   if (input.hidden) data.hidden = true;
+  if (input.mapId) data.map_id = input.mapId;
   const res = await request<unknown>({ method: "POST", url: "/games/", data });
   return normalizeGame(res);
 }
