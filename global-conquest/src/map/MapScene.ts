@@ -50,6 +50,17 @@ const MOMENTUM_STOP_SPEED = 0.02;
 /** A release must be at least this fast (px/ms) to start a glide at all — filters out slow, deliberate drags. */
 const MOMENTUM_START_SPEED = 0.15;
 
+/**
+ * Board topology for a custom (admin-authored) map — territory positions
+ * (normalized [0,1], scaled into MAP_VIEWBOX space below) and adjacency
+ * edges. null means "use the classic board's static constants and
+ * risk0.png background", exactly as before this type existed.
+ */
+export interface MapTopology {
+  territories: Record<string, { x: number; y: number }>;
+  edges: Array<[string, string]>;
+}
+
 export interface TerritoryHighlightInput {
   /** The territory currently selected as the primary source (reinforce target / attack-from / fortify-from). */
   selectedSource?: string;
@@ -87,6 +98,13 @@ export class MapScene {
   private readonly overlayContainer: Container;
   private readonly nodes: Map<string, TerritoryNode> = new Map();
   private readonly connectorGfx: Graphics;
+  /**
+   * Static adjacency lines for a custom-map board (see MapTopology) — drawn
+   * once at build time, unlike connectorGfx which redraws per selection.
+   * The classic board conveys adjacency through risk0.png's geography
+   * instead, so this stays empty/unused for classic games.
+   */
+  private readonly edgesGfx: Graphics;
 
   // Camera state — always kept in sync with worldContainer via applyCamera().
   private camScale = 1;
@@ -118,6 +136,7 @@ export class MapScene {
     this.worldContainer = new Container();
     this.overlayContainer = new Container();
     this.connectorGfx = new Graphics();
+    this.edgesGfx = new Graphics();
     this.reducedMotion =
       typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&
@@ -132,6 +151,7 @@ export class MapScene {
     width: number,
     height: number,
     onTerritoryClick: (name: string) => void,
+    topology: MapTopology | null = null,
     initialFit: "contain" | "cover" = "contain",
   ): Promise<MapScene> {
     const app = new Application();
@@ -145,41 +165,72 @@ export class MapScene {
     });
 
     const scene = new MapScene(app, initialFit);
-    await scene.buildScene(onTerritoryClick);
+    await scene.buildScene(onTerritoryClick, topology);
     return scene;
   }
 
-  private async buildScene(onTerritoryClick: (name: string) => void) {
-    // --- Background sprite (world space: 0,0 → MAP_VIEWBOX_WIDTH × MAP_VIEWBOX_HEIGHT) ---
-    const texture = await Assets.load<Texture>(riskBoardImage);
-    const bg = new Sprite(texture);
-    bg.width = MAP_VIEWBOX_WIDTH;
-    bg.height = MAP_VIEWBOX_HEIGHT;
-    this.worldContainer.addChild(bg);
+  private async buildScene(onTerritoryClick: (name: string) => void, topology: MapTopology | null) {
+    if (topology) {
+      // Custom (admin-authored) map: no pre-rendered background art exists
+      // for it, so the dark app background from create() shows through, and
+      // territory positions come straight from the map's own [0,1]-normalized
+      // layout scaled into the same MAP_VIEWBOX space the camera/fit math
+      // already assumes — no overlay alignment transform needed since
+      // there's no art to align onto.
+      this.worldContainer.addChild(this.overlayContainer);
+      this.overlayContainer.addChild(this.edgesGfx);
+      this.overlayContainer.addChild(this.connectorGfx);
 
-    // --- Territory overlay (static alignment transform, not part of the camera) ---
-    // Territory coordinates in MAP_TERRITORIES are in SVG space. This transform
-    // maps them onto the correct positions over the background sprite, mirroring
-    // the original SVG <g> transform: translate(cx+ox, cy+oy) scale(s) translate(-cx,-cy).
-    this.overlayContainer.pivot.set(MAP_CENTER_X, MAP_CENTER_Y);
-    this.overlayContainer.position.set(
-      MAP_CENTER_X + MAP_OVERLAY_OFFSET_X,
-      MAP_CENTER_Y + MAP_OVERLAY_OFFSET_Y,
-    );
-    this.overlayContainer.scale.set(MAP_OVERLAY_SCALE);
-    this.worldContainer.addChild(this.overlayContainer);
+      const positions = new Map<string, { x: number; y: number }>();
+      for (const [name, pos] of Object.entries(topology.territories)) {
+        const x = pos.x * MAP_VIEWBOX_WIDTH;
+        const y = pos.y * MAP_VIEWBOX_HEIGHT;
+        positions.set(name, { x, y });
+        const node = new TerritoryNode(name, x, y, (n) => {
+          if (this.dragSuppressesClick) return;
+          onTerritoryClick(n);
+        });
+        this.nodes.set(name, node);
+        this.overlayContainer.addChild(node);
+      }
+      for (const [a, b] of topology.edges) {
+        const pa = positions.get(a);
+        const pb = positions.get(b);
+        if (!pa || !pb) continue;
+        this.edgesGfx.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y).stroke({ color: 0x64748b, width: 2, alpha: 0.5 });
+      }
+    } else {
+      // --- Background sprite (world space: 0,0 → MAP_VIEWBOX_WIDTH × MAP_VIEWBOX_HEIGHT) ---
+      const texture = await Assets.load<Texture>(riskBoardImage);
+      const bg = new Sprite(texture);
+      bg.width = MAP_VIEWBOX_WIDTH;
+      bg.height = MAP_VIEWBOX_HEIGHT;
+      this.worldContainer.addChild(bg);
 
-    // --- Connecting line between selected source/target (drawn beneath nodes) ---
-    this.overlayContainer.addChild(this.connectorGfx);
+      // --- Territory overlay (static alignment transform, not part of the camera) ---
+      // Territory coordinates in MAP_TERRITORIES are in SVG space. This transform
+      // maps them onto the correct positions over the background sprite, mirroring
+      // the original SVG <g> transform: translate(cx+ox, cy+oy) scale(s) translate(-cx,-cy).
+      this.overlayContainer.pivot.set(MAP_CENTER_X, MAP_CENTER_Y);
+      this.overlayContainer.position.set(
+        MAP_CENTER_X + MAP_OVERLAY_OFFSET_X,
+        MAP_CENTER_Y + MAP_OVERLAY_OFFSET_Y,
+      );
+      this.overlayContainer.scale.set(MAP_OVERLAY_SCALE);
+      this.worldContainer.addChild(this.overlayContainer);
 
-    // --- Territory nodes ---
-    for (const [name, pos] of Object.entries(MAP_TERRITORIES)) {
-      const node = new TerritoryNode(name, pos.x, pos.y, (n) => {
-        if (this.dragSuppressesClick) return;
-        onTerritoryClick(n);
-      });
-      this.nodes.set(name, node);
-      this.overlayContainer.addChild(node);
+      // --- Connecting line between selected source/target (drawn beneath nodes) ---
+      this.overlayContainer.addChild(this.connectorGfx);
+
+      // --- Territory nodes ---
+      for (const [name, pos] of Object.entries(MAP_TERRITORIES)) {
+        const node = new TerritoryNode(name, pos.x, pos.y, (n) => {
+          if (this.dragSuppressesClick) return;
+          onTerritoryClick(n);
+        });
+        this.nodes.set(name, node);
+        this.overlayContainer.addChild(node);
+      }
     }
 
     this.app.stage.addChild(this.worldContainer);

@@ -21,6 +21,7 @@ import (
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/nmiano1111/global-conquest/backend/internal/gamename"
+	"github.com/nmiano1111/global-conquest/backend/internal/mapgen"
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
 )
@@ -62,9 +63,17 @@ type GamesService struct {
 	gamePlayers        gamePlayersStore
 	gameDomainEvents   gameDomainEventStore
 	discordOutbox      discordOutboxStore
+	maps               mapBoardResolver
 	assignBotNames     func(count int, exclude []string) []string
 	gameStarted        func(gameID string)
 	defaultBotStrategy string
+}
+
+// mapBoardResolver is the narrow slice of MapsService that GamesService
+// needs to start a game on a custom map: resolving a stored map_id into
+// its full definition (board + layout).
+type mapBoardResolver interface {
+	GetMap(ctx context.Context, mapID string) (MapDetail, error)
 }
 
 var (
@@ -192,6 +201,15 @@ func (s *GamesService) SetDiscordOutboxStore(store discordOutboxStore) {
 	s.discordOutbox = store
 }
 
+// SetMapsService wires in the service used to resolve a lobby's map_id
+// (see lobbyState.MapID) into a full board definition when starting a game
+// and to look up a map's layout for GetGameBootstrap. It is nil-safe: until
+// set, every game is created on the classic board (lobbyState.MapID is
+// simply never populated by an admin-gated caller in that configuration).
+func (s *GamesService) SetMapsService(maps mapBoardResolver) {
+	s.maps = maps
+}
+
 type lobbyState struct {
 	PlayerCount int      `json:"player_count"`
 	PlayerIDs   []string `json:"player_ids"`
@@ -204,6 +222,12 @@ type lobbyState struct {
 	// changes to account for them.
 	BotCount int               `json:"bot_count,omitempty"`
 	BotNames map[string]string `json:"bot_names,omitempty"`
+
+	// MapID is the custom map this game should start on, or empty for the
+	// classic board. Only ever set by an admin caller (enforced in
+	// httpapi's CreateGame handler, not here) — see startEngineForFullLobby
+	// for how this is resolved into a risk.Board.
+	MapID string `json:"map_id,omitempty"`
 }
 
 // GameBootstrapPlayer is one player's public-facing snapshot within a
@@ -277,6 +301,17 @@ type GameBootstrap struct {
 	// Events is the game's event log (up to the most recent 250 entries),
 	// oldest to newest.
 	Events []GameEventEntry `json:"events"`
+	// MapID is the custom map this game was created with, empty for the
+	// classic board.
+	MapID string `json:"map_id,omitempty"`
+	// Board is the game's continent/adjacency graph, populated only when
+	// MapID is non-empty and Status isn't "lobby" (the frontend already
+	// knows the classic board's topology statically and never renders a
+	// board before a game starts). Classic games always omit this.
+	Board *risk.Board `json:"board,omitempty"`
+	// MapLayout gives each territory's normalized [0,1] display position,
+	// populated alongside Board for the same custom-map, non-lobby games.
+	MapLayout map[risk.Territory]mapgen.Coord `json:"map_layout,omitempty"`
 	// CreatedAt is when the game row was created.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is when the game row was last updated.
@@ -452,6 +487,17 @@ type GameOccupyRequirement struct {
 // playerCount, or botCount, and ErrUnknownPlayerIDs if ownerUserID does not
 // correspond to an existing user.
 func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error) {
+	return s.CreateGameWithMap(ctx, ownerUserID, playerCount, setupMode, botCount, "")
+}
+
+// CreateGameWithMap is CreateClassicGame generalized to start the game on a
+// custom map instead of the classic board. mapID, if non-empty, must
+// already have been resolved to an existing store.Map by the caller (see
+// httpapi's CreateGame handler, which is also solely responsible for
+// verifying the caller is an admin before ever passing a non-empty mapID
+// here — this method does not re-check that). An empty mapID behaves
+// exactly like CreateClassicGame.
+func (s *GamesService) CreateGameWithMap(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, mapID string) (store.Game, error) {
 	if ownerUserID == "" {
 		return store.Game{}, ErrInvalidGameInput
 	}
@@ -462,6 +508,17 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 	// slots may be bots.
 	if botCount < 0 || botCount > playerCount-1 {
 		return store.Game{}, ErrInvalidGameInput
+	}
+	if mapID != "" {
+		// Fail fast at creation time rather than only discovering a bad
+		// mapID later when the lobby happens to fill (which, for a
+		// human-only game, could be minutes or never).
+		if s.maps == nil {
+			return store.Game{}, fmt.Errorf("map_id given but no MapsService is configured")
+		}
+		if _, err := s.maps.GetMap(ctx, mapID); err != nil {
+			return store.Game{}, fmt.Errorf("%w: %v", ErrInvalidGameInput, err)
+		}
 	}
 
 	var ownerSandboxed bool
@@ -504,6 +561,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 		SetupMode:   setupMode,
 		BotCount:    botCount,
 		BotNames:    botNames,
+		MapID:       mapID,
 	}
 
 	// If bots already fill every non-creator slot, the lobby is full the
@@ -514,7 +572,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 	var startedEngine *risk.Game
 	var stateErr error
 	if len(playerIDs) == playerCount {
-		startedEngine, stateJSON, stateErr = s.startEngineForFullLobby(lobby)
+		startedEngine, stateJSON, stateErr = s.startEngineForFullLobby(ctx, lobby)
 		status = "in_progress"
 	} else {
 		stateJSON, stateErr = json.Marshal(lobby)
@@ -529,6 +587,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 		Status:      status,
 		State:       stateJSON,
 		IsSandboxed: ownerSandboxed,
+		MapID:       mapID,
 	})
 	if err != nil {
 		return store.Game{}, err
@@ -576,12 +635,29 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 // last one — and marks the bot players in the resulting state. Both
 // CreateClassicGame and JoinClassicGame call this so the two paths can
 // never drift apart.
-func (s *GamesService) startEngineForFullLobby(lobby lobbyState) (*risk.Game, []byte, error) {
+func (s *GamesService) startEngineForFullLobby(ctx context.Context, lobby lobbyState) (*risk.Game, []byte, error) {
+	var board *risk.Board
+	if lobby.MapID != "" {
+		if s.maps == nil {
+			return nil, nil, fmt.Errorf("game lobby references map %q but no MapsService is configured", lobby.MapID)
+		}
+		def, err := s.maps.GetMap(ctx, lobby.MapID)
+		if err != nil {
+			return nil, nil, err
+		}
+		board = &def.Definition.Board
+	}
+
 	var startedEngine *risk.Game
 	var err error
-	if lobby.SetupMode == "manual" {
+	switch {
+	case board != nil && lobby.SetupMode == "manual":
+		startedEngine, err = risk.NewRandomTerritoryGame(*board, lobby.PlayerIDs, nil)
+	case board != nil:
+		startedEngine, err = risk.NewAutoStartGame(*board, lobby.PlayerIDs, nil)
+	case lobby.SetupMode == "manual":
 		startedEngine, err = risk.NewClassicRandomTerritoryGame(lobby.PlayerIDs, nil)
-	} else {
+	default:
 		startedEngine, err = risk.NewClassicAutoStartGame(lobby.PlayerIDs, nil)
 	}
 	if err != nil {
@@ -751,7 +827,7 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		var nextState []byte
 		var startedEngine *risk.Game
 		if len(lobby.PlayerIDs) == lobby.PlayerCount {
-			startedEngine, nextState, err = s.startEngineForFullLobby(lobby)
+			startedEngine, nextState, err = s.startEngineForFullLobby(ctx, lobby)
 			if err != nil {
 				return err
 			}
@@ -1449,6 +1525,23 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 			})
 		}
 		out.Territories = json.RawMessage(`{}`)
+		if lobby.MapID != "" && s.maps != nil {
+			// A lobby-status game has no risk.Game yet (state is just
+			// lobbyState JSON, no embedded Board), but the map's topology
+			// is fully known ahead of the engine ever starting -- fetch it
+			// directly so a client that navigates in before the lobby
+			// fills still gets real board data on this first load, rather
+			// than only after refetching post-start (see game_state_updated's
+			// handler on the frontend, which never re-derives board/map_id
+			// from a live update -- it only patches phase/players/territories).
+			def, err := s.maps.GetMap(ctx, lobby.MapID)
+			if err != nil {
+				return GameBootstrap{}, err
+			}
+			out.MapID = lobby.MapID
+			out.Board = &def.Definition.Board
+			out.MapLayout = def.Definition.Layout
+		}
 		if s.gameEvent != nil {
 			events, err := s.gameEvent.ListGameEvents(ctx, s.db.Queryer(), g.ID, 250)
 			if err != nil {
@@ -1541,6 +1634,15 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 			return GameBootstrap{}, err
 		}
 		out.Territories = tb
+		if g.MapID != "" && s.maps != nil {
+			def, err := s.maps.GetMap(ctx, g.MapID)
+			if err != nil {
+				return GameBootstrap{}, err
+			}
+			out.MapID = g.MapID
+			out.Board = &engine.Board
+			out.MapLayout = def.Definition.Layout
+		}
 		if s.gameEvent != nil {
 			events, err := s.gameEvent.ListGameEvents(ctx, s.db.Queryer(), g.ID, 250)
 			if err != nil {

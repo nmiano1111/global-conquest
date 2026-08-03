@@ -97,8 +97,13 @@ func main() {
 	gamesSvc.SetGameStartedHook(botManager.Trigger)
 	recoverBotGames(ctx, gamesSvc, botManager)
 
+	mapsStore := store.NewPostgresMapsStore()
+	mapsSvc := service.NewMapsService(d, mapsStore)
+	gamesSvc.SetMapsService(mapsSvc)
+
 	// http
 	h := httpapi.NewHandler(s, usersSvc, gamesSvc, chatSvc)
+	h.SetMapsService(mapsSvc)
 	r := httpapi.NewRouter(h)
 
 	log.Fatal(r.Run(":8080"))

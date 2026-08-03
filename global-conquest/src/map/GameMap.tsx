@@ -1,6 +1,6 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { GameBootstrap } from "../api/games";
-import { MapScene } from "./MapScene";
+import { MapScene, type MapTopology } from "./MapScene";
 
 interface GameMapProps {
   game: GameBootstrap | null;
@@ -87,6 +87,25 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
     highlightedTerritories,
   });
   const onClickRef = useRef(onTerritoryClick);
+
+  // Resolves the first time `game` is non-null (i.e. the initial bootstrap
+  // load has completed). The mount effect below awaits this before ever
+  // calling MapScene.create(), since a game's board topology (classic vs.
+  // custom map) is fixed for the scene's lifetime — MapScene has no
+  // "rebuild with different topology" path, so creating the scene before
+  // we know which board this game uses would silently lock in the wrong
+  // one for any custom-map game. Falls back to a timeout (treated as
+  // classic) so a failed/slow bootstrap doesn't leave the map blank
+  // forever. Built via a useState lazy initializer (not useRef) since a
+  // ref's `.current` may not be read or written during render.
+  const [gameReady] = useState(() => {
+    let resolve: () => void = () => {};
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  });
+
   useLayoutEffect(() => {
     stateRef.current = {
       game,
@@ -100,6 +119,9 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
       highlightedTerritories,
     };
     onClickRef.current = onTerritoryClick;
+    if (game) {
+      gameReady.resolve();
+    }
   });
 
   useImperativeHandle(ref, () => ({
@@ -125,7 +147,17 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
     const w = container.offsetWidth || 800;
     const h = container.offsetHeight || 534;
 
-    MapScene.create(w, h, (name) => onClickRef.current(name))
+    const readyOrTimeout = Promise.race([
+      gameReady.promise,
+      new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+    ]);
+
+    readyOrTimeout
+      .then(() => {
+        const board = stateRef.current.game?.board ?? null;
+        const topology: MapTopology | null = board ? { territories: board.territories, edges: board.edges } : null;
+        return MapScene.create(w, h, (name) => onClickRef.current(name), topology);
+      })
       .then((scene) => {
         if (!mounted) {
           scene.destroy();
@@ -183,7 +215,11 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
       }
     };
     // Intentionally mount-once: onClickRef stays current via the layout effect above.
-  }, []);
+    // gameReady is included only because it's referenced here, not because
+    // it ever changes — it's a stable useState-lazy-init value for this
+    // component's whole lifetime, so this doesn't affect the mount-once
+    // semantics above.
+  }, [gameReady]);
 
   // --- Resize: keep renderer and world scale in sync with container ---
   useEffect(() => {

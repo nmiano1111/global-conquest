@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/nmiano1111/global-conquest/backend/internal/auth"
 	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/mapgen"
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/service"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
@@ -30,6 +31,7 @@ type userService interface {
 
 type gameService interface {
 	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error)
+	CreateGameWithMap(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, mapID string) (store.Game, error)
 	JoinClassicGame(ctx context.Context, gameID, playerID string, joinerIsAdmin, joinerIsSandboxed bool) (store.Game, error)
 	GetGameForViewer(ctx context.Context, gameID, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) (store.Game, error)
 	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool) (service.GameBootstrap, error)
@@ -44,6 +46,13 @@ type chatService interface {
 	PostLobbyMessage(ctx context.Context, userID, body string) (store.ChatMessage, error)
 }
 
+type mapService interface {
+	CreateMap(ctx context.Context, ownerUserID, name string, spec mapgen.MapSpec) (service.MapDetail, error)
+	ListMaps(ctx context.Context) ([]service.MapSummary, error)
+	GetMap(ctx context.Context, mapID string) (service.MapDetail, error)
+	DeleteMap(ctx context.Context, mapID string) error
+}
+
 // Handler implements the REST API endpoints, dispatching to the injected
 // userService, gameService, and chatService, and publishing chat messages
 // onto the game.Server's inbox for websocket broadcast.
@@ -52,12 +61,21 @@ type Handler struct {
 	users      userService
 	games      gameService
 	chats      chatService
+	maps       mapService
 }
 
 // NewHandler constructs a Handler backed by the given game server and
 // service dependencies.
 func NewHandler(gameServer *game.Server, users userService, games gameService, chats chatService) *Handler {
 	return &Handler{gameServer: gameServer, users: users, games: games, chats: chats}
+}
+
+// SetMapsService wires in the service backing the admin-only custom map
+// endpoints (see maps_handler.go). It is nil-safe: until set, those routes
+// return 500 — production wiring in cmd/backend/main.go always sets it,
+// but most tests never exercise map endpoints and so never need to.
+func (h *Handler) SetMapsService(maps mapService) {
+	h.maps = maps
 }
 
 // createUserReq represents the payload for creating a user
@@ -86,6 +104,10 @@ type createGameReq struct {
 	// slot, so bot_count must leave at least one open (validated again,
 	// authoritatively, in GamesService.CreateClassicGame).
 	BotCount int `json:"bot_count" binding:"min=0"`
+	// MapID, if given, starts the game on a custom (admin-authored) map
+	// instead of the classic board. Admin-only, same as SetupMode's
+	// "manual" value (see CreateGame).
+	MapID string `json:"map_id"`
 }
 
 type updateGameStateReq struct {
@@ -268,7 +290,12 @@ func (h *Handler) CreateGame(c *gin.Context) {
 		setupMode = "manual"
 	}
 
-	g, err := h.games.CreateClassicGame(c.Request.Context(), authUser.ID, req.PlayerCount, setupMode, req.BotCount)
+	if req.MapID != "" && !strings.EqualFold(authUser.Role, "admin") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "admin role required to set map_id"})
+		return
+	}
+
+	g, err := h.games.CreateGameWithMap(c.Request.Context(), authUser.ID, req.PlayerCount, setupMode, req.BotCount, req.MapID)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidGameInput),
