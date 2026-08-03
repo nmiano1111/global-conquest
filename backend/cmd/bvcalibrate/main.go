@@ -88,6 +88,7 @@ func run(args []string) error {
 	searchDepth := fs.Int("search-depth", 0, "If > 0, calibrate margins under an N-ply attack sequence search (bot.ValueStrategy.AttackSearchDepth) instead of the single-ply blend -- the calibrated margin only applies to whatever depth/risky/breadth it was calibrated at, the same reason a weights file needs its own calibration run (see internal/bot/attack_search.go)")
 	risky := fs.Float64("risky", 0.3, "Attack Handler Risky threshold (bot.ValueStrategy.Risky), only consulted when --search-depth > 0")
 	searchBreadth := fs.Int("search-breadth", 0, "If > 0 and --search-depth > 0, cap each search level to this many top-scoring candidates (bot.ValueStrategy.AttackSearchBreadth) -- unpruned search at depth >= 2 is too slow to finish enough games inside the default per-game duration limit for a meaningful sample; see internal/bot/attack_search.go")
+	searchBudget := fs.Duration("search-budget", 0, "If > 0 and --search-depth is 0, calibrate margins under an anytime, wall-clock-budgeted attack search (bot.ValueStrategy.AttackSearchBudget) instead of the fixed-depth search or single-ply blend -- Phase 5, see internal/bot/attack_search.go's AnytimeSearcher. Ignored when --search-depth > 0. Note: calibrating under a time budget is less run-to-run reproducible than fixed-depth, since the same budget can reach different depths depending on machine load.")
 	reinforceSearchDepth := fs.Int("reinforce-search-depth", 0, "If > 0, calibrate margins under a Tp/Gp placing search (bot.ValueStrategy.ReinforceSearchDepth) instead of the single-batch default -- Phase 4, see internal/bot/reinforce_search.go")
 	tp := fs.Int("tp", 0, "Reinforce-phase Tp: cap candidate territories per group to this many, ranked by a one-shot pre-score (bot.ValueStrategy.Tp) -- <= 0 falls back to the paper's default (2), only consulted when --reinforce-search-depth > 0")
 	gp := fs.Int("gp", 0, "Reinforce-phase Gp: army group size per placing step (bot.ValueStrategy.Gp) -- <= 0 falls back to the paper's default (3), only consulted when --reinforce-search-depth > 0")
@@ -153,6 +154,7 @@ func run(args []string) error {
 			bvs.AttackSearchDepth = *searchDepth
 			bvs.Risky = *risky
 			bvs.AttackSearchBreadth = *searchBreadth
+			bvs.AttackSearchBudget = *searchBudget
 			bvs.ReinforceSearchDepth = *reinforceSearchDepth
 			bvs.Tp = *tp
 			bvs.Gp = *gp

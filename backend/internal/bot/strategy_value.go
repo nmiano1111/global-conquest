@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/tdstate"
@@ -115,6 +116,24 @@ type ValueStrategy struct {
 	// Phase 2's original, already-tested behavior.
 	AttackSearchBreadth int
 
+	// AttackSearchBudget, when > 0 and neither Searcher nor
+	// AttackSearchDepth is set, makes attack() use a *AnytimeSearcher{
+	// Budget: AttackSearchBudget, Breadth: AttackSearchBreadth, Risky:
+	// Risky} -- iterative-deepening search bounded by wall-clock time
+	// instead of a fixed ply count (Phase 5 of project-docs/bot_player/
+	// proposals/Search_Integration_Roadmap_with_References.md), matching
+	// the paper's own anytime design more closely than AttackSearchDepth's
+	// fixed cutoff does. AttackSearchDepth > 0 takes priority when both
+	// are set -- fixed-depth is the currently tournament-validated
+	// configuration, so an explicit depth shouldn't be silently preempted
+	// by the newer, not-yet-tournament-validated anytime mode. Zero (the
+	// default) keeps attack() off this path entirely. Shares
+	// AttackSearchBreadth/Risky with the fixed-depth mode rather than
+	// having its own copies -- unpruned search is far too slow (2.5s-88s/
+	// decision, see AttackSearchBreadth's own doc comment) for a 10s
+	// budget to reach useful depth without the same breadth pruning.
+	AttackSearchBudget time.Duration
+
 	// AttackValue, ReinforceValue, and FortifyValue, when non-nil,
 	// override which ValueFunction scores that specific phase's
 	// candidates/margin instead of the shared model passed to
@@ -165,16 +184,23 @@ type ValueStrategy struct {
 	Gp                   int
 }
 
-// searcher returns the AttackSearcher attack() should use: s.Searcher if
-// set, otherwise a *SequenceSearcher built from AttackSearchDepth/Risky/
-// AttackSearchBreadth if AttackSearchDepth > 0, otherwise
-// SinglePlySearcher{} -- the original, always-validated default.
+// searcher returns the AttackSearcher attack() should use, in order:
+// s.Searcher if set; otherwise a *SequenceSearcher built from
+// AttackSearchDepth/Risky/AttackSearchBreadth if AttackSearchDepth > 0
+// (fixed-depth, the currently tournament-validated configuration);
+// otherwise a *AnytimeSearcher built from AttackSearchBudget/
+// AttackSearchBreadth/Risky if AttackSearchBudget > 0 (Phase 5, not yet
+// tournament-validated); otherwise SinglePlySearcher{} -- the original,
+// always-validated default.
 func (s *ValueStrategy) searcher() AttackSearcher {
 	if s.Searcher != nil {
 		return s.Searcher
 	}
 	if s.AttackSearchDepth > 0 {
 		return &SequenceSearcher{Depth: s.AttackSearchDepth, Breadth: s.AttackSearchBreadth, Risky: s.Risky}
+	}
+	if s.AttackSearchBudget > 0 {
+		return &AnytimeSearcher{Budget: s.AttackSearchBudget, Breadth: s.AttackSearchBreadth, Risky: s.Risky}
 	}
 	return SinglePlySearcher{}
 }
@@ -238,7 +264,7 @@ func (s *ValueStrategy) NextCommand(ctx context.Context, g *risk.Game, playerID 
 	case risk.PhaseReinforce:
 		return s.reinforce(g, playerID)
 	case risk.PhaseAttack:
-		return s.attack(g, playerID)
+		return s.attack(ctx, g, playerID)
 	case risk.PhaseOccupy:
 		return s.occupy(g, playerID)
 	case risk.PhaseFortify:
@@ -262,13 +288,15 @@ func currentStateScore(value ValueFunction, g *risk.Game, pi int) float64 {
 // instead when there's no legal attack or the best one doesn't beat the
 // current state's own score. The candidate comes from s.searcher() --
 // SinglePlySearcher (the original, already-validated single-ply default)
-// unless Searcher or AttackSearchDepth says otherwise (see searcher()).
-func (s *ValueStrategy) attack(g *risk.Game, playerID string) (Command, Explanation, error) {
+// unless Searcher, AttackSearchDepth, or AttackSearchBudget says
+// otherwise (see searcher()). ctx is threaded straight through to
+// Search -- only AnytimeSearcher (Phase 5) actually consults it.
+func (s *ValueStrategy) attack(ctx context.Context, g *risk.Game, playerID string) (Command, Explanation, error) {
 	pi := playerIndex(g, playerID)
 	value := s.attackValue()
 	currentScore := currentStateScore(value, g, pi)
 
-	a, bestScore, ok := s.searcher().Search(g, playerID, pi, value)
+	a, bestScore, ok := s.searcher().Search(ctx, g, playerID, pi, value)
 	best := -1
 	if ok {
 		best = 0

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 	"github.com/nmiano1111/global-conquest/backend/internal/bot/gcnmodel"
@@ -19,6 +20,7 @@ type gcnVariantEntry struct {
 	SearchDepth          int
 	Risky                float64
 	SearchBreadth        int
+	SearchBudget         time.Duration
 	Tp                   int
 	Gp                   int
 	ReinforceSearchDepth int
@@ -49,6 +51,7 @@ func (f *gcnVariantFlag) Set(value string) error {
 		return err
 	}
 	entry.SearchDepth, entry.Risky, entry.SearchBreadth = opts.depth, opts.risky, opts.breadth
+	entry.SearchBudget = opts.budget
 	entry.Tp, entry.Gp, entry.ReinforceSearchDepth = opts.tp, opts.gp, opts.reinforceSearchDepth
 	entry.OccupySearchBreadth, entry.FortifySearchBreadth = opts.occupySearchBreadth, opts.fortifySearchBreadth
 	*f = append(*f, entry)
@@ -76,6 +79,7 @@ func registerGCNVariants(registry bot.StrategyRegistry, variants gcnVariantFlag)
 		bvs.AttackSearchDepth = v.SearchDepth
 		bvs.Risky = v.Risky
 		bvs.AttackSearchBreadth = v.SearchBreadth
+		bvs.AttackSearchBudget = v.SearchBudget
 		bvs.Tp = v.Tp
 		bvs.Gp = v.Gp
 		bvs.ReinforceSearchDepth = v.ReinforceSearchDepth

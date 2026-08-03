@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 )
@@ -19,6 +20,7 @@ type boardValueVariantEntry struct {
 	SearchDepth          int
 	Risky                float64
 	SearchBreadth        int
+	SearchBudget         time.Duration
 	Tp                   int
 	Gp                   int
 	ReinforceSearchDepth int
@@ -49,6 +51,7 @@ func (f *boardValueVariantFlag) Set(value string) error {
 		return err
 	}
 	entry.SearchDepth, entry.Risky, entry.SearchBreadth = opts.depth, opts.risky, opts.breadth
+	entry.SearchBudget = opts.budget
 	entry.Tp, entry.Gp, entry.ReinforceSearchDepth = opts.tp, opts.gp, opts.reinforceSearchDepth
 	entry.OccupySearchBreadth, entry.FortifySearchBreadth = opts.occupySearchBreadth, opts.fortifySearchBreadth
 	*f = append(*f, entry)
@@ -61,6 +64,7 @@ type searchVariantOpts struct {
 	depth   int
 	risky   float64
 	breadth int
+	budget  time.Duration
 
 	tp                   int
 	gp                   int
@@ -72,15 +76,17 @@ type searchVariantOpts struct {
 // searchVariantOptions parses the optional suffix fields shared by
 // --board-value-variant and --gcn-variant: "search-depth=N"/"risky=R"/
 // "search-breadth=N" (bot.ValueStrategy.AttackSearchDepth/Risky/
-// AttackSearchBreadth, Phase 2/3 -- see internal/bot/attack_search.go)
-// and "tp=N"/"gp=N"/"reinforce-search-depth=N"/"occupy-search-breadth=N"/
-// "fortify-search-breadth=N" (bot.ValueStrategy.Tp/Gp/
-// ReinforceSearchDepth/OccupySearchBreadth/FortifySearchBreadth, Phase 4
-// -- see internal/bot/reinforce_search.go and interpolate.go), so both
-// --gcn-variant and --board-value-variant can register an A/B-testable
-// search variant alongside the original zero-value baseline without a
-// separate flag. flagName/rawValue are only used to build a readable
-// error.
+// AttackSearchBreadth, Phase 2/3 -- see internal/bot/attack_search.go),
+// "search-budget=<duration>" (bot.ValueStrategy.AttackSearchBudget,
+// Phase 5 -- AnytimeSearcher, ignored whenever search-depth > 0 is also
+// set), and "tp=N"/"gp=N"/"reinforce-search-depth=N"/
+// "occupy-search-breadth=N"/"fortify-search-breadth=N"
+// (bot.ValueStrategy.Tp/Gp/ReinforceSearchDepth/OccupySearchBreadth/
+// FortifySearchBreadth, Phase 4 -- see internal/bot/reinforce_search.go
+// and interpolate.go), so both --gcn-variant and --board-value-variant
+// can register an A/B-testable search variant alongside the original
+// zero-value baseline without a separate flag. flagName/rawValue are
+// only used to build a readable error.
 func searchVariantOptions(flagName, rawValue string, fields []string) (searchVariantOpts, error) {
 	var opts searchVariantOpts
 	for _, field := range fields {
@@ -104,6 +110,11 @@ func searchVariantOptions(flagName, rawValue string, fields []string) (searchVar
 			opts.breadth, err = strconv.Atoi(v)
 			if err != nil {
 				return searchVariantOpts{}, fmt.Errorf("invalid %s %q: search-breadth must be an integer: %w", flagName, rawValue, err)
+			}
+		case "search-budget":
+			opts.budget, err = time.ParseDuration(v)
+			if err != nil {
+				return searchVariantOpts{}, fmt.Errorf("invalid %s %q: search-budget must be a duration: %w", flagName, rawValue, err)
 			}
 		case "tp":
 			opts.tp, err = strconv.Atoi(v)
@@ -131,7 +142,7 @@ func searchVariantOptions(flagName, rawValue string, fields []string) (searchVar
 				return searchVariantOpts{}, fmt.Errorf("invalid %s %q: fortify-search-breadth must be an integer: %w", flagName, rawValue, err)
 			}
 		default:
-			return searchVariantOpts{}, fmt.Errorf("invalid %s %q: unknown option %q (want search-depth, risky, search-breadth, tp, gp, reinforce-search-depth, occupy-search-breadth, or fortify-search-breadth)", flagName, rawValue, k)
+			return searchVariantOpts{}, fmt.Errorf("invalid %s %q: unknown option %q (want search-depth, risky, search-breadth, search-budget, tp, gp, reinforce-search-depth, occupy-search-breadth, or fortify-search-breadth)", flagName, rawValue, k)
 		}
 	}
 	return opts, nil
@@ -156,6 +167,7 @@ func registerBoardValueVariants(registry bot.StrategyRegistry, variants boardVal
 		bvs.AttackSearchDepth = v.SearchDepth
 		bvs.Risky = v.Risky
 		bvs.AttackSearchBreadth = v.SearchBreadth
+		bvs.AttackSearchBudget = v.SearchBudget
 		bvs.Tp = v.Tp
 		bvs.Gp = v.Gp
 		bvs.ReinforceSearchDepth = v.ReinforceSearchDepth

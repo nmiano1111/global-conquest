@@ -48,7 +48,7 @@ type fixedAttackSearcher struct {
 	score  float64
 }
 
-func (f fixedAttackSearcher) Search(g *risk.Game, playerID string, pi int, value ValueFunction) (risk.AttackAction, float64, bool) {
+func (f fixedAttackSearcher) Search(_ context.Context, g *risk.Game, playerID string, pi int, value ValueFunction) (risk.AttackAction, float64, bool) {
 	return f.action, f.score, true
 }
 
@@ -394,4 +394,135 @@ func TestApplyTerminalOutcome(t *testing.T) {
 			t.Errorf("original game state was mutated: %+v", g.Territories["Kamchatka"])
 		}
 	})
+}
+
+// sleepingValueFunction wraps a ValueFunction, sleeping a fixed delay
+// before every Score call -- lets AnytimeSearcher's budget-expiry tests
+// deterministically control how long one depth's walk takes (proportional
+// to how many Score calls it makes), instead of racing real
+// scenario-solve time against real wall-clock time, which would be flaky
+// across machines/CI load. AttackMargin/FortifyMargin are unaffected,
+// delegated straight through via the embedded ValueFunction.
+type sleepingValueFunction struct {
+	ValueFunction
+	delay time.Duration
+}
+
+func (s sleepingValueFunction) Score(features []float64) float64 {
+	time.Sleep(s.delay)
+	return s.ValueFunction.Score(features)
+}
+
+// TestAnytimeSearcherAbortsMidDepthAndKeepsLastComplete confirms
+// AnytimeSearcher's core interruptibility contract: when a deeper
+// attempt gets cut off mid-walk by the deadline, the result returned is
+// still a valid, complete-depth-derived answer -- not corrupted or
+// partial -- specifically the last depth that *did* finish. Uses
+// greenlandSequenceGame (3 legal attacks from Alaska) wrapped in
+// sleepingValueFunction: depth 1 always makes exactly 3 Score calls (one
+// leaf each), so a 40ms delay costs ~120ms total -- comfortably inside a
+// 300ms budget. Depth 2 branches further beneath at least the Northwest
+// Territory candidate (it borders Alberta/Ontario/Greenland too), so it
+// necessarily makes more than 3 Score calls and reliably blows the same
+// budget, regardless of the exact branching count.
+func TestAnytimeSearcherAbortsMidDepthAndKeepsLastComplete(t *testing.T) {
+	g, p0 := greenlandSequenceGame(t)
+	pi := playerIndex(g, p0)
+	value := sleepingValueFunction{
+		ValueFunction: singleFeatureBoardValue(t, "territory_Greenland_is_mine", 1.0),
+		delay:         40 * time.Millisecond,
+	}
+
+	wantAction, wantScore, wantOK := (&SequenceSearcher{Depth: 1}).Search(context.Background(), g, p0, pi, value)
+
+	as := &AnytimeSearcher{Budget: 300 * time.Millisecond}
+	gotAction, gotScore, gotOK := as.Search(context.Background(), g, p0, pi, value)
+
+	if gotOK != wantOK || gotAction != wantAction || gotScore != wantScore {
+		t.Fatalf("AnytimeSearcher result = (%+v, %v, %v), want the last fully-completed depth's own result (SequenceSearcher{Depth:1}) = (%+v, %v, %v)",
+			gotAction, gotScore, gotOK, wantAction, wantScore, wantOK)
+	}
+}
+
+// TestAnytimeSearcherFallsBackToSinglePlyWhenNoDepthFits confirms the
+// absolute safety net: when the budget is too small for even depth 1 to
+// complete, AnytimeSearcher falls back to SinglePlySearcher's own result
+// rather than ever discarding a real, cheap answer. A 100ms delay against
+// a 1ms budget guarantees at least one of greenlandSequenceGame's 3
+// depth-1 candidates finishes its sleep before the next one's deadline
+// check catches the overrun, so depth 1 itself never completes.
+func TestAnytimeSearcherFallsBackToSinglePlyWhenNoDepthFits(t *testing.T) {
+	g, p0 := greenlandSequenceGame(t)
+	pi := playerIndex(g, p0)
+	value := sleepingValueFunction{
+		ValueFunction: singleFeatureBoardValue(t, "territory_Greenland_is_mine", 1.0),
+		delay:         100 * time.Millisecond,
+	}
+
+	wantAction, wantScore, wantOK := SinglePlySearcher{}.Search(context.Background(), g, p0, pi, value)
+
+	as := &AnytimeSearcher{Budget: 1 * time.Millisecond}
+	gotAction, gotScore, gotOK := as.Search(context.Background(), g, p0, pi, value)
+
+	if gotOK != wantOK || gotAction != wantAction || gotScore != wantScore {
+		t.Fatalf("AnytimeSearcher result = (%+v, %v, %v), want SinglePlySearcher's own fallback result = (%+v, %v, %v)",
+			gotAction, gotScore, gotOK, wantAction, wantScore, wantOK)
+	}
+}
+
+// TestAnytimeSearcherReachesDeeperDepthGivenGenerousBudget confirms
+// iterative deepening actually reaches useful depth given room to do so
+// -- same scenario and same expected answer as
+// TestAttackSequenceSearchFindsNonGreedyFirstMove (AttackSearchDepth=2),
+// but driven through AttackSearchBudget instead of a fixed depth. No
+// sleepingValueFunction needed: greenlandSequenceGame reaches depth 2
+// near-instantly on a real clock, so 500ms is generous without the test
+// spending its whole budget continuing to deepen past the board's
+// remaining legal attacks (iterative deepening keeps trying "one level
+// deeper" until either the budget or the tree itself is exhausted).
+func TestAnytimeSearcherReachesDeeperDepthGivenGenerousBudget(t *testing.T) {
+	g, p0 := greenlandSequenceGame(t)
+
+	bvs := NewBoardValueStrategy(singleFeatureBoardValue(t, "territory_Greenland_is_mine", 1.0))
+	bvs.AttackSearchBudget = 500 * time.Millisecond
+	cmd, expl, err := bvs.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionAttack || cmd.From != "Alaska" || cmd.To != "Northwest Territory" {
+		t.Fatalf("expected attack Alaska->Northwest Territory (the only path to the rewarded territory, same as AttackSearchDepth=2 finds), got %+v", cmd)
+	}
+	if expl.Score <= 0 {
+		t.Errorf("expected a positive leaf score from the discovered sequence, got %v", expl.Score)
+	}
+}
+
+// TestAnytimeSearcherPreCancelledContextReturnsCleanly confirms a
+// pre-cancelled ctx is respected without needing the budget itself to
+// expire: Search's own loop checks ctx.Err() before ever attempting
+// depth 1, so it falls straight through to the SinglePlySearcher
+// fallback on the first iteration -- fast, not a hang, and not a panic
+// on a context that's already done.
+func TestAnytimeSearcherPreCancelledContextReturnsCleanly(t *testing.T) {
+	g, p0 := greenlandSequenceGame(t)
+	pi := playerIndex(g, p0)
+	value := singleFeatureBoardValue(t, "territory_Greenland_is_mine", 1.0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	wantAction, wantScore, wantOK := SinglePlySearcher{}.Search(ctx, g, p0, pi, value)
+
+	as := &AnytimeSearcher{Budget: 10 * time.Second}
+	start := time.Now()
+	gotAction, gotScore, gotOK := as.Search(ctx, g, p0, pi, value)
+	elapsed := time.Since(start)
+
+	if gotOK != wantOK || gotAction != wantAction || gotScore != wantScore {
+		t.Fatalf("AnytimeSearcher result with a pre-cancelled ctx = (%+v, %v, %v), want SinglePlySearcher's own fallback result = (%+v, %v, %v)",
+			gotAction, gotScore, gotOK, wantAction, wantScore, wantOK)
+	}
+	if elapsed > time.Second {
+		t.Errorf("pre-cancelled ctx took %v to return, want a fast return, not something approaching the 10s budget", elapsed)
+	}
 }
