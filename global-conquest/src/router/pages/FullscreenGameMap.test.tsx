@@ -46,6 +46,7 @@ function makeGame(overrides: Partial<GameBootstrap> = {}): GameBootstrap {
       Kamchatka: { owner: 1, armies: 2 },
     },
     events: [],
+    board: null,
     createdAt: "",
     updatedAt: "",
     ...overrides,

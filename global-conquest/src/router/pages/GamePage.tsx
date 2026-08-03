@@ -523,7 +523,15 @@ export function GamePage() {
     });
     return out;
   }, [players]);
-  const territoryNameSet = useMemo(() => new Set(Object.keys(MAP_TERRITORIES)), []);
+  // Custom-map games carry their own topology in the bootstrap payload;
+  // classic games (the overwhelming majority) fall back to the static
+  // constants, exactly as before this game.board field existed.
+  const boardTerritoryNames = useMemo(
+    () => (game?.board ? Object.keys(game.board.territories) : Object.keys(MAP_TERRITORIES)),
+    [game]
+  );
+  const boardEdges = useMemo(() => game?.board?.edges ?? MAP_EDGES, [game]);
+  const territoryNameSet = useMemo(() => new Set(boardTerritoryNames), [boardTerritoryNames]);
   const eventHighlightRegex = useMemo(() => {
     const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const terms = [
@@ -585,8 +593,8 @@ export function GamePage() {
     return typeof t?.owner === "number" ? t.owner : -1;
   }, [selectedTo, territoryState]);
   const areAdjacent = useMemo(
-    () => MAP_EDGES.some(([a, b]) => (a === selectedFrom && b === selectedTo) || (a === selectedTo && b === selectedFrom)),
-    [selectedFrom, selectedTo]
+    () => boardEdges.some(([a, b]) => (a === selectedFrom && b === selectedTo) || (a === selectedTo && b === selectedFrom)),
+    [boardEdges, selectedFrom, selectedTo]
   );
   const maxAttackDiceAllowed = useMemo(() => Math.max(1, Math.min(3, selectedFromArmies - 1)), [selectedFromArmies]);
   const maxDefendDiceAllowed = useMemo(() => Math.max(1, Math.min(2, selectedToArmies)), [selectedToArmies]);
@@ -610,7 +618,7 @@ export function GamePage() {
   const legalAttackTargets = useMemo(() => {
     const set = new Set<string>();
     if (phaseMode !== "attack" || !isMyTurn || !selectedFrom || selectedFromArmies <= 1) return set;
-    for (const [a, b] of MAP_EDGES) {
+    for (const [a, b] of boardEdges) {
       let neighbor: string | null = null;
       if (a === selectedFrom) neighbor = b;
       else if (b === selectedFrom) neighbor = a;
@@ -621,7 +629,7 @@ export function GamePage() {
       if (owner >= 0 && owner !== meIndex) set.add(neighbor);
     }
     return set;
-  }, [phaseMode, isMyTurn, selectedFrom, selectedFromArmies, territoryState, meIndex]);
+  }, [boardEdges, phaseMode, isMyTurn, selectedFrom, selectedFromArmies, territoryState, meIndex]);
 
   // Territories the most recently resolved attack touched — a transient,
   // purely visual "something just happened here" cue superseded by the

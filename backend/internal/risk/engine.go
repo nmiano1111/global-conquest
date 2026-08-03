@@ -265,13 +265,23 @@ type Game struct {
 // NewClassicRandomTerritoryGame instead, since PhaseSetupClaim is not
 // driven by any UI. If rng is nil, a crypto/rand-backed RNG is used.
 func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {
+	return newGame(ClassicBoard(), playerIDs, rng)
+}
+
+// NewGame is NewClassicGame generalized to an arbitrary board, letting
+// custom (e.g. admin-authored) maps start a game exactly like the classic
+// board does. board is validated via Board.Validate() before use.
+func NewGame(board Board, playerIDs []string, rng RNG) (*Game, error) {
+	return newGame(board, playerIDs, rng)
+}
+
+func newGame(b Board, playerIDs []string, rng RNG) (*Game, error) {
 	if len(playerIDs) < 3 || len(playerIDs) > 6 {
 		return nil, ErrInvalidPlayerCount
 	}
 	if rng == nil {
 		rng = stdRNG{}
 	}
-	b := ClassicBoard()
 	if err := b.Validate(); err != nil {
 		return nil, err
 	}
@@ -311,7 +321,17 @@ func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {
 // Territories are distributed across players and remaining starting armies are placed
 // on owned territories, then the game begins at reinforce phase.
 func NewClassicAutoStartGame(playerIDs []string, rng RNG) (*Game, error) {
-	g, err := NewClassicGame(playerIDs, rng)
+	return newAutoStartGame(ClassicBoard(), playerIDs, rng)
+}
+
+// NewAutoStartGame is NewClassicAutoStartGame generalized to an arbitrary
+// board, for custom (e.g. admin-authored) maps.
+func NewAutoStartGame(board Board, playerIDs []string, rng RNG) (*Game, error) {
+	return newAutoStartGame(board, playerIDs, rng)
+}
+
+func newAutoStartGame(board Board, playerIDs []string, rng RNG) (*Game, error) {
+	g, err := newGame(board, playerIDs, rng)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +383,17 @@ func NewClassicAutoStartGame(playerIDs []string, rng RNG) (*Game, error) {
 // deliberately deferred rather than renamed alongside internal/simulation's
 // GameModeManual (see that type's doc comment).
 func NewClassicRandomTerritoryGame(playerIDs []string, rng RNG) (*Game, error) {
-	g, err := NewClassicGame(playerIDs, rng)
+	return newRandomTerritoryGame(ClassicBoard(), playerIDs, rng)
+}
+
+// NewRandomTerritoryGame is NewClassicRandomTerritoryGame generalized to an
+// arbitrary board, for custom (e.g. admin-authored) maps.
+func NewRandomTerritoryGame(board Board, playerIDs []string, rng RNG) (*Game, error) {
+	return newRandomTerritoryGame(board, playerIDs, rng)
+}
+
+func newRandomTerritoryGame(board Board, playerIDs []string, rng RNG) (*Game, error) {
+	g, err := newGame(board, playerIDs, rng)
 	if err != nil {
 		return nil, err
 	}

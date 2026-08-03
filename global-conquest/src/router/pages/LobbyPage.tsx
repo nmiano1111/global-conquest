@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
 import { listLobbyMessages, normalizeLobbyMessage, postLobbyMessage, type LobbyMessage } from "../../api/chat";
 import { createGame, deleteGame, joinGame, listGames, type GameRecord } from "../../api/games";
+import { listMaps, type MapSummary } from "../../api/maps";
 import { useAuth } from "../../auth";
 import { useSocket } from "../../realtime";
 import { buttonDangerClass, buttonGhostClass, buttonPrimaryClass, inputClass } from "./styles";
@@ -75,6 +76,8 @@ export function LobbyPage() {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
+  const [maps, setMaps] = useState<MapSummary[]>([]);
+  const [mapId, setMapId] = useState("");
   const { on, send, status: wsStatus } = useSocket();
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -144,6 +147,25 @@ export function LobbyPage() {
       cancelled = true;
     };
   }, [loadGames, loadMessages]);
+
+  const isAdmin = auth.user?.role === "admin";
+  useEffect(() => {
+    if (!isAdmin) {
+      setMaps([]);
+      return;
+    }
+    let cancelled = false;
+    listMaps()
+      .then((out) => {
+        if (!cancelled) setMaps(out);
+      })
+      .catch(() => {
+        // Best-effort: the map picker just stays empty (classic-only) if this fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin]);
 
   useEffect(() => {
     const off = on("lobby_typing_state", (msg) => {
@@ -216,7 +238,8 @@ export function LobbyPage() {
       await createGame({
         playerCount,
         botCount,
-        setupMode: auth.user?.role === "admin" ? setupMode : undefined,
+        setupMode: isAdmin ? setupMode : undefined,
+        mapId: isAdmin ? mapId || undefined : undefined,
       });
       await loadGames();
     } catch (err) {
@@ -378,7 +401,7 @@ export function LobbyPage() {
                 ))}
               </select>
             </label>
-            {auth.user?.role === "admin" && (
+            {isAdmin && (
               <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
                 Setup Mode
                 <select
@@ -388,6 +411,19 @@ export function LobbyPage() {
                 >
                   <option value="random">Random</option>
                   <option value="manual">Manual</option>
+                </select>
+              </label>
+            )}
+            {isAdmin && (
+              <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
+                Map
+                <select className={`${inputClass} w-40`} value={mapId} onChange={(e) => setMapId(e.target.value)}>
+                  <option value="">Classic</option>
+                  {maps.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
                 </select>
               </label>
             )}
