@@ -263,6 +263,21 @@ func (as *AnytimeSearcher) Search(ctx context.Context, g *risk.Game, playerID st
 	risky := as.risky()
 	cache := make(forecastCache)
 
+	// Computed once, not once per depth iteration below: the root-level
+	// candidate list depends only on g/playerID/pi/value/Breadth, none of
+	// which change across the depth loop (g itself is never mutated here
+	// -- every depth attempt walks from the same starting state), so
+	// recomputing it at every iteration was pure waste. It's also
+	// typically the single most expensive ranking pass in the whole
+	// search: it scores every legal attack (not just the top Breadth) via
+	// a full tdstate.Encode + value.Score before pruning, and the root
+	// usually has the most legal attacks of any node in the tree, since
+	// nothing has been conquered away yet. Deeper candidateAttacks calls
+	// inside bestContinuation operate on different, depth-dependent
+	// afterstates and are not redundant the same way -- only this one,
+	// root-level call is.
+	actions := candidateAttacks(g, playerID, pi, value, as.Breadth, cache)
+
 	var bestAction risk.AttackAction
 	var bestScore float64
 	lastComplete := false
@@ -271,7 +286,7 @@ func (as *AnytimeSearcher) Search(ctx context.Context, g *risk.Game, playerID st
 		if ctx.Err() != nil || time.Now().After(deadline) {
 			break
 		}
-		action, score, ok, complete := as.searchAtDepth(g, playerID, pi, depth, risky, value, cache, deadline)
+		action, score, ok, complete := as.searchAtDepth(g, playerID, pi, actions, depth, risky, value, cache, deadline)
 		if !complete || !ok {
 			break
 		}
@@ -283,16 +298,16 @@ func (as *AnytimeSearcher) Search(ctx context.Context, g *risk.Game, playerID st
 	return SinglePlySearcher{}.Search(ctx, g, playerID, pi, value)
 }
 
-// searchAtDepth attempts one full tree walk at exactly depth, mirroring
-// SequenceSearcher.Search's own top-level loop -- complete=false means
-// the deadline was hit somewhere inside this attempt, so a/bestScore/ok
-// must not be trusted; Search keeps whatever the previous, fully
-// completed depth found instead.
-func (as *AnytimeSearcher) searchAtDepth(g *risk.Game, playerID string, pi int, depth int, risky float64, value ValueFunction, cache forecastCache, deadline time.Time) (a risk.AttackAction, bestScore float64, ok, complete bool) {
+// searchAtDepth attempts one full tree walk at exactly depth, given the
+// root-level candidates Search already computed once (see its own
+// comment for why) -- otherwise mirrors SequenceSearcher.Search's own
+// top-level loop. complete=false means the deadline was hit somewhere
+// inside this attempt, so a/bestScore/ok must not be trusted; Search
+// keeps whatever the previous, fully completed depth found instead.
+func (as *AnytimeSearcher) searchAtDepth(g *risk.Game, playerID string, pi int, actions []risk.AttackAction, depth int, risky float64, value ValueFunction, cache forecastCache, deadline time.Time) (a risk.AttackAction, bestScore float64, ok, complete bool) {
 	if time.Now().After(deadline) {
 		return risk.AttackAction{}, 0, false, false
 	}
-	actions := candidateAttacks(g, playerID, pi, value, as.Breadth, cache)
 	best := -1
 	for i, candidate := range actions {
 		outcome := risk.SelectTerminalState(risk.AttackTerminalStates(candidate.SourceArmies, candidate.TargetArmies), risky)

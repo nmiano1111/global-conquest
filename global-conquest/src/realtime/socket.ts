@@ -50,6 +50,7 @@ export function useGameSocket(wsUrl: string): GameSocket {
   const sendQueueRef = useRef<string[]>([]);
   const reconnectAttemptRef = useRef(0);
   const closedByUserRef = useRef(false);
+  const connectIdRef = useRef(0);
 
   const emit = useCallback((msg: WsEnvelope) => {
     listenersRef.current.get(msg.type)?.forEach((fn) => fn(msg));
@@ -110,10 +111,18 @@ export function useGameSocket(wsUrl: string): GameSocket {
 
     setStatus("connecting");
 
+    // Every connect() gets its own generation id. A socket's event handlers
+    // only act if they're still the most recent connect() call — this stops
+    // a late/async close event from a since-abandoned socket (e.g. the brief
+    // anonymous connection created mid account-switch) from rescheduling a
+    // reconnect that clobbers wsRef with a stale, wrongly-authenticated socket.
+    const connectId = ++connectIdRef.current;
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (connectIdRef.current !== connectId) return;
       reconnectAttemptRef.current = 0;
       setStatus("connected");
       flushQueue();
@@ -121,6 +130,7 @@ export function useGameSocket(wsUrl: string): GameSocket {
     };
 
     ws.onmessage = (ev) => {
+      if (connectIdRef.current !== connectId) return;
       const parsed = safeParseEnvelope(ev.data);
       if (parsed) {
         emit(parsed);
@@ -134,6 +144,8 @@ export function useGameSocket(wsUrl: string): GameSocket {
     };
 
     ws.onclose = () => {
+      if (connectIdRef.current !== connectId) return;
+
       wsRef.current = null;
       setStatus("disconnected");
 
@@ -143,7 +155,7 @@ export function useGameSocket(wsUrl: string): GameSocket {
       const delay = computeBackoffMs(attempt);
 
       window.setTimeout(() => {
-        if (!closedByUserRef.current) connect();
+        if (connectIdRef.current === connectId && !closedByUserRef.current) connect();
       }, delay);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
