@@ -27,13 +27,14 @@ type fakeUsersService struct {
 }
 
 type fakeGamesService struct {
-	createClassicGameFn func(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error)
-	joinClassicGameFn   func(ctx context.Context, gameID, playerID string) (store.Game, error)
-	getGameFn           func(ctx context.Context, gameID string) (store.Game, error)
-	getGameBootstrapFn  func(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
-	listGamesFn         func(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error)
-	updateGameStateFn   func(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
-	deleteGameFn        func(ctx context.Context, gameID string) error
+	createClassicGameFn    func(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error)
+	joinClassicGameFn      func(ctx context.Context, gameID, playerID string) (store.Game, error)
+	getGameFn              func(ctx context.Context, gameID string) (store.Game, error)
+	getGameBootstrapFn     func(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
+	listGameReplayEventsFn func(ctx context.Context, gameID, requesterUserID string, afterSequence int64, limit int) ([]service.GameReplayEntry, error)
+	listGamesFn            func(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error)
+	updateGameStateFn      func(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
+	deleteGameFn           func(ctx context.Context, gameID string) error
 }
 
 type fakeChatService struct {
@@ -106,6 +107,13 @@ func (f *fakeGamesService) GetGameForViewer(ctx context.Context, gameID, viewerU
 
 func (f *fakeGamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool) (service.GameBootstrap, error) {
 	return f.getGameBootstrapFn(ctx, gameID, requesterUserID)
+}
+
+func (f *fakeGamesService) ListGameReplayEvents(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool, afterSequence int64, limit int) ([]service.GameReplayEntry, error) {
+	if f.listGameReplayEventsFn == nil {
+		return []service.GameReplayEntry{}, nil
+	}
+	return f.listGameReplayEventsFn(ctx, gameID, requesterUserID, afterSequence, limit)
 }
 
 func (f *fakeGamesService) ListGames(ctx context.Context, ownerUserID, status string, limit, offset int, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) ([]service.GameSummary, error) {

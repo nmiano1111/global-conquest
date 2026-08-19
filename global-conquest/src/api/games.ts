@@ -70,8 +70,19 @@ export type GameBootstrap = {
   players: GameBootstrapPlayer[];
   territories: Record<string, unknown>;
   events: GameEventEntry[];
+  replayAvailable: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+/** One entry in a game's replay log, in commit order. `payload` is the same
+ * shape as a game_state_updated broadcast for that action. */
+export type GameReplayEntry = {
+  sequence: number;
+  occurredAt: string;
+  actorPlayerId: string;
+  actionType: string;
+  payload: unknown;
 };
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -165,6 +176,7 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
       players: [],
       territories: {},
       events: [],
+      replayAvailable: false,
       createdAt: "",
       updatedAt: "",
     };
@@ -234,8 +246,21 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
     players,
     territories,
     events,
+    replayAvailable: record.replay_available === true || record.replayAvailable === true,
     createdAt: readString(record.created_at ?? record.CreatedAt),
     updatedAt: readString(record.updated_at ?? record.UpdatedAt),
+  };
+}
+
+function normalizeGameReplayEntry(value: unknown): GameReplayEntry | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  return {
+    sequence: readNumber(record.sequence, 0),
+    occurredAt: readString(record.occurred_at ?? record.occurredAt),
+    actorPlayerId: readString(record.actor_player_id ?? record.actorPlayerId),
+    actionType: readString(record.action_type ?? record.actionType),
+    payload: record.payload,
   };
 }
 
@@ -283,4 +308,19 @@ export async function getGameBootstrap(gameID: string): Promise<GameBootstrap> {
     url: `/games/${encodeURIComponent(gameID)}/bootstrap`,
   });
   return normalizeGameBootstrap(res);
+}
+
+/** Fetches gameID's full replay log in one call (bounded by the backend's
+ * default/max page size of 1000 entries — comfortably above any real
+ * player game's action count). Read-only: this can never mutate game
+ * state, live or historical. */
+export async function getGameReplayEvents(gameID: string): Promise<GameReplayEntry[]> {
+  const res = await request<unknown>({
+    method: "GET",
+    url: `/games/${encodeURIComponent(gameID)}/replay`,
+    params: { limit: 1000 },
+  });
+  const record = asRecord(res);
+  const eventsRaw = record && Array.isArray(record.events) ? record.events : [];
+  return eventsRaw.map((e) => normalizeGameReplayEntry(e)).filter((e): e is GameReplayEntry => e !== null);
 }

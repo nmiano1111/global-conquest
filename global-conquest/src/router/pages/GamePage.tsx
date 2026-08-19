@@ -18,6 +18,7 @@ import {
 import { MobileGameView } from "./MobileGameView";
 import { FullscreenGameMap } from "./FullscreenGameMap";
 import { reconcileSelection } from "./selectionReconciliation";
+import { applyGameStateUpdate } from "./applyGameStateUpdate";
 
 export function GamePage() {
   const auth = useAuth();
@@ -133,19 +134,6 @@ export function GamePage() {
     });
   };
 
-  const parseTerritories = (raw: unknown): Record<string, unknown> => {
-    if (raw && typeof raw === "object") return raw as Record<string, unknown>;
-    if (typeof raw === "string") {
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
-      } catch {
-        return {};
-      }
-    }
-    return {};
-  };
-
   const loadGame = useCallback(
     async (cancelled = false) => {
       setError("");
@@ -220,115 +208,44 @@ export function GamePage() {
       const payload = msg.payload as Record<string, unknown> | undefined;
       const payloadGameID = typeof payload?.game_id === "string" ? payload.game_id : msg.game_id;
       if (payloadGameID !== gameID) return;
-      const action = typeof payload?.action === "string" ? payload.action : "";
-      const phase = typeof payload?.phase === "string" ? payload.phase : "";
-      const currentPlayer = typeof payload?.current_player === "number" ? payload.current_player : -1;
-      const pendingReinforcements =
-        typeof payload?.pending_reinforcements === "number" ? payload.pending_reinforcements : 0;
-      const setsTraded = typeof payload?.sets_traded === "number" ? payload.sets_traded : undefined;
-      const occupyRaw = payload?.occupy && typeof payload.occupy === "object" ? (payload.occupy as Record<string, unknown>) : null;
-      const occupy =
-        occupyRaw &&
-        typeof occupyRaw.from === "string" &&
-        typeof occupyRaw.to === "string" &&
-        typeof occupyRaw.min_move === "number" &&
-        typeof occupyRaw.max_move === "number"
-          ? {
-              from: occupyRaw.from,
-              to: occupyRaw.to,
-              minMove: occupyRaw.min_move,
-              maxMove: occupyRaw.max_move,
-            }
-          : null;
-      const territories = parseTerritories(payload?.territories);
-      const incomingPlayersRaw = Array.isArray(payload?.players) ? payload.players : [];
-      const incomingPlayers = incomingPlayersRaw
-        .filter((v): v is Record<string, unknown> => !!v && typeof v === "object")
-        .map((p) => ({
-          userId: typeof p.user_id === "string" ? p.user_id : "",
-          cardCount: typeof p.card_count === "number" ? p.card_count : 0,
-          setupArmies: typeof p.setup_armies === "number" ? p.setup_armies : 0,
-          eliminated: p.eliminated === true,
-        }))
-        .filter((p) => p.userId !== "");
 
-      if (occupy) {
-        setArmiesInput(occupy.maxMove);
-      }
-
+      // setGame's functional-update form is used purely to read the latest
+      // `prev` synchronously (avoiding a stale closure over `game`); the
+      // resulting `applied` is captured into this outer variable so the
+      // other setters below run exactly once, outside the updater itself
+      // (React may re-invoke a functional update in dev StrictMode to
+      // check purity, and firing setEventMessages etc. from inside it
+      // would risk double-applying those side effects).
+      let applied: ReturnType<typeof applyGameStateUpdate> | null = null;
       setGame((prev) => {
         if (!prev) return prev;
-        const metaByID = new Map(prev.players.map((p) => [p.userId, p]));
-        const nextPlayers = incomingPlayers.map((p, idx) => {
-          const meta = metaByID.get(p.userId);
-          return {
-            userId: p.userId,
-            userName: meta?.userName || p.userId,
-            color: meta?.color || MAP_PLAYER_COLORS[idx % MAP_PLAYER_COLORS.length],
-            cardCount: p.cardCount,
-            cards: meta?.cards ?? [],
-            setupArmies: p.setupArmies,
-            eliminated: p.eliminated,
-            // isBot never changes after bootstrap and every broadcast only
-            // carries gameplay fields, so it's simply carried over here.
-            isBot: meta?.isBot ?? false,
-          };
-        });
-        return {
-          ...prev,
-          phase,
-          currentPlayer,
-          pendingReinforcements,
-          setsTraded: setsTraded ?? prev.setsTraded,
-          occupy,
-          territories,
-          players: nextPlayers,
-        };
+        applied = applyGameStateUpdate(prev, payload);
+        return applied.nextGame;
       });
-
-      if (action === "attack" && payload?.result && typeof payload.result === "object") {
-        const result = payload.result as Record<string, unknown>;
-        const attacker = Array.isArray(result.attacker_rolls)
-          ? result.attacker_rolls.filter((v): v is number => typeof v === "number")
-          : [];
-        const defender = Array.isArray(result.defender_rolls)
-          ? result.defender_rolls.filter((v): v is number => typeof v === "number")
-          : [];
-        const attackerLoss = typeof result.attacker_loss === "number" ? result.attacker_loss : 0;
-        const defenderLoss = typeof result.defender_loss === "number" ? result.defender_loss : 0;
-        setDiceResult({ attacker, defender, attackerLoss, defenderLoss });
+      if (!applied) return;
+      const result = applied as ReturnType<typeof applyGameStateUpdate>;
+      if (result.nextGame.occupy) {
+        setArmiesInput(result.nextGame.occupy.maxMove);
       }
-      if (payload?.event && typeof payload.event === "object") {
-        const event = payload.event as Record<string, unknown>;
-        const nextEvent: GameEventMessage = {
-          id: typeof event.id === "string" ? event.id : `${payloadGameID}-${Date.now()}`,
-          gameID:
-            typeof event.game_id === "string"
-              ? event.game_id
-              : typeof payloadGameID === "string"
-                ? payloadGameID
-                : gameID,
-          actorUserID: typeof event.actor_user_id === "string" ? event.actor_user_id : "",
-          eventType: typeof event.event_type === "string" ? event.event_type : "game_event",
-          body: typeof event.body === "string" ? event.body : "",
-          createdAt: typeof event.created_at === "string" ? event.created_at : new Date().toISOString(),
-        };
-        if (nextEvent.body.trim() !== "") {
-          setEventMessages((prev) => {
-            if (prev.some((ev) => ev.id !== "" && ev.id === nextEvent.id)) return prev;
-            return [...prev, nextEvent];
-          });
-        }
+      if (result.diceResult) {
+        setDiceResult(result.diceResult);
+      }
+      if (result.eventMessage) {
+        const nextEvent = result.eventMessage;
+        setEventMessages((prevEvents) => {
+          if (prevEvents.some((ev) => ev.id !== "" && ev.id === nextEvent.id)) return prevEvents;
+          return [...prevEvents, nextEvent];
+        });
       }
       // Reflect whichever territories the just-committed action touched
       // (bot or human) as a passive highlight. Always set (defaulting to
       // "" when absent, e.g. end_turn/trade_cards) so a stale highlight
       // from an earlier action doesn't linger past an action with nothing
       // to show.
-      setLastActionTerritory(typeof payload?.action_territory === "string" ? payload.action_territory : "");
-      setLastActionFrom(typeof payload?.action_from === "string" ? payload.action_from : "");
-      setLastActionTo(typeof payload?.action_to === "string" ? payload.action_to : "");
-      setLastActionType(action);
+      setLastActionTerritory(result.lastActionTerritory);
+      setLastActionFrom(result.lastActionFrom);
+      setLastActionTo(result.lastActionTo);
+      setLastActionType(result.lastActionType);
     });
     return off;
   }, [gameID, on]);
@@ -1029,6 +946,11 @@ export function GamePage() {
             <button className={buttonGhostClass} type="button" onClick={toggleMobileUI}>
               Mobile View
             </button>
+            {game?.replayAvailable ? (
+              <Link className={buttonGhostClass} to="/app/game/$gameID/replay" params={{ gameID }}>
+                ▶ Watch Replay
+              </Link>
+            ) : null}
             <Link className={buttonGhostClass} to="/app/lobby">
               ← Lobby
             </Link>

@@ -776,6 +776,162 @@ func TestNonAttackActionProducesNoDomainEvent(t *testing.T) {
 	}
 }
 
+// fakeReplayEventStore records InsertReplayEvent calls for assertions.
+type fakeReplayEventStore struct {
+	insertFn func(context.Context, db.Querier, string, string, string, []byte) (store.GameReplayEvent, error)
+	calls    int
+}
+
+func (f *fakeReplayEventStore) InsertReplayEvent(ctx context.Context, q db.Querier, gameID, actorPlayerID, actionType string, payload []byte) (store.GameReplayEvent, error) {
+	f.calls++
+	if f.insertFn != nil {
+		return f.insertFn(ctx, q, gameID, actorPlayerID, actionType, payload)
+	}
+	return store.GameReplayEvent{ID: "rev1", GameID: gameID, GameSequence: int64(f.calls), ActionType: actionType}, nil
+}
+
+func (f *fakeReplayEventStore) ListReplayEvents(context.Context, db.Querier, string, int64, int) ([]store.GameReplayEvent, error) {
+	return nil, nil
+}
+
+func (f *fakeReplayEventStore) ReplayEventsExist(context.Context, db.Querier, string) (bool, error) {
+	return f.calls > 0, nil
+}
+
+// TestApplyGameActionPersistsReplayEventAndFlagsAvailable verifies that
+// ApplyGameAction writes one game_replay_events row per committed action
+// (not just attacks) and reports ReplayAvailable=true in the same
+// response, so the frontend can show the "Watch Replay" entry point on
+// the very first action without a fresh bootstrap fetch.
+func TestApplyGameActionPersistsReplayEventAndFlagsAvailable(t *testing.T) {
+	g, err := risk.NewClassicAutoStartGame([]string{"uid-p1", "uid-p2", "uid-p3"}, nil)
+	if err != nil {
+		t.Fatalf("new game: %v", err)
+	}
+	actorIdx := g.CurrentPlayer
+	actorID := g.Players[actorIdx].ID
+	var ownedTerr string
+	for terr, ts := range g.Territories {
+		if ts.Owner == actorIdx {
+			ownedTerr = string(terr)
+			break
+		}
+	}
+	if ownedTerr == "" {
+		t.Fatal("no owned territory found for current player")
+	}
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var capturedActionType, capturedActor string
+	var capturedPayload []byte
+	replayStore := &fakeReplayEventStore{
+		insertFn: func(_ context.Context, _ db.Querier, gameID, actorPlayerID, actionType string, payload []byte) (store.GameReplayEvent, error) {
+			capturedActor = actorPlayerID
+			capturedActionType = actionType
+			capturedPayload = payload
+			return store.GameReplayEvent{ID: "rev1", GameID: gameID, GameSequence: 1, ActionType: actionType}, nil
+		},
+	}
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+	})
+	svc.SetGameReplayEventStore(replayStore)
+
+	out, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "place_reinforcement",
+		Territory:    ownedTerr,
+		Armies:       1,
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction place_reinforcement: %v", err)
+	}
+	if replayStore.calls != 1 {
+		t.Fatalf("expected 1 InsertReplayEvent call, got %d", replayStore.calls)
+	}
+	if capturedActor != actorID {
+		t.Fatalf("expected actor %q, got %q", actorID, capturedActor)
+	}
+	if capturedActionType != "place_reinforcement" {
+		t.Fatalf("expected action type place_reinforcement, got %q", capturedActionType)
+	}
+	if len(capturedPayload) == 0 {
+		t.Fatal("expected a non-empty replay payload")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(capturedPayload, &decoded); err != nil {
+		t.Fatalf("replay payload is not valid JSON: %v", err)
+	}
+	if decoded["action"] != "place_reinforcement" {
+		t.Fatalf("expected payload action=place_reinforcement, got %v", decoded["action"])
+	}
+	if !out.ReplayAvailable {
+		t.Fatal("expected ReplayAvailable=true when a replay store is configured")
+	}
+}
+
+// TestApplyGameActionReplayAvailableFalseWithoutStore verifies
+// ReplayAvailable stays false (and no row is written) when no replay
+// event store is configured — e.g. older deployments or tests that don't
+// wire one.
+func TestApplyGameActionReplayAvailableFalseWithoutStore(t *testing.T) {
+	g, err := risk.NewClassicAutoStartGame([]string{"uid-p1", "uid-p2", "uid-p3"}, nil)
+	if err != nil {
+		t.Fatalf("new game: %v", err)
+	}
+	actorIdx := g.CurrentPlayer
+	actorID := g.Players[actorIdx].ID
+	var ownedTerr string
+	for terr, ts := range g.Territories {
+		if ts.Owner == actorIdx {
+			ownedTerr = string(terr)
+			break
+		}
+	}
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	svc := NewGamesService(&fakeDB{q: noopQuerier{}, txQ: noopQuerier{}}, &fakeGamesStore{
+		createFn:  func(context.Context, db.Querier, store.NewGame) (store.Game, error) { return store.Game{}, nil },
+		getByIDFn: func(context.Context, db.Querier, string) (store.Game, error) { return store.Game{}, nil },
+		getByIDForUpdate: func(context.Context, db.Querier, string) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+		listFn: func(context.Context, db.Querier, store.GameListFilter) ([]store.Game, error) { return nil, nil },
+		updateStateFn: func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) {
+			return store.Game{ID: "g1", Status: "in_progress", State: raw}, nil
+		},
+	})
+
+	out, err := svc.ApplyGameAction(context.Background(), GameActionInput{
+		GameID:       "g1",
+		PlayerUserID: actorID,
+		Action:       "place_reinforcement",
+		Territory:    ownedTerr,
+		Armies:       1,
+	})
+	if err != nil {
+		t.Fatalf("ApplyGameAction place_reinforcement: %v", err)
+	}
+	if out.ReplayAvailable {
+		t.Fatal("expected ReplayAvailable=false when no replay store is configured")
+	}
+}
+
 func TestApplyAttackDomainEventStoreErrorRollsBack(t *testing.T) {
 	gameState, attackerID, _ := attackPhaseGameState(t)
 

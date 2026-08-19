@@ -200,6 +200,10 @@ type GameActionUpdate struct {
 	// ActionTo is the destination territory the action used, echoed back
 	// for client display.
 	ActionTo string
+	// ReplayAvailable reports whether this game now has a persisted
+	// replay log, so clients can show a "Watch Replay" entry point live
+	// without waiting for a fresh bootstrap fetch.
+	ReplayAvailable bool
 }
 
 // GameOccupyRequirement describes the post-conquest occupy move a player
@@ -729,6 +733,7 @@ func (s *Server) commitGameAction(in GameActionInput) (GameActionUpdate, error) 
 		ActionTerritory: updated.ActionTerritory,
 		ActionFrom:      updated.ActionFrom,
 		ActionTo:        updated.ActionTo,
+		ReplayAvailable: updated.ReplayAvailable,
 
 		Event: func() *wsmsg.GameEventPayload {
 			if updated.Event == nil {

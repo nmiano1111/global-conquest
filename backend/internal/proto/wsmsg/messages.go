@@ -477,6 +477,10 @@ type GameStateUpdatedPayload struct {
 	ActionTerritory string `json:"action_territory,omitempty"`
 	ActionFrom      string `json:"action_from,omitempty"` // ActionFrom is the source territory this action touched, if any.
 	ActionTo        string `json:"action_to,omitempty"`   // ActionTo is the destination territory this action touched, if any.
+	// ReplayAvailable reports whether this game now has a persisted
+	// replay log, so clients can show a "Watch Replay" entry point live
+	// without waiting for a fresh bootstrap fetch.
+	ReplayAvailable bool `json:"replay_available"`
 }
 
 // GameOccupyRequirement describes the pending post-conquest army move a

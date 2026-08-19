@@ -68,6 +68,7 @@ func NewRouter(h *Handler) *gin.Engine {
 			games.POST("/:id/join", h.JoinGame)
 			games.GET("/:id", h.GetGame)
 			games.GET("/:id/bootstrap", h.GetGameBootstrap)
+			games.GET("/:id/replay", h.GetGameReplay)
 			games.PUT("/:id/state", h.UpdateGameState)
 			games.DELETE("/:id", h.RequireAdmin(), h.DeleteGame)
 		}

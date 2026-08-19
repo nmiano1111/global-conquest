@@ -40,6 +40,12 @@ type gameDomainEventStore interface {
 	InsertDomainEvent(ctx context.Context, q db.Querier, gameID string, ev risk.DomainEvent, payload []byte) (store.GameDomainEvent, error)
 }
 
+type gameReplayEventStore interface {
+	InsertReplayEvent(ctx context.Context, q db.Querier, gameID, actorPlayerID, actionType string, payload []byte) (store.GameReplayEvent, error)
+	ListReplayEvents(ctx context.Context, q db.Querier, gameID string, afterSequence int64, limit int) ([]store.GameReplayEvent, error)
+	ReplayEventsExist(ctx context.Context, q db.Querier, gameID string) (bool, error)
+}
+
 type discordOutboxStore interface {
 	EnqueueTurnStarted(ctx context.Context, q db.Querier, gameID, gameName, previousPlayerDisplayName, playerID, playerDisplayName string, previousPlayerDiscordName, playerDiscordName *string, turnNumber int) error
 	EnqueueCardsTrade(ctx context.Context, q db.Querier, gameID, gameName, playerID, playerDisplayName string, playerDiscordName *string, armies int) error
@@ -61,6 +67,7 @@ type GamesService struct {
 	gameEvent          gameEventStore
 	gamePlayers        gamePlayersStore
 	gameDomainEvents   gameDomainEventStore
+	gameReplayEvents   gameReplayEventStore
 	discordOutbox      discordOutboxStore
 	assignBotNames     func(count int, exclude []string) []string
 	gameStarted        func(gameID string)
@@ -184,6 +191,14 @@ func (s *GamesService) SetGameDomainEventStore(ds gameDomainEventStore) {
 	s.gameDomainEvents = ds
 }
 
+// SetGameReplayEventStore wires in the store used to persist a full,
+// ordered replay log of every committed game action (not just Attack),
+// powering player-facing replay. It is nil-safe: until set, no replay
+// events are persisted and GameBootstrap.ReplayAvailable is always false.
+func (s *GamesService) SetGameReplayEventStore(rs gameReplayEventStore) {
+	s.gameReplayEvents = rs
+}
+
 // SetDiscordOutboxStore wires in the store used to enqueue Discord
 // notifications (turn started, cards traded, player eliminated, game
 // over, game started). It is nil-safe: until set, no Discord notifications
@@ -277,10 +292,36 @@ type GameBootstrap struct {
 	// Events is the game's event log (up to the most recent 250 entries),
 	// oldest to newest.
 	Events []GameEventEntry `json:"events"`
+	// ReplayAvailable reports whether this game has any persisted replay
+	// events (see ListGameReplayEvents) — true for every in_progress or
+	// completed game created after replay capture shipped, always false
+	// for older games and for lobbies.
+	ReplayAvailable bool `json:"replay_available"`
 	// CreatedAt is when the game row was created.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is when the game row was last updated.
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// GameReplayEntry is one entry in a game's replay log, as returned by
+// ListGameReplayEvents. Payload is the same JSON shape sent to clients as
+// the game_state_updated broadcast for this action, letting the frontend
+// replay a game using the exact same state-application logic it already
+// uses for live updates.
+type GameReplayEntry struct {
+	// Sequence is this entry's position in the game's replay log —
+	// monotonically increasing, gapless only within this table (see
+	// store.GameReplayEvent.GameSequence).
+	Sequence int64 `json:"sequence"`
+	// OccurredAt is when the action was committed.
+	OccurredAt time.Time `json:"occurred_at"`
+	// ActorPlayerID is the player who performed the action, or empty for
+	// a system-generated one.
+	ActorPlayerID string `json:"actor_player_id,omitempty"`
+	// ActionType names the action kind (e.g. "attack", "fortify").
+	ActionType string `json:"action_type"`
+	// Payload is the game_state_updated-shaped JSON for this action.
+	Payload json.RawMessage `json:"payload"`
 }
 
 // GameActionInput is the input to GamesService.ApplyGameAction, carrying
@@ -397,6 +438,12 @@ type GameActionUpdate struct {
 	// ActionTerritory for actions with a from/to pair (attack, occupy,
 	// fortify).
 	ActionTo string `json:"action_to,omitempty"`
+	// ReplayAvailable reports whether a replay event store is configured
+	// (and thus whether this action just got a game_replay_events row) —
+	// mirrors GameBootstrap.ReplayAvailable, sent on every action so the
+	// frontend can show the "Watch Replay" entry point live, without
+	// waiting for a fresh bootstrap fetch.
+	ReplayAvailable bool `json:"replay_available"`
 }
 
 // GameEventEntry is one human-readable entry in a game's event log (e.g.
@@ -1359,6 +1406,13 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			ActionTerritory:       actionTerritory,
 			ActionFrom:            actionFrom,
 			ActionTo:              actionTo,
+			// A replay row is about to be written below for this very
+			// action whenever gameReplayEvents is configured (see the
+			// InsertReplayEvent call further down), so this is accurate
+			// without a DB round trip — it lets the frontend flip on the
+			// "Watch Replay" entry point live, on the first action, rather
+			// than only after the next bootstrap fetch.
+			ReplayAvailable: s.gameReplayEvents != nil,
 		}
 		if s.gameEvent != nil && strings.TrimSpace(eventBody) != "" {
 			saved, err := s.gameEvent.SaveGameEvent(ctx, q, g.ID, in.PlayerUserID, eventType, eventBody)
@@ -1372,6 +1426,15 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				EventType:   saved.EventType,
 				Body:        saved.Body,
 				CreatedAt:   saved.CreatedAt,
+			}
+		}
+		if s.gameReplayEvents != nil {
+			replayPayload, err := json.Marshal(out)
+			if err != nil {
+				return err
+			}
+			if _, err := s.gameReplayEvents.InsertReplayEvent(ctx, q, g.ID, in.PlayerUserID, in.Action, replayPayload); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -1558,11 +1621,61 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 				})
 			}
 		}
+		if s.gameReplayEvents != nil {
+			exists, err := s.gameReplayEvents.ReplayEventsExist(ctx, s.db.Queryer(), g.ID)
+			if err != nil {
+				return GameBootstrap{}, err
+			}
+			out.ReplayAvailable = exists
+		}
 		return out, nil
 
 	default:
 		return GameBootstrap{}, ErrInvalidGameInput
 	}
+}
+
+// ListGameReplayEvents returns gameID's replay log — one entry per
+// committed action, in commit order — for the caller to step through and
+// re-render exactly as a live spectator would have seen it happen. It
+// applies the same visibility rule as GetGameBootstrap (gameVisible), and
+// returns an empty slice (not an error) if no replay event store is
+// configured. It returns ErrInvalidGameInput if gameID or
+// requesterUserID is empty, propagates ErrGameNotFound from the
+// underlying GetGame call, and returns ErrGameForbidden if the requester
+// is blocked by the game's or their own sandbox status.
+func (s *GamesService) ListGameReplayEvents(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool, afterSequence int64, limit int) ([]GameReplayEntry, error) {
+	if gameID == "" || requesterUserID == "" {
+		return nil, ErrInvalidGameInput
+	}
+	g, err := s.GetGame(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	if !gameVisible(requesterUserID, requesterIsAdmin, requesterIsSandboxed, g.OwnerUserID, g.IsSandboxed) {
+		return nil, ErrGameForbidden
+	}
+	if s.gameReplayEvents == nil {
+		return []GameReplayEntry{}, nil
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.gameReplayEvents.ListReplayEvents(ctx, s.db.Queryer(), gameID, afterSequence, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]GameReplayEntry, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, GameReplayEntry{
+			Sequence:      r.GameSequence,
+			OccurredAt:    r.OccurredAt,
+			ActorPlayerID: r.ActorPlayerID,
+			ActionType:    r.ActionType,
+			Payload:       r.Payload,
+		})
+	}
+	return out, nil
 }
 
 func (s *GamesService) userNamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {

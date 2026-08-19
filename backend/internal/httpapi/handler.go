@@ -33,6 +33,7 @@ type gameService interface {
 	JoinClassicGame(ctx context.Context, gameID, playerID string, joinerIsAdmin, joinerIsSandboxed bool) (store.Game, error)
 	GetGameForViewer(ctx context.Context, gameID, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) (store.Game, error)
 	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool) (service.GameBootstrap, error)
+	ListGameReplayEvents(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool, afterSequence int64, limit int) ([]service.GameReplayEntry, error)
 	ListGames(ctx context.Context, ownerUserID, status string, limit, offset int, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) ([]service.GameSummary, error)
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
 	GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error)
@@ -421,6 +422,56 @@ func (h *Handler) GetGameBootstrap(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+// GetGameReplay godoc
+// @Summary      Get game replay log
+// @Description  Retrieves the game's replay log (one entry per committed action, in commit order), for stepping through as a playback
+// @Tags         games
+// @Produce      json
+// @Param        id path string true "Game ID"
+// @Param        after query int false "Return only entries with a sequence greater than this"
+// @Param        limit query int false "Maximum entries to return (default/max 1000)"
+// @Success      200 {object} map[string][]service.GameReplayEntry
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/games/{id}/replay [get]
+func (h *Handler) GetGameReplay(c *gin.Context) {
+	gameID := c.Param("id")
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var after int64
+	if v := c.Query("after"); v != "" {
+		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+			after = parsed
+		}
+	}
+	limit := 1000
+	if v := c.Query("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	out, err := h.games.ListGameReplayEvents(c.Request.Context(), gameID, authUser.ID, strings.EqualFold(authUser.Role, "admin"), authUser.IsSandboxed, after, limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrGameNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "game not found"})
+		case errors.Is(err, service.ErrGameForbidden):
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		case errors.Is(err, service.ErrInvalidGameInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch game replay"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"events": out})
 }
 
 // ListGames godoc

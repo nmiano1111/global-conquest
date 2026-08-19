@@ -9,6 +9,7 @@ import {
   AdminPage,
   AppShell,
   GamePage,
+  GameReplayPage,
   LeaderboardPage,
   LobbyPage,
   LoginPage,
@@ -97,6 +98,17 @@ const gameRoute = createRoute({
   component: GamePage,
 });
 
+// A separate route (not a mode toggled within GamePage) so the replay
+// view is a fully distinct component tree from the live game: it never
+// mounts the action-submission panel, never subscribes to the live
+// game_state_updated socket channel, and never shares GamePage's `game`
+// state slot. See project-docs/game_replay/00_Game_Replay_Design.md.
+const gameReplayRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/game/$gameID/replay",
+  component: GameReplayPage,
+});
+
 const leaderboardRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/leaderboard",
@@ -118,7 +130,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   signupRoute,
-  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, adminRoute]),
+  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, gameReplayRoute, adminRoute]),
 ]);
 
 export const router = createRouter({

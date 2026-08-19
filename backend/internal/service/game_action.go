@@ -87,6 +87,7 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 		ActionTerritory: out.ActionTerritory,
 		ActionFrom:      out.ActionFrom,
 		ActionTo:        out.ActionTo,
+		ReplayAvailable: out.ReplayAvailable,
 		Event: func() *game.GameEventMessage {
 			if out.Event == nil {
 				return nil
