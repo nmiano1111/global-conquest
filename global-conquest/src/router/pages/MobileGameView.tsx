@@ -90,7 +90,7 @@ function symbolIcon(s: string) {
 export function MobileGameView(props: MobileGameViewProps) {
   const {
     game, loading, error, actionError, chatMessages, eventMessages,
-    chatDraft, chatError, wsStatus,
+    chatDraft, chatError, wsStatus, gameID,
     phase, phaseMode, meIndex, isMyTurn,
     players, viewingUserIDs, playerColors, territoryState, myCards, selectedCardIndices,
     mySetupArmies, nextTradeBonus, pendingReinforcements, occupyRequirement,
@@ -663,6 +663,17 @@ export function MobileGameView(props: MobileGameViewProps) {
             className={`h-2 w-2 rounded-full ${wsStatus === "connected" ? "bg-emerald-400" : "bg-rose-400"}`}
             title={wsStatus}
           />
+          {game?.replayAvailable ? (
+            <Link
+              to="/app/game/$gameID/replay"
+              params={{ gameID }}
+              className="shrink-0 rounded-lg bg-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-300 active:bg-slate-600"
+              aria-label="Watch replay"
+              title="Watch replay"
+            >
+              ▶
+            </Link>
+          ) : null}
           <button
             type="button"
             onClick={onToggleDesktop}
