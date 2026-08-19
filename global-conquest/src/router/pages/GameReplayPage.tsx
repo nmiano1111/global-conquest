@@ -6,6 +6,7 @@ import { GameMap } from "../../map/GameMap";
 import { buttonGhostClass, buttonPrimaryClass } from "./styles";
 import { MAP_PLAYER_COLORS, PHASE_BADGE_CLASS, PHASE_LABELS, type GameEventMessage } from "./gameShared";
 import { applyGameStateUpdate, type GameStateUpdateResult } from "./applyGameStateUpdate";
+import { MobileGameReplayView } from "./MobileGameReplayView";
 
 // Playback speed presets, in ms between steps. "Instant" (0) still steps
 // one action at a time rather than jumping straight to the end, so the
@@ -40,6 +41,20 @@ export function GameReplayPage() {
   const [stepIndex, setStepIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speedIdx, setSpeedIdx] = useState(1);
+  // Shares GamePage's "gc.mobile.ui" preference — a user who's set up
+  // mobile view for live play should land in the mobile replay view too,
+  // and the toggle here carries back the other way.
+  const [mobileUI, setMobileUI] = useState<boolean>(() => {
+    const stored = localStorage.getItem("gc.mobile.ui");
+    if (stored !== null) return stored === "true";
+    return typeof window !== "undefined" && window.innerWidth < 768;
+  });
+  const toggleMobileUI = () => {
+    setMobileUI((prev) => {
+      localStorage.setItem("gc.mobile.ui", String(!prev));
+      return !prev;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +172,65 @@ export function GameReplayPage() {
 
   const phase = current?.nextGame.phase ?? "";
 
+  const jumpToStart = () => {
+    setPlaying(false);
+    setStepIndex(0);
+  };
+  const stepBack = () => {
+    setPlaying(false);
+    setStepIndex((i) => Math.max(0, i - 1));
+  };
+  const togglePlay = () => setPlaying((p) => !p);
+  const stepForward = () => {
+    setPlaying(false);
+    setStepIndex((i) => Math.min(lastIndex, i + 1));
+  };
+  const jumpToEnd = () => {
+    setPlaying(false);
+    setStepIndex(lastIndex);
+  };
+  const scrubTo = (i: number) => {
+    setPlaying(false);
+    setStepIndex(i);
+  };
+
+  if (mobileUI) {
+    return (
+      <MobileGameReplayView
+        gameID={gameID}
+        game={current?.nextGame ?? seedGame}
+        loading={loading}
+        error={error}
+        phase={phase}
+        stepIndex={clampedIndex}
+        totalSteps={steps.length}
+        actorName={actorName}
+        actionType={currentEntry?.actionType ?? ""}
+        diceResult={current?.diceResult ?? null}
+        visibleEvents={visibleEvents}
+        eventColorByActorID={eventColorByActorID}
+        playing={playing}
+        speedLabel={SPEEDS[speedIdx].label}
+        speedOptions={SPEEDS.map((s, i) => ({ label: s.label, idx: i }))}
+        onSetSpeedIdx={setSpeedIdx}
+        onTogglePlay={togglePlay}
+        onJumpStart={jumpToStart}
+        onStepBack={stepBack}
+        onStepForward={stepForward}
+        onJumpEnd={jumpToEnd}
+        onScrub={scrubTo}
+        canStepBack={steps.length > 0 && clampedIndex > 0}
+        canStepForward={steps.length > 0 && clampedIndex < lastIndex}
+        highlightedTerritories={highlightedTerritories}
+        recentCombat={recentCombatTerritories}
+        recentCapture={recentCaptureTerritories}
+        playerColors={playerColors}
+        onToggleDesktop={toggleMobileUI}
+        currentEntry={currentEntry}
+      />
+    );
+  }
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
       <section className="grid gap-4">
@@ -169,6 +243,9 @@ export function GameReplayPage() {
             <span className="rounded-full bg-gc-surface-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gc-muted">
               Watching replay
             </span>
+            <button className={buttonGhostClass} type="button" onClick={toggleMobileUI}>
+              Mobile View
+            </button>
             <Link className={buttonGhostClass} to="/app/game/$gameID" params={{ gameID }}>
               ← Back to game
             </Link>
@@ -232,63 +309,33 @@ export function GameReplayPage() {
             max={Math.max(0, lastIndex)}
             value={clampedIndex}
             disabled={steps.length === 0}
-            onChange={(e) => {
-              setPlaying(false);
-              setStepIndex(Number(e.target.value));
-            }}
+            onChange={(e) => scrubTo(Number(e.target.value))}
             className="w-full"
           />
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              className={buttonGhostClass}
-              type="button"
-              disabled={steps.length === 0}
-              onClick={() => {
-                setPlaying(false);
-                setStepIndex(0);
-              }}
-            >
+            <button className={buttonGhostClass} type="button" disabled={steps.length === 0} onClick={jumpToStart}>
               ⏮ Start
             </button>
             <button
               className={buttonGhostClass}
               type="button"
               disabled={steps.length === 0 || clampedIndex === 0}
-              onClick={() => {
-                setPlaying(false);
-                setStepIndex((i) => Math.max(0, i - 1));
-              }}
+              onClick={stepBack}
             >
               ◀ Step
             </button>
-            <button
-              className={buttonPrimaryClass}
-              type="button"
-              disabled={steps.length === 0}
-              onClick={() => setPlaying((p) => !p)}
-            >
+            <button className={buttonPrimaryClass} type="button" disabled={steps.length === 0} onClick={togglePlay}>
               {playing ? "⏸ Pause" : "▶ Play"}
             </button>
             <button
               className={buttonGhostClass}
               type="button"
               disabled={steps.length === 0 || clampedIndex >= lastIndex}
-              onClick={() => {
-                setPlaying(false);
-                setStepIndex((i) => Math.min(lastIndex, i + 1));
-              }}
+              onClick={stepForward}
             >
               Step ▶
             </button>
-            <button
-              className={buttonGhostClass}
-              type="button"
-              disabled={steps.length === 0}
-              onClick={() => {
-                setPlaying(false);
-                setStepIndex(lastIndex);
-              }}
-            >
+            <button className={buttonGhostClass} type="button" disabled={steps.length === 0} onClick={jumpToEnd}>
               End ⏭
             </button>
             <select
