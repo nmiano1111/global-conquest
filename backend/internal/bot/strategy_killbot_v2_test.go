@@ -325,3 +325,73 @@ func TestKillbotV2UsesGameBotTuningSnapshotOverDefault(t *testing.T) {
 		t.Fatalf("expected a 1.1x snapshot to commit toward Brazil (25 armies > 1.1*20=22), got %+v", tunedCmd)
 	}
 }
+
+// TestKillbotV2ShouldGoHogWildFiresInTwoPlayerStandoff confirms the
+// endgame stalemate-breaker (point 8): pi's army share here is deliberately
+// modest -- not a majority, and nowhere near the flat per-territory cap --
+// so neither of the other two hogwild triggers can explain a true result;
+// only the "2 players remain" check can.
+func TestKillbotV2ShouldGoHogWildFiresInTwoPlayerStandoff(t *testing.T) {
+	g, _ := newTestGame(t)
+	pi := 0
+	g.Players[2].Eliminated = true // only pi and player 1 remain
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: pi, Armies: 10}
+
+	if !killbotV2ShouldGoHogWild(g, pi, killbotV2HogWildArmiesPerTerritory) {
+		t.Fatalf("expected hogwild once only 2 players remain, regardless of army share")
+	}
+}
+
+// TestKillbotV2ShouldGoHogWildDoesNotFireWithThreePlayersAlive is the
+// contrast case: the identical army distribution, but all 3 players are
+// still alive, confirming the new trigger doesn't fire prematurely in an
+// ordinary mid-game state.
+func TestKillbotV2ShouldGoHogWildDoesNotFireWithThreePlayersAlive(t *testing.T) {
+	g, _ := newTestGame(t)
+	pi := 0
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: pi, Armies: 10}
+
+	if killbotV2ShouldGoHogWild(g, pi, killbotV2HogWildArmiesPerTerritory) {
+		t.Fatalf("expected no hogwild with 3 players still alive and a modest, non-majority army share")
+	}
+}
+
+// TestKillbotV2EndgameHogWildAttacksEvenWithoutWinProbabilityFavor is the
+// decisive end-to-end check: not just that killbotV2ShouldGoHogWild
+// returns true in a 2-player standoff, but that attack() actually reaches
+// and fires the resulting attack -- with no kill committed (the common
+// case in a genuinely close standoff, per the doc comment above) and a
+// 2-vs-1 matchup that risk.ForecastAttack rates well under 50% (a single
+// do-or-die die roll, favoring the defender on ties: ~41.7%). Before this
+// fix, attack() only reached killbotV2ShouldGoHogWild inside the
+// kill-committed branch, and even then passed the backer's
+// win-probability comparator into attackAsMuchAsPossible -- either gap
+// alone would have made this attack unreachable.
+func TestKillbotV2EndgameHogWildAttacksEvenWithoutWinProbabilityFavor(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseAttack
+	pi := 0
+	g.Players[2].Eliminated = true // only pi and player 1 remain
+
+	g.Territories["Alaska"] = risk.TerritoryState{Owner: pi, Armies: 2}
+	g.Territories["Northwest Territory"] = risk.TerritoryState{Owner: pi, Armies: 1}
+	g.Territories["Alberta"] = risk.TerritoryState{Owner: pi, Armies: 1}
+	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 1}
+
+	if !killbotV2ShouldGoHogWild(g, pi, killbotV2HogWildArmiesPerTerritory) {
+		t.Fatalf("expected hogwild in this 2-player standoff")
+	}
+	forecast := risk.ForecastAttack(2, 1)
+	if forecast.WinProbability >= killbotV2MinAttackWinProbability {
+		t.Fatalf("test setup invalid: expected a 2v1 attack to be win-probability-unfavored, got %.3f", forecast.WinProbability)
+	}
+
+	v2 := NewKillbotV2Strategy()
+	cmd, _, err := v2.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("NextCommand: %v", err)
+	}
+	if cmd.Action != ActionAttack || cmd.From != "Alaska" || cmd.To != "Kamchatka" {
+		t.Fatalf("expected the endgame hogwild attack Alaska->Kamchatka despite unfavorable win probability, got %+v", cmd)
+	}
+}

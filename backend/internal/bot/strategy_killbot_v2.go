@@ -85,15 +85,17 @@ import (
 //     unchanged by this threading.
 //  6. Lower kill-hunting advantage ratio (killbotV2KillAdvantageRatio):
 //     killTarget's default 2x requirement (killTargetDefaultAdvantageRatio,
-//     geometry.go -- StrategyKillbotV1 still uses it unchanged) is a high
-//     bar in a real multiplayer game; combined with
-//     targetHasSingleReachableCluster's single-cluster requirement, it
-//     means kill-hunting engages rarely, and games grind on through
-//     BetterPixie's cautious economic-growth behavior far longer than
-//     necessary (observed: ~35% of attacks were on an active kill route
-//     across a 150-game tournament sample, with median ~18 card sets
-//     traded before a 6-player game resolved). KillbotV2Strategy commits
-//     to a kill-hunt at a lower advantage ratio so it engages more often.
+//     geometry.go -- StrategyKillbotV1 still uses it unchanged) is a
+//     high bar in a real multiplayer game. Lowered to 1.5x so kill-hunting
+//     commits more readily -- though follow-up measurement (see point 8's
+//     doc comment) found neither this ratio nor
+//     targetHasSingleReachableCluster's cluster-size cap were actually
+//     the long-game bottleneck: sweeping the cap from 20 up to 42
+//     (effectively uncapped) across a 150-game tournament left avg turns
+//     and avg card sets traded flat to very slightly worse. Kept anyway
+//     as a real, harmless improvement (verified via
+//     TestKillbotV2CommitsAtLowerAdvantageRatioThanV1), just not the fix
+//     for game length it was originally guessed to be.
 //  7. Every threshold above is admin-tunable (effectiveBotTuning,
 //     tuning.go): KillbotV2Strategy reads risk.Game.BotTuning (snapshotted
 //     once at game creation from the admin's current config, see
@@ -104,6 +106,36 @@ import (
 //     backer (win-probability-configured, point 5) can no longer be a
 //     fixed field either -- backerFor builds one fresh per decision from
 //     whichever tuning that specific game was created with.
+//  8. Endgame stalemate breaker (killbotV2ShouldGoHogWild's alive-count
+//     check, plus attack()'s restructuring below): shouldGoHogWild's
+//     `own > total-own` trigger requires an outright majority of every
+//     army on the board -- a bar two roughly matched survivors in a
+//     late-game 1v1 can never clear, no matter how long they grind, since
+//     neither ever pulls decisively ahead while both keep reinforcing
+//     every turn. Measured directly: a 300-game mixed-persona tournament
+//     had 83 games (27.7%) fail to resolve within the safety limits at
+//     all, and 58 of those 83 (70%) were stuck in exactly this shape --
+//     two survivors, thousands of combat rolls, hundreds of captures
+//     traded back and forth, no elimination. Not killbot-v2-specific
+//     either (one observed standoff was quo-v1 vs. pixie-v1), but
+//     killbot-v2 is the only persona free to fix its own hogwild trigger
+//     without touching the shared shouldGoHogWild every other persona
+//     still uses unmodified. killbotV2ShouldGoHogWild now also triggers
+//     once few enough rivals remain (killbotV2EndgameAliveThreshold)
+//     regardless of army share -- but two follow-on fixes in attack()
+//     were needed before this actually helped: the check was originally
+//     only reached inside the "kill committed" branch, unreachable in
+//     exactly the standoffs it targets (a close 1v1 rarely has an active
+//     kill commitment at all), and attackAsMuchAsPossible was still being
+//     called with the win-probability comparator, which silently defeats
+//     hogwild's whole point of attacking aggressively despite normal
+//     caution. Fixed: the check now runs unconditionally, and passes
+//     rawArmyComparator. Re-measured after both fixes: killbot-v2's win
+//     rate in that same mixed-persona tournament rose from 58.8% to
+//     62.6%, and killbot-v2-involved 2-player standoffs dropped from
+//     roughly 50 to 16 (the remaining ~28 of the tournament's 70
+//     still-failing games are standoffs between two *other* personas,
+//     outside what a killbot-v2-only fix can reach).
 const StrategyKillbotV2 = "killbot-v2"
 
 // killbotV2HogWildArmiesPerTerritory is DefaultBotTuning's
@@ -112,6 +144,16 @@ const StrategyKillbotV2 = "killbot-v2"
 // StrategyKillbotV1's flat 1500 cap, near-exactly -- while scaling with
 // the board's actual territory count for custom maps.
 const killbotV2HogWildArmiesPerTerritory = 36
+
+// killbotV2EndgameAliveThreshold is killbotV2ShouldGoHogWild's endgame
+// stalemate-breaker threshold (point 8 above): once this many or fewer
+// players remain in the game, killbot-v2 goes hogwild regardless of army
+// share -- a 2-player standoff was, by a wide margin, the dominant shape
+// of the 27.7% of a mixed-persona tournament sample that never resolved
+// at all. 2 targets that dominant case directly without reaching into
+// earlier-game states (3+ players still alive) that weren't observed to
+// be a problem.
+const killbotV2EndgameAliveThreshold = 2
 
 // killbotV2MinAttackWinProbability is DefaultBotTuning's
 // MinAttackWinProbability: the minimum risk.ForecastAttack win probability
@@ -243,7 +285,11 @@ func (k *KillbotV2Strategy) guardPlacement(g *risk.Game, playerID string, cmd Co
 
 // killbotV2ShouldGoHogWild is shouldGoHogWild (strategy_cluster.go) with
 // its absolute 1500-army cap replaced by armiesPerTerritory times the
-// board's actual territory count -- see doc comment above.
+// board's actual territory count (point 2), plus an endgame
+// stalemate-breaker (point 8): once killbotV2EndgameAliveThreshold or
+// fewer players remain, hogwild fires regardless of army share, since
+// shouldGoHogWild's own `own > total-own` majority requirement can never
+// be satisfied by either side of a genuinely close standoff.
 func killbotV2ShouldGoHogWild(g *risk.Game, pi int, armiesPerTerritory int) bool {
 	total, own := 0, 0
 	for _, t := range g.Board.Order {
@@ -256,16 +302,36 @@ func killbotV2ShouldGoHogWild(g *risk.Game, pi int, armiesPerTerritory int) bool
 	if own > total-own {
 		return true
 	}
-	return own > len(g.Board.Order)*armiesPerTerritory
+	if own > len(g.Board.Order)*armiesPerTerritory {
+		return true
+	}
+
+	alive := 0
+	for _, p := range g.Players {
+		if !p.Eliminated {
+			alive++
+		}
+	}
+	return alive <= killbotV2EndgameAliveThreshold
 }
 
-// attack mirrors KillbotStrategy.attack (strategy_killbot.go), with three
+// attack mirrors KillbotStrategy.attack (strategy_killbot.go), with four
 // changes: a real win-probability check in place of the cost check
-// (point 4), killbotV2ShouldGoHogWild's board-relative threshold in place
-// of shouldGoHogWild's flat cap (point 2), and falling through to the
-// backer's normal attack() (rather than unconditionally ending the attack
-// phase) once a committed kill route can't fire this turn and hogwild
-// doesn't apply either (point 3) -- see doc comment above.
+// (point 4), and falling through to the backer's normal attack() (rather
+// than unconditionally ending the attack phase) once a committed kill
+// route can't fire this turn (point 3) -- see doc comment above. The
+// remaining two concern killbotV2ShouldGoHogWild specifically (points 2
+// and 8): it is now checked unconditionally, not just while a kill is
+// actively committed -- BetterPixieStrategy.attack() (backer.attack,
+// reached whenever no kill is committed, or a committed one's route can't
+// fire this turn either) calls the shared, unmodified shouldGoHogWild
+// internally, which the endgame stalemate-breaker (point 8) specifically
+// needs to bypass, so checking only inside the "committed" branch left it
+// unreachable in exactly the standoffs it targets. And it now attacks
+// with rawArmyComparator, not the backer's win-probability comparator:
+// hogwild exists to force a resolution by attacking aggressively despite
+// normal caution, which win-probability-gating attackAsMuchAsPossible's
+// own candidate search would silently defeat.
 func (k *KillbotV2Strategy) attack(g *risk.Game, playerID string) (Command, error) {
 	tuning := effectiveBotTuning(g)
 	pi := playerIndex(g, playerID)
@@ -281,10 +347,11 @@ func (k *KillbotV2Strategy) attack(g *risk.Game, playerID string) (Command, erro
 				}
 			}
 		}
-		if killbotV2ShouldGoHogWild(g, pi, tuning.HogwildArmiesPerTerritory) {
-			if cmd, ok := attackAsMuchAsPossible(g, pi, backer.cmp); ok {
-				return cmd, nil
-			}
+	}
+
+	if killbotV2ShouldGoHogWild(g, pi, tuning.HogwildArmiesPerTerritory) {
+		if cmd, ok := attackAsMuchAsPossible(g, pi, rawArmyComparator); ok {
+			return cmd, nil
 		}
 	}
 
