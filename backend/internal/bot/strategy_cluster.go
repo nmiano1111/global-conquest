@@ -225,9 +225,9 @@ func (c *ClusterStrategy) attack(g *risk.Game, playerID string) (Command, error)
 	}
 
 	stages := []func(*risk.Game, int, risk.Territory) (Command, bool){
-		attackEasyExpand,
-		attackFillOut,
-		attackConsolidate,
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackEasyExpand(g, pi, root, rawArmyComparator) },
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackFillOut(g, pi, root, rawArmyComparator) },
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackConsolidate(g, pi, root, rawArmyComparator) },
 		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackSplitUp(g, pi, root, 1.2) },
 	}
 	for _, stage := range stages {
@@ -237,7 +237,7 @@ func (c *ClusterStrategy) attack(g *risk.Game, playerID string) (Command, error)
 	}
 
 	if shouldGoHogWild(g, pi) {
-		if cmd, ok := attackAsMuchAsPossible(g, pi); ok {
+		if cmd, ok := attackAsMuchAsPossible(g, pi, rawArmyComparator); ok {
 			return cmd, nil
 		}
 	}
@@ -245,15 +245,15 @@ func (c *ClusterStrategy) attack(g *risk.Game, playerID string) (Command, error)
 }
 
 // attackEasyExpand attacks a clusterBorder territory's sole enemy
-// neighbor, if it can beat it -- Lux's attackEasyExpand.
-func attackEasyExpand(g *risk.Game, pi int, root risk.Territory) (Command, bool) {
+// neighbor, if cmp favors it -- Lux's attackEasyExpand.
+func attackEasyExpand(g *risk.Game, pi int, root risk.Territory, cmp attackComparator) (Command, bool) {
 	for _, border := range clusterBorder(g, root, pi) {
 		if enemyNeighborCount(g, border, pi) != 1 {
 			continue
 		}
 		enemy, _ := weakestEnemyNeighbor(g, border, pi) // the sole enemy neighbor
 		src := g.Territories[border]
-		if src.Armies > g.Territories[enemy].Armies {
+		if cmp(src.Armies, g.Territories[enemy].Armies) {
 			return Command{Action: ActionAttack, From: string(border), To: string(enemy), AttackerDice: min(3, src.Armies-1)}, true
 		}
 	}
@@ -262,9 +262,9 @@ func attackEasyExpand(g *risk.Game, pi int, root risk.Territory) (Command, bool)
 
 // attackFillOut attacks an enemy "island" -- a non-owned neighbor of a
 // clusterBorder territory that has zero non-pi neighbors of its own --
-// that the border can beat, killing little pockets fully surrounded by
-// pi's territory -- Lux's attackFillOut.
-func attackFillOut(g *risk.Game, pi int, root risk.Territory) (Command, bool) {
+// that cmp favors, killing little pockets fully surrounded by pi's
+// territory -- Lux's attackFillOut.
+func attackFillOut(g *risk.Game, pi int, root risk.Territory, cmp attackComparator) (Command, bool) {
 	for _, border := range clusterBorder(g, root, pi) {
 		src := g.Territories[border]
 		for _, other := range g.Board.Order {
@@ -274,7 +274,7 @@ func attackFillOut(g *risk.Game, pi int, root risk.Territory) (Command, bool) {
 			if g.Territories[other].Owner == pi || enemyNeighborCount(g, other, pi) != 0 {
 				continue
 			}
-			if src.Armies > g.Territories[other].Armies {
+			if cmp(src.Armies, g.Territories[other].Armies) {
 				return Command{Action: ActionAttack, From: string(border), To: string(other), AttackerDice: min(3, src.Armies-1)}, true
 			}
 		}
@@ -284,14 +284,14 @@ func attackFillOut(g *risk.Game, pi int, root risk.Territory) (Command, bool) {
 
 // attackConsolidate finds an enemy territory bordered by two or more
 // clusterBorder territories that each have it as their sole enemy
-// neighbor, and whose combined armies beat it, then attacks from the
+// neighbor, and whose combined armies cmp favors, then attacks from the
 // first such contributor with more than one army -- Lux's
 // attackConsolidate. Lux gates the whole multi-source sequence on the
 // combined-armies check once, upfront; this re-validates it on every call
 // instead, since state is reloaded fresh each time -- more conservative
 // than Lux (it can abandon a partly-executed merge if losses make it no
 // longer profitable), not less capable.
-func attackConsolidate(g *risk.Game, pi int, root risk.Territory) (Command, bool) {
+func attackConsolidate(g *risk.Game, pi int, root risk.Territory, cmp attackComparator) (Command, bool) {
 	border := clusterBorder(g, root, pi)
 	for _, b := range border {
 		if enemyNeighborCount(g, b, pi) != 1 {
@@ -311,7 +311,7 @@ func attackConsolidate(g *risk.Game, pi int, root risk.Territory) (Command, bool
 				combined += g.Territories[other].Armies
 			}
 		}
-		if len(contributors) < 2 || combined <= g.Territories[enemy].Armies {
+		if len(contributors) < 2 || !cmp(combined, g.Territories[enemy].Armies) {
 			continue
 		}
 		for _, src := range contributors {
@@ -378,13 +378,18 @@ func shouldGoHogWild(g *risk.Game, pi int) bool {
 	return own > total-own || own > 1500
 }
 
-// attackAsMuchAsPossible broadens easy-expand/fill-out/consolidate, then a
-// relaxed (0.01x) split-up, to every territory pi owns as its own root --
-// Lux's attackAsMuchAsPossible, which does the same via tripleAttackPack
-// and attackSplitUp(0.01) over a full PlayerIterator.
-func attackAsMuchAsPossible(g *risk.Game, pi int) (Command, bool) {
+// attackAsMuchAsPossible broadens easy-expand/fill-out/consolidate (via
+// cmp), then a relaxed (0.01x) split-up, to every territory pi owns as
+// its own root -- Lux's attackAsMuchAsPossible, which does the same via
+// tripleAttackPack and attackSplitUp(0.01) over a full PlayerIterator.
+// The trailing attackSplitUp(0.01) call deliberately does not receive cmp
+// -- see attackComparator's doc comment (geometry.go) for why that
+// specific fallback stays odds-blind by design.
+func attackAsMuchAsPossible(g *risk.Game, pi int, cmp attackComparator) (Command, bool) {
 	for _, stage := range []func(*risk.Game, int, risk.Territory) (Command, bool){
-		attackEasyExpand, attackFillOut, attackConsolidate,
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackEasyExpand(g, pi, root, cmp) },
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackFillOut(g, pi, root, cmp) },
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackConsolidate(g, pi, root, cmp) },
 	} {
 		for _, t := range g.Board.Order {
 			if g.Territories[t].Owner != pi {

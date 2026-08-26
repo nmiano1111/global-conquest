@@ -251,7 +251,7 @@ func TestAttackAsMuchAsPossibleFindsAMatchOutsideTheRootTerritory(t *testing.T) 
 	g.Territories["South Africa"] = risk.TerritoryState{Owner: 0, Armies: 1}
 	g.Territories["East Africa"] = risk.TerritoryState{Owner: 1, Armies: 1}
 
-	cmd, ok := attackAsMuchAsPossible(g, 0)
+	cmd, ok := attackAsMuchAsPossible(g, 0, rawArmyComparator)
 	if !ok {
 		t.Fatalf("expected a match to be found")
 	}

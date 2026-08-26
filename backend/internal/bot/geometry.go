@@ -17,6 +17,45 @@ import (
 // (Pixie, Quo, Killbot, Boscoe) are expected to extend this file further as
 // each one needs new queries.
 
+// attackComparator decides whether attackerArmies is a favorable enough
+// attacking force against a territory defended by defenderArmies. The
+// shared attack-stage helpers below (attackEasyExpand, attackFillOut,
+// attackConsolidate, attackInContinent, betterPixieAttackInContinent's
+// pass-1 check, attackAsMuchAsPossible) take one explicitly instead of
+// hard-coding `attackerArmies > defenderArmies`, so a persona can supply
+// risk.ForecastAttack-based win-probability odds instead of a raw
+// army-count comparison without forking the helper itself. Deliberately
+// not threaded into every attack-stage helper: attackSplitUp's ratio
+// scales a combined-enemies threshold (and its 0.01 variant inside
+// attackAsMuchAsPossible is Lux's intentionally-reckless "attack almost
+// anything" hogwild fallback -- probability-gating it would defeat its
+// purpose), takeOutContinentCheck's *2 is a deliberate strategic safety
+// margin on an opportunistic move rather than an odds proxy, and
+// attackForCard ranks candidates by ratio rather than gating a single
+// yes/no decision -- none of these translate as a mechanical swap.
+type attackComparator func(attackerArmies, defenderArmies int) bool
+
+// rawArmyComparator is every existing persona's implicit comparator:
+// favor an attack whenever the attacker's army count exceeds the
+// defender's. Every constructor in this package that doesn't explicitly
+// opt into a different comparator uses this (directly, or via
+// BetterPixieStrategy's default), so their live behavior is unchanged by
+// comparator threading.
+func rawArmyComparator(attackerArmies, defenderArmies int) bool {
+	return attackerArmies > defenderArmies
+}
+
+// winProbabilityComparator returns an attackComparator backed by
+// risk.ForecastAttack's exact dice-probability math
+// (internal/risk/combat_odds.go) instead of a raw army-count comparison:
+// favor an attack only once the forecasted win probability meets
+// minWinProbability.
+func winProbabilityComparator(minWinProbability float64) attackComparator {
+	return func(attackerArmies, defenderArmies int) bool {
+		return risk.ForecastAttack(attackerArmies, defenderArmies).WinProbability >= minWinProbability
+	}
+}
+
 // enemyNeighborCount counts the distinct territories adjacent to t that are
 // not owned by pi -- Lux's Country.getNumberEnemyNeighbors(), a territory
 // count, not an army sum (contrast strategy_basic.go's adjacentEnemyArmies,

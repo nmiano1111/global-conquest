@@ -164,9 +164,9 @@ func (t *TurtleStrategy) attack(g *risk.Game, playerID string) (Command, error) 
 	}
 
 	stages := []func(*risk.Game, int, risk.Territory) (Command, bool){
-		attackEasyExpand,
-		attackFillOut,
-		attackConsolidate,
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackEasyExpand(g, pi, root, rawArmyComparator) },
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackFillOut(g, pi, root, rawArmyComparator) },
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackConsolidate(g, pi, root, rawArmyComparator) },
 		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackSplitUp(g, pi, root, 1.2) },
 	}
 	for _, stage := range stages {

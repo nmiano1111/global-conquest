@@ -188,7 +188,7 @@ func (p *PixieStrategy) attack(g *risk.Game, playerID string) (Command, error) {
 		if !wanted[cont] {
 			continue
 		}
-		if cmd, ok := attackInContinent(g, pi, cont); ok {
+		if cmd, ok := attackInContinent(g, pi, cont, rawArmyComparator); ok {
 			return cmd, nil
 		}
 	}
@@ -196,7 +196,7 @@ func (p *PixieStrategy) attack(g *risk.Game, playerID string) (Command, error) {
 		return cmd, nil
 	}
 	if shouldGoHogWild(g, pi) {
-		if cmd, ok := attackAsMuchAsPossible(g, pi); ok {
+		if cmd, ok := attackAsMuchAsPossible(g, pi, rawArmyComparator); ok {
 			return cmd, nil
 		}
 	}
@@ -204,9 +204,9 @@ func (p *PixieStrategy) attack(g *risk.Game, playerID string) (Command, error) {
 }
 
 // attackInContinent finds the first enemy-owned territory in cont with an
-// owned neighbor that outnumbers it, attacking there -- Lux's
+// owned neighbor cmp favors attacking, attacking there -- Lux's
 // Pixie.attackInContinent (outnumberBy=1: any edge at all qualifies).
-func attackInContinent(g *risk.Game, pi int, cont risk.Continent) (Command, bool) {
+func attackInContinent(g *risk.Game, pi int, cont risk.Continent, cmp attackComparator) (Command, bool) {
 	for _, t := range g.Board.Continents[cont].Territories {
 		if g.Territories[t].Owner == pi {
 			continue
@@ -219,7 +219,7 @@ func attackInContinent(g *risk.Game, pi int, cont risk.Continent) (Command, bool
 			if src.Owner != pi {
 				continue
 			}
-			if src.Armies > g.Territories[t].Armies {
+			if cmp(src.Armies, g.Territories[t].Armies) {
 				return Command{Action: ActionAttack, From: string(other), To: string(t), AttackerDice: min(3, src.Armies-1)}, true
 			}
 		}

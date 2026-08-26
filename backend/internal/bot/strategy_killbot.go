@@ -155,7 +155,7 @@ func (k *KillbotStrategy) attack(g *risk.Game, playerID string) (Command, error)
 			}
 		}
 		if shouldGoHogWild(g, pi) {
-			if cmd, ok := attackAsMuchAsPossible(g, pi); ok {
+			if cmd, ok := attackAsMuchAsPossible(g, pi, rawArmyComparator); ok {
 				return cmd, nil
 			}
 		}

@@ -21,10 +21,34 @@ import (
 const StrategyBetterPixieV1 = "betterpixie-v1"
 
 // BetterPixieStrategy implements StrategyBetterPixieV1.
-type BetterPixieStrategy struct{}
+type BetterPixieStrategy struct {
+	// cmp decides every attack-stage go/no-go this strategy makes (see
+	// attackComparator's doc comment, geometry.go). Defaults to
+	// rawArmyComparator via NewBetterPixieStrategy, matching this
+	// strategy's original, unconditional behavior; WithAttackComparator
+	// overrides it for callers (KillbotV2Strategy) that want
+	// risk.ForecastAttack-based odds instead.
+	cmp attackComparator
+}
 
-// NewBetterPixieStrategy creates a BetterPixieStrategy.
-func NewBetterPixieStrategy() *BetterPixieStrategy { return &BetterPixieStrategy{} }
+// BetterPixieOption configures a BetterPixieStrategy at construction.
+type BetterPixieOption func(*BetterPixieStrategy)
+
+// WithAttackComparator overrides the attackComparator NewBetterPixieStrategy
+// otherwise defaults to rawArmyComparator.
+func WithAttackComparator(cmp attackComparator) BetterPixieOption {
+	return func(bp *BetterPixieStrategy) { bp.cmp = cmp }
+}
+
+// NewBetterPixieStrategy creates a BetterPixieStrategy. With no options,
+// its live behavior is unchanged from before comparator threading existed.
+func NewBetterPixieStrategy(opts ...BetterPixieOption) *BetterPixieStrategy {
+	bp := &BetterPixieStrategy{cmp: rawArmyComparator}
+	for _, opt := range opts {
+		opt(bp)
+	}
+	return bp
+}
 
 // NextCommand dispatches on g.Phase, mirroring PixieStrategy/ClusterStrategy's
 // shape. It always returns a zero-value Explanation, since BetterPixie has
@@ -378,7 +402,7 @@ func (bp *BetterPixieStrategy) occupy(g *risk.Game, playerID string) (Command, e
 // (adjacentEnemiesInWantedContinents == 1); pass 2 is plain Pixie's own
 // "any owned neighbor outnumbers the target" scan, textually identical
 // in the Lux source, so reused directly rather than reimplemented.
-func betterPixieAttackInContinent(g *risk.Game, pi int, cont risk.Continent, wanted map[risk.Continent]bool) (Command, bool) {
+func betterPixieAttackInContinent(g *risk.Game, pi int, cont risk.Continent, wanted map[risk.Continent]bool, cmp attackComparator) (Command, bool) {
 	enemyCount := float64(enemyArmiesInContinent(g, cont, pi)) * 1.3
 	for _, t := range g.Board.Continents[cont].Territories {
 		if g.Territories[t].Owner != pi {
@@ -398,12 +422,12 @@ func betterPixieAttackInContinent(g *risk.Game, pi int, cont risk.Continent, wan
 		}
 		for other := range g.Board.Adjacent[t] {
 			dst := g.Territories[other]
-			if dst.Owner != pi && wanted[tc[other]] && src.Armies > dst.Armies {
+			if dst.Owner != pi && wanted[tc[other]] && cmp(src.Armies, dst.Armies) {
 				return Command{Action: ActionAttack, From: string(t), To: string(other), AttackerDice: min(3, src.Armies-1)}, true
 			}
 		}
 	}
-	return attackInContinent(g, pi, cont)
+	return attackInContinent(g, pi, cont, cmp)
 }
 
 // soleOwnerOfContinent returns the player who owns every territory in
@@ -468,7 +492,7 @@ func (bp *BetterPixieStrategy) attack(g *risk.Game, playerID string) (Command, e
 	wanted := betterPixieWantedContinents(g, pi, 0)
 	for _, cont := range continentOrder(g) {
 		if wanted[cont] {
-			if cmd, ok := betterPixieAttackInContinent(g, pi, cont, wanted); ok {
+			if cmd, ok := betterPixieAttackInContinent(g, pi, cont, wanted, bp.cmp); ok {
 				return cmd, nil
 			}
 		}
@@ -480,7 +504,7 @@ func (bp *BetterPixieStrategy) attack(g *risk.Game, playerID string) (Command, e
 		return cmd, nil
 	}
 	if shouldGoHogWild(g, pi) {
-		if cmd, ok := attackAsMuchAsPossible(g, pi); ok {
+		if cmd, ok := attackAsMuchAsPossible(g, pi, bp.cmp); ok {
 			return cmd, nil
 		}
 	}

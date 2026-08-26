@@ -67,6 +67,22 @@ import (
 //     used elsewhere in this package) against the real defending
 //     territory and require killbotV2MinAttackWinProbability before
 //     committing or firing.
+//  5. Win probability applied broadly, via a pluggable comparator, not
+//     just KillbotV2Strategy's own kill-route decision: the shared
+//     attack-stage helpers underneath the BetterPixie backer
+//     (attackEasyExpand, attackFillOut, attackConsolidate,
+//     attackInContinent, betterPixieAttackInContinent's pass-1 check, and
+//     attackAsMuchAsPossible) all take an attackComparator now
+//     (geometry.go) instead of hard-coding `attacker > defender`.
+//     KillbotV2Strategy constructs its own BetterPixieStrategy (the
+//     backer field below) via WithAttackComparator(winProbabilityComparator(...)),
+//     completely separate from the embedded KillbotStrategy's own
+//     raw-comparator backer -- so essentially every attack decision this
+//     strategy makes, not just the kill-hunting one, is win-probability
+//     aware. StrategyKillbotV1 and every other persona
+//     (Cluster/Quo/Boscoe/Pixie/Turtle/KillbotOld) pass rawArmyComparator
+//     explicitly at each of these call sites, so their live behavior is
+//     unchanged by this threading.
 const StrategyKillbotV2 = "killbot-v2"
 
 // killbotV2HogWildArmiesPerTerritory is killbotV2ShouldGoHogWild's
@@ -84,11 +100,21 @@ const killbotV2MinAttackWinProbability = 0.5
 // KillbotV2Strategy implements StrategyKillbotV2.
 type KillbotV2Strategy struct {
 	*KillbotStrategy
+	// backer is KillbotV2Strategy's own BetterPixieStrategy instance,
+	// configured with a win-probability attackComparator (point 5 above)
+	// -- deliberately separate from the embedded KillbotStrategy's own
+	// backer field (still on the default rawArmyComparator), which
+	// setupReinforce/occupy/fortify below still delegate to unchanged,
+	// since none of those phases make an attack-stage decision.
+	backer *BetterPixieStrategy
 }
 
 // NewKillbotV2Strategy creates a KillbotV2Strategy.
 func NewKillbotV2Strategy() *KillbotV2Strategy {
-	return &KillbotV2Strategy{KillbotStrategy: NewKillbotStrategy()}
+	return &KillbotV2Strategy{
+		KillbotStrategy: NewKillbotStrategy(),
+		backer:          NewBetterPixieStrategy(WithAttackComparator(winProbabilityComparator(killbotV2MinAttackWinProbability))),
+	}
 }
 
 // NextCommand dispatches on g.Phase, mirroring KillbotStrategy's own
@@ -153,7 +179,7 @@ func (k *KillbotV2Strategy) reinforce(g *risk.Game, playerID string) (Command, e
 		}
 	}
 
-	cmd, err := k.KillbotStrategy.backer.reinforce(g, playerID)
+	cmd, err := k.backer.reinforce(g, playerID)
 	if err != nil || cmd.Action != ActionPlaceReinforcement {
 		return cmd, err
 	}
@@ -218,11 +244,11 @@ func (k *KillbotV2Strategy) attack(g *risk.Game, playerID string) (Command, erro
 			}
 		}
 		if killbotV2ShouldGoHogWild(g, pi) {
-			if cmd, ok := attackAsMuchAsPossible(g, pi); ok {
+			if cmd, ok := attackAsMuchAsPossible(g, pi, k.backer.cmp); ok {
 				return cmd, nil
 			}
 		}
 	}
 
-	return k.KillbotStrategy.backer.attack(g, playerID)
+	return k.backer.attack(g, playerID)
 }

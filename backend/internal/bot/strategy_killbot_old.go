@@ -124,7 +124,7 @@ func (k *KillbotOldStrategy) attack(g *risk.Game, playerID string) (Command, err
 		if !wanted[cont] {
 			continue
 		}
-		if cmd, ok := attackInContinent(g, pi, cont); ok {
+		if cmd, ok := attackInContinent(g, pi, cont, rawArmyComparator); ok {
 			return cmd, nil
 		}
 	}
@@ -132,7 +132,7 @@ func (k *KillbotOldStrategy) attack(g *risk.Game, playerID string) (Command, err
 		return cmd, nil
 	}
 	if shouldGoHogWild(g, pi) {
-		if cmd, ok := attackAsMuchAsPossible(g, pi); ok {
+		if cmd, ok := attackAsMuchAsPossible(g, pi, rawArmyComparator); ok {
 			return cmd, nil
 		}
 	}

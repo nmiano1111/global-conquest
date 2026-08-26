@@ -107,7 +107,9 @@ func (q *QuoStrategy) attack(g *risk.Game, playerID string) (Command, error) {
 	}
 
 	for _, stage := range []func(*risk.Game, int, risk.Territory) (Command, bool){
-		attackEasyExpand, attackFillOut, attackConsolidate,
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackEasyExpand(g, pi, root, rawArmyComparator) },
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackFillOut(g, pi, root, rawArmyComparator) },
+		func(g *risk.Game, pi int, root risk.Territory) (Command, bool) { return attackConsolidate(g, pi, root, rawArmyComparator) },
 	} {
 		if cmd, ok := stage(g, pi, root); ok {
 			return cmd, nil
@@ -126,7 +128,7 @@ func (q *QuoStrategy) attack(g *risk.Game, playerID string) (Command, error) {
 		return cmd, nil
 	}
 	if shouldGoHogWild(g, pi) {
-		if cmd, ok := attackAsMuchAsPossible(g, pi); ok {
+		if cmd, ok := attackAsMuchAsPossible(g, pi, rawArmyComparator); ok {
 			return cmd, nil
 		}
 	}
