@@ -86,7 +86,8 @@ func main() {
 	strategies := bot.StrategyRegistry{
 		bot.StrategyBasicV1:   bot.NewBasicStrategy(),
 		bot.StrategyScoredV1:  bot.NewScoredStrategy(bot.DefaultWeights), // kept registered: existing in-progress games may already have bots persisted with this strategy
-		bot.StrategyKillbotV1: bot.NewKillbotStrategy(),
+		bot.StrategyKillbotV1: bot.NewKillbotStrategy(),                  // kept registered: existing in-progress games may already have bots persisted with this strategy -- GamesService.botStrategy's default is now StrategyKillbotV2
+		bot.StrategyKillbotV2: bot.NewKillbotV2Strategy(),
 	}
 	registerGCNStrategy(strategies, gamesSvc)
 	botRunner := bot.NewRunner(botLoader, s, strategies, bot.RealSleeper{}, bot.DefaultPacingConfig())

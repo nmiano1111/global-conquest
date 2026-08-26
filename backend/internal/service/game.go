@@ -146,7 +146,7 @@ func (s *GamesService) notifyGameStarted(gameID string) {
 }
 
 // SetDefaultBotStrategy overrides which strategy ID new bots are assigned
-// (applyBotMetadata's fallback is bot.StrategyKillbotV1 when this is
+// (applyBotMetadata's fallback is bot.StrategyKillbotV2 when this is
 // unset/empty). Production wiring in cmd/backend/main.go only calls this
 // when GCN_MODEL_PATH is configured, letting a local GCN experiment
 // become every new bot's persona without changing the compiled-in
@@ -159,7 +159,7 @@ func (s *GamesService) botStrategy() string {
 	if s.defaultBotStrategy != "" {
 		return s.defaultBotStrategy
 	}
-	return bot.StrategyKillbotV1
+	return bot.StrategyKillbotV2
 }
 
 type gameEventStore interface {
