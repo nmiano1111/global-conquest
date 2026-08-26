@@ -663,6 +663,13 @@ func nextTradeValue(setsTraded int) int {
 	return 15 + (setNumber-6)*5
 }
 
+// killTargetDefaultAdvantageRatio is killTarget's original, Lux-faithful
+// advantage requirement: pi's own total armies must exceed twice the
+// target's card-adjusted armies. Every existing caller (StrategyKillbotV1,
+// StrategyKillbotOldV1) passes this, so their live behavior is unchanged
+// by killTarget taking the ratio as a parameter.
+const killTargetDefaultAdvantageRatio = 2.0
+
 // killTarget identifies which living rival, if any, pi should try to
 // eliminate outright -- Lux's Vulture.setToKillPlayer. Among rivals still
 // in the game whose total armies+territories a real attack from pi's own
@@ -670,14 +677,16 @@ func nextTradeValue(setsTraded int) int {
 // plausibly beats, picks the one with the lowest card-adjusted armies
 // (discounting the value of the next card set they could cash, since
 // they'll effectively be stronger once they do); only returns it if pi's
-// own total armies exceed twice that adjusted figure. Recomputed fresh
-// from both a placement and an attack decision -- this engine has no
-// equivalent to Lux's turn-scoped toKillPlayer field (see
-// Lux_Port_Notes.md's Killbot addendum), and Lux's own placement-time
+// own total armies exceed minAdvantageRatio times that adjusted figure
+// (killTargetDefaultAdvantageRatio, 2.0, matches Lux's own Vulture
+// exactly; a caller may pass a lower ratio to commit to kill-hunting more
+// readily). Recomputed fresh from both a placement and an attack decision
+// -- this engine has no equivalent to Lux's turn-scoped toKillPlayer field
+// (see Lux_Port_Notes.md's Killbot addendum), and Lux's own placement-time
 // slack (+ numberOfArmies, since more armies are about to land) is
 // dropped for the same reason pixieWantedContinents' was: no
 // "about-to-be-placed" figure exists outside the reinforce call itself.
-func killTarget(g *risk.Game, pi int) (target int, ok bool) {
+func killTarget(g *risk.Game, pi int, minAdvantageRatio float64) (target int, ok bool) {
 	strongest, hasStrongest := biggestArmyTerritoryWithEnemyNeighbor(g, pi)
 	if !hasStrongest {
 		return 0, false
@@ -709,7 +718,7 @@ func killTarget(g *risk.Game, pi int) (target int, ok bool) {
 	if !found {
 		return 0, false
 	}
-	if float64(playerTotalArmies(g, pi)) <= lowest*2 {
+	if float64(playerTotalArmies(g, pi)) <= lowest*minAdvantageRatio {
 		return 0, false
 	}
 	return target, true

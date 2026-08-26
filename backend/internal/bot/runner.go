@@ -101,6 +101,24 @@ func (r *Runner) pace(ctx context.Context, mode ExecutionMode, min, max time.Dur
 	return r.sleeper.Sleep(ctx, randomDuration(min, max))
 }
 
+// anyHumanPlayers reports whether at least one player is not bot-controlled.
+// Pacing exists so a human opponent can actually follow what happened (see
+// PacingConfig's doc comment) -- an all-bot game has no one to pace for, so
+// RunTurn downgrades ExecutionLive to ExecutionSimulation for one when this
+// returns false, rather than running every action at the ~1-2s average
+// delay DefaultPacingConfig uses (multiplied across the ~2,000+ commands a
+// full multiplayer game takes, that's the difference between a game
+// finishing in minutes versus most of an hour with no one watching the
+// pacing for).
+func anyHumanPlayers(players []risk.PlayerState) bool {
+	for _, p := range players {
+		if !p.IsBot() {
+			return true
+		}
+	}
+	return false
+}
+
 // RunTurn drives one bot-controlled player's turn to completion, one
 // committed command at a time, always against freshly reloaded
 // authoritative state. It stops as soon as the current player is no longer
@@ -139,6 +157,14 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 			return StopGameInactive, nil
 		}
 
+		// See anyHumanPlayers' doc comment: an all-bot game has no one to
+		// pace for, so it always runs at simulation speed regardless of
+		// the mode Manager was constructed with.
+		effectiveMode := mode
+		if effectiveMode == ExecutionLive && !anyHumanPlayers(g.Players) {
+			effectiveMode = ExecutionSimulation
+		}
+
 		current := g.Players[g.CurrentPlayer]
 		if !current.IsBot() {
 			if first {
@@ -150,7 +176,7 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 			botPlayerID = current.ID
 			first = false
 			log.Printf("bot: runner started game_id=%s player_id=%s strategy=%s phase=%s", gameID, botPlayerID, current.Strategy, g.Phase)
-			if err := r.pace(ctx, mode, r.pacing.TurnStartMin, r.pacing.TurnStartMax); err != nil {
+			if err := r.pace(ctx, effectiveMode, r.pacing.TurnStartMin, r.pacing.TurnStartMax); err != nil {
 				return StopCanceled, nil
 			}
 		} else if current.ID != botPlayerID {
@@ -192,7 +218,7 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 		decision := r.pacing.classifyAction(cmd, update, repeatTarget)
 		log.Printf("bot: command committed game_id=%s player_id=%s action=%s phase=%s pace=%s %s", gameID, botPlayerID, cmd.Action, update.Phase, decision.category, expl)
 
-		if err := r.pace(ctx, mode, decision.min, decision.max); err != nil {
+		if err := r.pace(ctx, effectiveMode, decision.min, decision.max); err != nil {
 			return StopCanceled, nil
 		}
 

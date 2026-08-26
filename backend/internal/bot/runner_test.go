@@ -104,6 +104,26 @@ func botGame(currentPlayerID string, controller risk.ControllerType) *risk.Game 
 	return g
 }
 
+// allBotGame is botGame's all-bot counterpart: every player, not just
+// currentPlayerID, is bot-controlled -- for tests of anyHumanPlayers'
+// pacing downgrade.
+func allBotGame(currentPlayerID string) *risk.Game {
+	g, err := risk.NewClassicGame([]string{"bot1", "bot2", "bot3"}, nil)
+	if err != nil {
+		panic(err)
+	}
+	g.Phase = risk.PhaseReinforce
+	g.PendingReinforcements = 3
+	for i := range g.Players {
+		g.Players[i].Controller = risk.ControllerBot
+		g.Players[i].Strategy = StrategyBasicV1
+		if g.Players[i].ID == currentPlayerID {
+			g.CurrentPlayer = i
+		}
+	}
+	return g
+}
+
 func TestRunnerNotBotTurnStopsImmediately(t *testing.T) {
 	g := botGame("human", risk.ControllerHuman)
 	loader := &fakeLoader{states: []loadedState{{game: g, status: "in_progress"}}}
@@ -340,6 +360,29 @@ func TestRunnerLiveModeSleepsAfterCommit(t *testing.T) {
 	// particular, never another command submitted before sleeping).
 	if len(order) != 3 || order[0] != "sleep" || order[1] != "commit" || order[2] != "sleep" {
 		t.Fatalf("expected turn-start sleep, then commit strictly before the post-commit sleep, got %v", order)
+	}
+}
+
+// TestRunnerAllBotGameSkipsPacingEvenInLiveMode confirms anyHumanPlayers'
+// downgrade: a game with no human players never sleeps, even when the
+// Manager it's running under was constructed with ExecutionLive (the
+// server's only mode -- see cmd/backend/main.go), since pacing exists
+// solely so a human opponent can follow along.
+func TestRunnerAllBotGameSkipsPacingEvenInLiveMode(t *testing.T) {
+	g := allBotGame("bot1")
+	loader := &fakeLoader{states: []loadedState{{game: g, status: "in_progress"}}}
+	submitter := &fakeSubmitter{respFn: func(call int, in game.GameActionInput) (game.GameActionUpdate, error) {
+		return game.GameActionUpdate{}, errors.New("stop after one call")
+	}}
+	strat := &fakeStrategy{cmd: Command{Action: ActionEndTurn}}
+	sleeper := &fakeSleeper{}
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, sleeper, DefaultPacingConfig())
+
+	if _, err := r.RunTurn(context.Background(), "g1", ExecutionLive); err == nil {
+		t.Fatalf("expected the rejected command to bubble up as an error eventually")
+	}
+	if len(sleeper.delays) != 0 {
+		t.Fatalf("expected an all-bot game to skip pacing even in ExecutionLive mode, got %d sleeps", len(sleeper.delays))
 	}
 }
 

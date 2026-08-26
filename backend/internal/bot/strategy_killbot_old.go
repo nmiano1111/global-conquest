@@ -63,7 +63,7 @@ func (k *KillbotOldStrategy) nextCommand(g *risk.Game, playerID string) (Command
 // (cheapestAttackHopToPlayer's from); otherwise pixiePlacementTerritory
 // (the backer's own placement).
 func killbotOldPlacementTerritory(g *risk.Game, pi int, actions []risk.ReinforcementAction) risk.Territory {
-	if target, ok := killTarget(g, pi); ok {
+	if target, ok := killTarget(g, pi, killTargetDefaultAdvantageRatio); ok {
 		if from, _, _, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
 			return from
 		}
@@ -110,7 +110,7 @@ func (k *KillbotOldStrategy) reinforce(g *risk.Game, playerID string) (Command, 
 func (k *KillbotOldStrategy) attack(g *risk.Game, playerID string) (Command, error) {
 	pi := playerIndex(g, playerID)
 
-	if target, ok := killTarget(g, pi); ok {
+	if target, ok := killTarget(g, pi, killTargetDefaultAdvantageRatio); ok {
 		if from, to, cost, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
 			src := g.Territories[from]
 			if src.Armies > 1 && src.Armies > cost {

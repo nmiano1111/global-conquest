@@ -48,8 +48,23 @@ func Dispatch(g *risk.Game, playerID string, cmd bot.Command) (DispatchResult, e
 		return DispatchResult{ReinforcementsGranted: armies}, err
 
 	case bot.ActionPlaceReinforcement:
-		err := g.PlaceReinforcement(playerID, risk.Territory(cmd.Territory), cmd.Armies)
-		return DispatchResult{}, err
+		if err := g.PlaceReinforcement(playerID, risk.Territory(cmd.Territory), cmd.Armies); err != nil {
+			return DispatchResult{}, err
+		}
+		// Mirrors production's ApplyGameAction ("place_reinforcement" case,
+		// service/game.go): a non-empty KillTarget commits playerID to
+		// pursuing that rival this turn (risk.Game.SetKillPlan), consumed
+		// by KillbotStrategy/KillbotV2Strategy's own attack() decision.
+		// Missing this made every simulated/tournament game run with
+		// Killbot's kill-hunting layer completely inert -- SetKillPlan was
+		// simply never called, so g.KillPlans stayed empty regardless of
+		// what a strategy returned.
+		if cmd.KillTarget != "" {
+			if err := g.SetKillPlan(playerID, cmd.KillTarget); err != nil {
+				return DispatchResult{}, err
+			}
+		}
+		return DispatchResult{}, nil
 
 	case bot.ActionAttack:
 		// bot.Command.DefenderDice is always the zero value -- no

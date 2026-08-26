@@ -248,3 +248,40 @@ func TestKillbotV2AttackDeclinesUnfavorableKillRoute(t *testing.T) {
 		t.Fatalf("expected StrategyKillbotV2 to decline the unfavorable attack (~33%% win probability), got %+v", v2Cmd)
 	}
 }
+
+// TestKillbotV2CommitsAtLowerAdvantageRatioThanV1 sets pi's total armies
+// (Brazil, its only territory) to 31 against a target (Venezuela, 20
+// armies, player 2's only territory) -- between killTargetDefaultAdvantageRatio
+// (2.0: needs > 40) and killbotV2KillAdvantageRatio (1.5: needs > 30).
+// StrategyKillbotV1 must decline this commitment; StrategyKillbotV2 must
+// take it. The matchup itself (31 vs 20, further padded by 5 pending
+// reinforcements) is comfortably win-probability-favored, isolating the
+// ratio as the only thing distinguishing the two decisions.
+func TestKillbotV2CommitsAtLowerAdvantageRatioThanV1(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseReinforce
+	g.PendingReinforcements = 5
+	for _, terr := range g.Board.Order {
+		g.Territories[terr] = risk.TerritoryState{Owner: 1, Armies: 1}
+	}
+	g.Territories["Brazil"] = risk.TerritoryState{Owner: 0, Armies: 31}
+	g.Territories["Venezuela"] = risk.TerritoryState{Owner: 2, Armies: 20}
+
+	v1 := NewKillbotStrategy()
+	v1Cmd, _, err := v1.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("v1 NextCommand: %v", err)
+	}
+	if v1Cmd.KillTarget != "" {
+		t.Fatalf("expected StrategyKillbotV1 (2.0x ratio) to decline this commitment (31 armies <= 2.0*20=40), got %+v", v1Cmd)
+	}
+
+	v2 := NewKillbotV2Strategy()
+	v2Cmd, _, err := v2.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("v2 NextCommand: %v", err)
+	}
+	if v2Cmd.Territory != "Brazil" || v2Cmd.KillTarget != g.Players[2].ID {
+		t.Fatalf("expected StrategyKillbotV2 (1.5x ratio) to commit toward Brazil (31 armies > 1.5*20=30), got %+v", v2Cmd)
+	}
+}

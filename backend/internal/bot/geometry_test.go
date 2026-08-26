@@ -531,7 +531,7 @@ func TestKillTargetSelectsReachableWeakestRival(t *testing.T) {
 	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 100}
 	g.Territories["Kamchatka"] = risk.TerritoryState{Owner: 1, Armies: 1}
 
-	target, ok := killTarget(g, 0)
+	target, ok := killTarget(g, 0, killTargetDefaultAdvantageRatio)
 	if !ok {
 		t.Fatalf("expected a kill target to be found")
 	}
@@ -555,7 +555,7 @@ func TestKillTargetExcludesRivalFailingFeasibilityDespiteFewerArmies(t *testing.
 	g.Territories["Alaska"] = risk.TerritoryState{Owner: 0, Armies: 45}
 	g.Territories["Argentina"] = risk.TerritoryState{Owner: 0, Armies: 40}
 
-	target, ok := killTarget(g, 0)
+	target, ok := killTarget(g, 0, killTargetDefaultAdvantageRatio)
 	if !ok {
 		t.Fatalf("expected a kill target to be found")
 	}
@@ -579,7 +579,7 @@ func TestKillTargetFalseWhenNotYetTwiceAsStrong(t *testing.T) {
 		}
 	}
 
-	if _, ok := killTarget(g, 0); ok {
+	if _, ok := killTarget(g, 0, killTargetDefaultAdvantageRatio); ok {
 		t.Fatalf("expected no kill target: pi isn't yet twice as strong as the weakest reachable rival")
 	}
 }
@@ -612,7 +612,7 @@ func TestKillTargetCardAdjustmentChangesSelection(t *testing.T) {
 		{Territory: "Egypt", Symbol: risk.Artillery},
 	}
 
-	target, ok := killTarget(g, 0)
+	target, ok := killTarget(g, 0, killTargetDefaultAdvantageRatio)
 	if !ok {
 		t.Fatalf("expected a kill target to be found")
 	}

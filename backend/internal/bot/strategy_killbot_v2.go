@@ -83,6 +83,17 @@ import (
 //     (Cluster/Quo/Boscoe/Pixie/Turtle/KillbotOld) pass rawArmyComparator
 //     explicitly at each of these call sites, so their live behavior is
 //     unchanged by this threading.
+//  6. Lower kill-hunting advantage ratio (killbotV2KillAdvantageRatio):
+//     killTarget's default 2x requirement (killTargetDefaultAdvantageRatio,
+//     geometry.go -- StrategyKillbotV1 still uses it unchanged) is a high
+//     bar in a real multiplayer game; combined with
+//     targetHasSingleReachableCluster's single-cluster requirement, it
+//     means kill-hunting engages rarely, and games grind on through
+//     BetterPixie's cautious economic-growth behavior far longer than
+//     necessary (observed: ~35% of attacks were on an active kill route
+//     across a 150-game tournament sample, with median ~18 card sets
+//     traded before a 6-player game resolved). KillbotV2Strategy commits
+//     to a kill-hunt at a lower advantage ratio so it engages more often.
 const StrategyKillbotV2 = "killbot-v2"
 
 // killbotV2HogWildArmiesPerTerritory is killbotV2ShouldGoHogWild's
@@ -96,6 +107,14 @@ const killbotV2HogWildArmiesPerTerritory = 36
 // kill-route attack -- see doc comment above (point 4). 0.5 requires being
 // actually favored to win, not merely "not obviously suicidal."
 const killbotV2MinAttackWinProbability = 0.5
+
+// killbotV2KillAdvantageRatio replaces killTargetDefaultAdvantageRatio
+// (2.0) as the army-advantage KillbotV2 requires before committing to a
+// kill hunt -- see doc comment above (point 6). 1.5 still requires a real
+// material edge, just a smaller one, so kill-hunting engages more often
+// without committing to fights killbotV2MinAttackWinProbability's own gate
+// would decline anyway.
+const killbotV2KillAdvantageRatio = 1.5
 
 // KillbotV2Strategy implements StrategyKillbotV2.
 type KillbotV2Strategy struct {
@@ -163,7 +182,7 @@ func (k *KillbotV2Strategy) reinforce(g *risk.Game, playerID string) (Command, e
 		return cmd, nil
 	}
 	pi := playerIndex(g, playerID)
-	if target, ok := killTarget(g, pi); ok && targetHasSingleReachableCluster(g, target) {
+	if target, ok := killTarget(g, pi, killbotV2KillAdvantageRatio); ok && targetHasSingleReachableCluster(g, target) {
 		if from, to, _, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
 			src := g.Territories[from]
 			forecast := risk.ForecastAttack(src.Armies+g.PendingReinforcements, g.Territories[to].Armies)
