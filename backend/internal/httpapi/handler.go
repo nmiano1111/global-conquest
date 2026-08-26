@@ -38,6 +38,8 @@ type gameService interface {
 	UpdateGameState(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
 	GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error)
 	DeleteGame(ctx context.Context, gameID string) error
+	GetBotTuningConfig(ctx context.Context) (risk.BotTuning, error)
+	UpdateBotTuningConfig(ctx context.Context, updatedByUserID string, cfg risk.BotTuning) (risk.BotTuning, error)
 }
 
 type chatService interface {
@@ -403,6 +405,69 @@ func (h *Handler) DeleteGame(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// GetBotTuningConfig godoc
+// @Summary      Get the admin-tunable bot AI config
+// @Description  Returns the current kill-hunting/win-probability/hogwild/pacing values new bot-inclusive games are created with. Admin only.
+// @Tags         admin
+// @Produce      json
+// @Success      200 {object} risk.BotTuning
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/admin/bot-tuning [get]
+func (h *Handler) GetBotTuningConfig(c *gin.Context) {
+	cfg, err := h.games.GetBotTuningConfig(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load bot tuning config"})
+		return
+	}
+	c.JSON(http.StatusOK, cfg)
+}
+
+// UpdateBotTuningConfig godoc
+// @Summary      Update the admin-tunable bot AI config
+// @Description  Overwrites the config new bot-inclusive games snapshot at creation time. Already-created games are unaffected. Admin only.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Param        request body risk.BotTuning true "New bot tuning config"
+// @Success      200 {object} risk.BotTuning
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      403 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/admin/bot-tuning [put]
+func (h *Handler) UpdateBotTuningConfig(c *gin.Context) {
+	var req risk.BotTuning
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.KillAdvantageRatio <= 0 || req.MinAttackWinProbability < 0 || req.MinAttackWinProbability > 1 ||
+		req.KillClusterMaxSize <= 0 || req.HogwildArmiesPerTerritory <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kill_advantage_ratio, kill_cluster_max_size, and hogwild_armies_per_territory must be positive, and min_attack_win_probability must be between 0 and 1"})
+		return
+	}
+
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	cfg, err := h.games.UpdateBotTuningConfig(c.Request.Context(), authUser.ID, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidGameInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update bot tuning config"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, cfg)
 }
 
 // GetGameBootstrap godoc

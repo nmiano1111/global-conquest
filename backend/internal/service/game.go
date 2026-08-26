@@ -69,6 +69,7 @@ type GamesService struct {
 	gameDomainEvents   gameDomainEventStore
 	gameReplayEvents   gameReplayEventStore
 	discordOutbox      discordOutboxStore
+	botTuningConfig    store.BotTuningConfigStore
 	assignBotNames     func(count int, exclude []string) []string
 	gameStarted        func(gameID string)
 	defaultBotStrategy string
@@ -162,6 +163,27 @@ func (s *GamesService) botStrategy() string {
 	return bot.StrategyKillbotV2
 }
 
+// GetBotTuningConfig returns the current admin-configured bot tuning
+// values (see risk.BotTuning's doc comment), or bot.DefaultBotTuning() if
+// no BotTuningConfigStore is wired (SetBotTuningConfigStore).
+func (s *GamesService) GetBotTuningConfig(ctx context.Context) (risk.BotTuning, error) {
+	if s.botTuningConfig == nil {
+		return bot.DefaultBotTuning(), nil
+	}
+	return s.botTuningConfig.Get(ctx, s.db.Queryer())
+}
+
+// UpdateBotTuningConfig overwrites the admin-configured bot tuning values
+// and returns them as stored. updatedByUserID is recorded for audit
+// purposes. Returns ErrInvalidGameInput if no BotTuningConfigStore is
+// wired -- there is nothing to persist an update to.
+func (s *GamesService) UpdateBotTuningConfig(ctx context.Context, updatedByUserID string, cfg risk.BotTuning) (risk.BotTuning, error) {
+	if s.botTuningConfig == nil {
+		return risk.BotTuning{}, ErrInvalidGameInput
+	}
+	return s.botTuningConfig.Update(ctx, s.db.Queryer(), cfg, updatedByUserID)
+}
+
 type gameEventStore interface {
 	SaveGameEvent(ctx context.Context, q db.Querier, gameID, actorUserID, eventType, body string) (store.GameEvent, error)
 	ListGameEvents(ctx context.Context, q db.Querier, gameID string, limit int) ([]store.GameEvent, error)
@@ -197,6 +219,16 @@ func (s *GamesService) SetGameDomainEventStore(ds gameDomainEventStore) {
 // events are persisted and GameBootstrap.ReplayAvailable is always false.
 func (s *GamesService) SetGameReplayEventStore(rs gameReplayEventStore) {
 	s.gameReplayEvents = rs
+}
+
+// SetBotTuningConfigStore wires in the store backing GetBotTuningConfig/
+// UpdateBotTuningConfig and the snapshot startEngineForFullLobby takes
+// onto every new bot-inclusive game's Game.BotTuning. It is nil-safe:
+// until set, GetBotTuningConfig returns bot.DefaultBotTuning() and no
+// game ever gets a BotTuning snapshot (every internal/bot reader already
+// falls back to that same default for a nil snapshot).
+func (s *GamesService) SetBotTuningConfigStore(bs store.BotTuningConfigStore) {
+	s.botTuningConfig = bs
 }
 
 // SetDiscordOutboxStore wires in the store used to enqueue Discord
@@ -579,7 +611,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 	var startedEngine *risk.Game
 	var stateErr error
 	if len(playerIDs) == playerCount {
-		startedEngine, stateJSON, stateErr = s.startEngineForFullLobby(lobby)
+		startedEngine, stateJSON, stateErr = s.startEngineForFullLobby(ctx, lobby)
 		status = "in_progress"
 	} else {
 		stateJSON, stateErr = json.Marshal(lobby)
@@ -641,8 +673,12 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 // non-creator slot at creation, or because a human join just filled the
 // last one — and marks the bot players in the resulting state. Both
 // CreateClassicGame and JoinClassicGame call this so the two paths can
-// never drift apart.
-func (s *GamesService) startEngineForFullLobby(lobby lobbyState) (*risk.Game, []byte, error) {
+// never drift apart. If the lobby has any bot players, the game also gets
+// a Game.BotTuning snapshot of the current admin tuning config (see
+// GetBotTuningConfig) -- fixed for this game's lifetime regardless of
+// later admin edits, same as every other creation-time snapshot in this
+// file (IsSandboxed, IsHidden).
+func (s *GamesService) startEngineForFullLobby(ctx context.Context, lobby lobbyState) (*risk.Game, []byte, error) {
 	var startedEngine *risk.Game
 	var err error
 	if lobby.SetupMode == "manual" {
@@ -654,6 +690,13 @@ func (s *GamesService) startEngineForFullLobby(lobby lobbyState) (*risk.Game, []
 		return nil, nil, err
 	}
 	applyBotMetadata(startedEngine, lobby.BotNames, s.botStrategy())
+	if len(lobby.BotNames) > 0 {
+		tuning, err := s.GetBotTuningConfig(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		startedEngine.BotTuning = &tuning
+	}
 	nextState, err := json.Marshal(startedEngine)
 	if err != nil {
 		return nil, nil, err
@@ -822,7 +865,7 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		var nextState []byte
 		var startedEngine *risk.Game
 		if len(lobby.PlayerIDs) == lobby.PlayerCount {
-			startedEngine, nextState, err = s.startEngineForFullLobby(lobby)
+			startedEngine, nextState, err = s.startEngineForFullLobby(ctx, lobby)
 			if err != nil {
 				return err
 			}

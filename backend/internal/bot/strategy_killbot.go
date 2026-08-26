@@ -73,7 +73,7 @@ func (k *KillbotStrategy) nextCommand(g *risk.Game, playerID string) (Command, e
 // Part B.
 func (k *KillbotStrategy) setupReinforce(g *risk.Game, playerID string) (Command, error) {
 	pi := playerIndex(g, playerID)
-	if target, ok := killTarget(g, pi, killTargetDefaultAdvantageRatio); ok && targetHasSingleReachableCluster(g, target) {
+	if target, ok := killTarget(g, pi, killTargetDefaultAdvantageRatio); ok && targetHasSingleReachableCluster(g, target, killTargetDefaultClusterMaxSize) {
 		if from, _, _, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
 			return Command{Action: ActionPlaceInitialArmy, Territory: string(from)}, nil
 		}
@@ -106,7 +106,7 @@ func (k *KillbotStrategy) reinforce(g *risk.Game, playerID string) (Command, err
 		return cmd, nil
 	}
 	pi := playerIndex(g, playerID)
-	if target, ok := killTarget(g, pi, killTargetDefaultAdvantageRatio); ok && targetHasSingleReachableCluster(g, target) {
+	if target, ok := killTarget(g, pi, killTargetDefaultAdvantageRatio); ok && targetHasSingleReachableCluster(g, target, killTargetDefaultClusterMaxSize) {
 		if from, _, cost, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
 			src := g.Territories[from]
 			if src.Armies+g.PendingReinforcements > cost {

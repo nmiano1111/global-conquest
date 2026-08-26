@@ -91,12 +91,12 @@ func TestKillbotV2ShouldGoHogWildScalesWithBoardSize(t *testing.T) {
 	const restArmies = 40
 
 	setBoard(threshold+1, restArmies)
-	if !killbotV2ShouldGoHogWild(g, pi) {
+	if !killbotV2ShouldGoHogWild(g, pi, killbotV2HogWildArmiesPerTerritory) {
 		t.Fatalf("expected hogwild once own armies exceed territories*%d=%d, got false", killbotV2HogWildArmiesPerTerritory, threshold)
 	}
 
 	setBoard(threshold-1, restArmies)
-	if killbotV2ShouldGoHogWild(g, pi) {
+	if killbotV2ShouldGoHogWild(g, pi, killbotV2HogWildArmiesPerTerritory) {
 		t.Fatalf("expected no hogwild just under territories*%d=%d, got true", killbotV2HogWildArmiesPerTerritory, threshold)
 	}
 }
@@ -283,5 +283,45 @@ func TestKillbotV2CommitsAtLowerAdvantageRatioThanV1(t *testing.T) {
 	}
 	if v2Cmd.Territory != "Brazil" || v2Cmd.KillTarget != g.Players[2].ID {
 		t.Fatalf("expected StrategyKillbotV2 (1.5x ratio) to commit toward Brazil (31 armies > 1.5*20=30), got %+v", v2Cmd)
+	}
+}
+
+// TestKillbotV2UsesGameBotTuningSnapshotOverDefault sets Brazil to 25
+// armies against Venezuela's 20 -- below DefaultBotTuning's 1.5x
+// commitment bar (25 <= 1.5*20=30) but above a custom 1.1x snapshot
+// (25 > 1.1*20=22). The only difference between the two NextCommand calls
+// is g.BotTuning itself, proving KillbotV2Strategy actually reads the
+// per-game snapshot (effectiveBotTuning) rather than always falling back
+// to the compiled-in default.
+func TestKillbotV2UsesGameBotTuningSnapshotOverDefault(t *testing.T) {
+	g, p0 := newTestGame(t)
+	g.Phase = risk.PhaseReinforce
+	g.PendingReinforcements = 5
+	for _, terr := range g.Board.Order {
+		g.Territories[terr] = risk.TerritoryState{Owner: 1, Armies: 1}
+	}
+	g.Territories["Brazil"] = risk.TerritoryState{Owner: 0, Armies: 25}
+	g.Territories["Venezuela"] = risk.TerritoryState{Owner: 2, Armies: 20}
+
+	v2 := NewKillbotV2Strategy()
+
+	defaultCmd, _, err := v2.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("default NextCommand: %v", err)
+	}
+	if defaultCmd.KillTarget != "" {
+		t.Fatalf("expected the default 1.5x tuning to decline this commitment (25 armies <= 1.5*20=30), got %+v", defaultCmd)
+	}
+
+	tuning := DefaultBotTuning()
+	tuning.KillAdvantageRatio = 1.1
+	g.BotTuning = &tuning
+
+	tunedCmd, _, err := v2.NextCommand(context.Background(), g, p0)
+	if err != nil {
+		t.Fatalf("tuned NextCommand: %v", err)
+	}
+	if tunedCmd.Territory != "Brazil" || tunedCmd.KillTarget != g.Players[2].ID {
+		t.Fatalf("expected a 1.1x snapshot to commit toward Brazil (25 armies > 1.1*20=22), got %+v", tunedCmd)
 	}
 }

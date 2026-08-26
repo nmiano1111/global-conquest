@@ -72,6 +72,8 @@ func main() {
 	gamesSvc.SetGameReplayEventStore(gameReplayEventStore)
 	discordOutboxStore := store.NewPostgresDiscordOutboxStore()
 	gamesSvc.SetDiscordOutboxStore(discordOutboxStore)
+	botTuningConfigStore := store.NewPostgresBotTuningConfigStore()
+	gamesSvc.SetBotTuningConfigStore(botTuningConfigStore)
 	gameActionSvc := service.NewGameActionService(gamesSvc)
 	chatStore := store.NewPostgresChatStore()
 	chatSvc := service.NewChatService(d, chatStore)

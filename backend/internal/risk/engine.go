@@ -244,6 +244,19 @@ type Game struct {
 	// skips them, so it's never read again).
 	KillPlans map[int]KillPlan `json:"kill_plans,omitempty"`
 
+	// BotTuning snapshots the admin-configured bot tuning values (see
+	// internal/service's BotTuningConfig) at the moment this game was
+	// created, if any bot-controlled player was assigned one -- fixed for
+	// the game's lifetime regardless of later admin changes, the same
+	// creation-time-snapshot pattern IsSandboxed/IsHidden already use at
+	// the store.Game level. nil means "no snapshot was taken" (the game
+	// predates this feature, or was created via a path that doesn't set
+	// one, e.g. most simulation/tournament configs); every reader must
+	// fall back to a hardcoded default in that case, defined in
+	// internal/bot (which imports risk, so those defaults can't live
+	// here without an import cycle).
+	BotTuning *BotTuning `json:"bot_tuning,omitempty"`
+
 	// Deck holds the face-down draw pile of cards not yet dealt to any player.
 	Deck []Card `json:"deck"`
 	// Discard holds cards that have been traded in and are eligible to be

@@ -6,12 +6,39 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/nmiano1111/global-conquest/backend/internal/bot"
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// fakeBotTuningConfigStore returns a fixed config from Get and records
+// whatever Update was called with.
+type fakeBotTuningConfigStore struct {
+	cfg          risk.BotTuning
+	getErr       error
+	updateCalled bool
+	updateCfg    risk.BotTuning
+	updateBy     string
+	updateErr    error
+}
+
+func (f *fakeBotTuningConfigStore) Get(context.Context, db.Querier) (risk.BotTuning, error) {
+	return f.cfg, f.getErr
+}
+
+func (f *fakeBotTuningConfigStore) Update(_ context.Context, _ db.Querier, cfg risk.BotTuning, updatedByUserID string) (risk.BotTuning, error) {
+	f.updateCalled = true
+	f.updateCfg = cfg
+	f.updateBy = updatedByUserID
+	if f.updateErr != nil {
+		return risk.BotTuning{}, f.updateErr
+	}
+	f.cfg = cfg
+	return cfg, nil
+}
 
 // fixedBotNames is a deterministic bot-name assigner for tests, avoiding
 // any dependency on real randomness.
@@ -901,5 +928,89 @@ func TestAnyHuman(t *testing.T) {
 	}
 	if anyHuman(players, "", "bot-1") {
 		t.Fatal("expected empty-string IDs to be ignored, not matched")
+	}
+}
+
+// --- bot tuning: snapshotted onto new bot-inclusive games ---
+
+func TestCreateClassicGameSnapshotsBotTuningWhenBotsPresent(t *testing.T) {
+	var captured store.NewGame
+	svc := createServiceCapturingGame(t, &captured)
+	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart"))
+	tuningStore := &fakeBotTuningConfigStore{cfg: risk.BotTuning{
+		KillAdvantageRatio:        1.3,
+		KillClusterMaxSize:        18,
+		MinAttackWinProbability:   0.55,
+		HogwildArmiesPerTerritory: 30,
+	}}
+	svc.SetBotTuningConfigStore(tuningStore)
+
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2, false, false); err != nil {
+		t.Fatalf("create classic game: %v", err)
+	}
+	var engine risk.Game
+	if err := json.Unmarshal(captured.State, &engine); err != nil {
+		t.Fatalf("decode engine state: %v", err)
+	}
+	if engine.BotTuning == nil {
+		t.Fatalf("expected a BotTuning snapshot on a bot-inclusive game")
+	}
+	if *engine.BotTuning != tuningStore.cfg {
+		t.Fatalf("expected the snapshot to match the configured tuning, got %+v want %+v", *engine.BotTuning, tuningStore.cfg)
+	}
+}
+
+func TestCreateClassicGameNoBotTuningSnapshotForHumanOnlyGame(t *testing.T) {
+	var captured store.NewGame
+	svc := createServiceCapturingGame(t, &captured)
+	svc.SetBotTuningConfigStore(&fakeBotTuningConfigStore{cfg: risk.BotTuning{KillAdvantageRatio: 1.3}})
+
+	// bot_count=0, player_count=3: stays in lobby (not full), so
+	// captured.State is the lobbyState JSON, not an engine -- confirms
+	// startEngineForFullLobby (and therefore the snapshot) never runs for
+	// a lobby with no bots yet, matching the "human just joined" path
+	// this same helper serves.
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 0, false, false); err != nil {
+		t.Fatalf("create classic game: %v", err)
+	}
+	lobby := decodeLobby(t, captured.State)
+	if len(lobby.BotNames) != 0 {
+		t.Fatalf("expected no bots in this lobby, got %v", lobby.BotNames)
+	}
+}
+
+func TestGetBotTuningConfigDefaultsWhenStoreUnset(t *testing.T) {
+	svc := NewGamesService(&fakeDB{q: countQuerier{}}, &fakeGamesStore{})
+	cfg, err := svc.GetBotTuningConfig(context.Background())
+	if err != nil {
+		t.Fatalf("get bot tuning config: %v", err)
+	}
+	if cfg != bot.DefaultBotTuning() {
+		t.Fatalf("expected bot.DefaultBotTuning() when no store is wired, got %+v", cfg)
+	}
+}
+
+func TestUpdateBotTuningConfigErrorsWhenStoreUnset(t *testing.T) {
+	svc := NewGamesService(&fakeDB{q: countQuerier{}}, &fakeGamesStore{})
+	if _, err := svc.UpdateBotTuningConfig(context.Background(), "admin-1", risk.BotTuning{}); err != ErrInvalidGameInput {
+		t.Fatalf("expected ErrInvalidGameInput when no store is wired, got %v", err)
+	}
+}
+
+func TestUpdateBotTuningConfigDelegatesToStore(t *testing.T) {
+	tuningStore := &fakeBotTuningConfigStore{}
+	svc := NewGamesService(&fakeDB{q: countQuerier{}}, &fakeGamesStore{})
+	svc.SetBotTuningConfigStore(tuningStore)
+
+	cfg := risk.BotTuning{KillAdvantageRatio: 1.7, KillClusterMaxSize: 25}
+	out, err := svc.UpdateBotTuningConfig(context.Background(), "admin-1", cfg)
+	if err != nil {
+		t.Fatalf("update bot tuning config: %v", err)
+	}
+	if !tuningStore.updateCalled || tuningStore.updateBy != "admin-1" || tuningStore.updateCfg != cfg {
+		t.Fatalf("expected Update called with (admin-1, %+v), got called=%v by=%q cfg=%+v", cfg, tuningStore.updateCalled, tuningStore.updateBy, tuningStore.updateCfg)
+	}
+	if out != cfg {
+		t.Fatalf("expected the stored config to be returned, got %+v", out)
 	}
 }

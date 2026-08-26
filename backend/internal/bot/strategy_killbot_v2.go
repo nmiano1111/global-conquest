@@ -94,46 +94,62 @@ import (
 //     across a 150-game tournament sample, with median ~18 card sets
 //     traded before a 6-player game resolved). KillbotV2Strategy commits
 //     to a kill-hunt at a lower advantage ratio so it engages more often.
+//  7. Every threshold above is admin-tunable (effectiveBotTuning,
+//     tuning.go): KillbotV2Strategy reads risk.Game.BotTuning (snapshotted
+//     once at game creation from the admin's current config, see
+//     internal/service's BotTuningConfig) instead of fixed package
+//     constants, falling back to DefaultBotTuning() -- today's values,
+//     below -- for any game with no snapshot. Because the same shared
+//     KillbotV2Strategy instance serves every game, the BetterPixie
+//     backer (win-probability-configured, point 5) can no longer be a
+//     fixed field either -- backerFor builds one fresh per decision from
+//     whichever tuning that specific game was created with.
 const StrategyKillbotV2 = "killbot-v2"
 
-// killbotV2HogWildArmiesPerTerritory is killbotV2ShouldGoHogWild's
-// per-territory army threshold. 36 lands at 1512 armies on a 42-territory
-// board -- StrategyKillbotV1's flat 1500 cap, near-exactly -- while
-// scaling with the board's actual territory count for custom maps.
+// killbotV2HogWildArmiesPerTerritory is DefaultBotTuning's
+// HogwildArmiesPerTerritory: killbotV2ShouldGoHogWild's per-territory army
+// threshold. 36 lands at 1512 armies on a 42-territory board --
+// StrategyKillbotV1's flat 1500 cap, near-exactly -- while scaling with
+// the board's actual territory count for custom maps.
 const killbotV2HogWildArmiesPerTerritory = 36
 
-// killbotV2MinAttackWinProbability is the minimum risk.ForecastAttack win
-// probability KillbotV2 requires before committing to, or firing, a
-// kill-route attack -- see doc comment above (point 4). 0.5 requires being
-// actually favored to win, not merely "not obviously suicidal."
+// killbotV2MinAttackWinProbability is DefaultBotTuning's
+// MinAttackWinProbability: the minimum risk.ForecastAttack win probability
+// KillbotV2 requires before committing to, or firing, a kill-route attack
+// -- see doc comment above (point 4). 0.5 requires being actually favored
+// to win, not merely "not obviously suicidal."
 const killbotV2MinAttackWinProbability = 0.5
 
-// killbotV2KillAdvantageRatio replaces killTargetDefaultAdvantageRatio
-// (2.0) as the army-advantage KillbotV2 requires before committing to a
-// kill hunt -- see doc comment above (point 6). 1.5 still requires a real
-// material edge, just a smaller one, so kill-hunting engages more often
-// without committing to fights killbotV2MinAttackWinProbability's own gate
-// would decline anyway.
+// killbotV2KillAdvantageRatio is DefaultBotTuning's KillAdvantageRatio,
+// replacing killTargetDefaultAdvantageRatio (2.0) as the army-advantage
+// KillbotV2 requires before committing to a kill hunt -- see doc comment
+// above (point 6). 1.5 still requires a real material edge, just a
+// smaller one, so kill-hunting engages more often without committing to
+// fights killbotV2MinAttackWinProbability's own gate would decline anyway.
 const killbotV2KillAdvantageRatio = 1.5
 
 // KillbotV2Strategy implements StrategyKillbotV2.
 type KillbotV2Strategy struct {
 	*KillbotStrategy
-	// backer is KillbotV2Strategy's own BetterPixieStrategy instance,
-	// configured with a win-probability attackComparator (point 5 above)
-	// -- deliberately separate from the embedded KillbotStrategy's own
-	// backer field (still on the default rawArmyComparator), which
-	// setupReinforce/occupy/fortify below still delegate to unchanged,
-	// since none of those phases make an attack-stage decision.
-	backer *BetterPixieStrategy
 }
 
 // NewKillbotV2Strategy creates a KillbotV2Strategy.
 func NewKillbotV2Strategy() *KillbotV2Strategy {
-	return &KillbotV2Strategy{
-		KillbotStrategy: NewKillbotStrategy(),
-		backer:          NewBetterPixieStrategy(WithAttackComparator(winProbabilityComparator(killbotV2MinAttackWinProbability))),
-	}
+	return &KillbotV2Strategy{KillbotStrategy: NewKillbotStrategy()}
+}
+
+// backerFor builds KillbotV2Strategy's BetterPixieStrategy backer,
+// configured with a win-probability attackComparator at tuning's
+// threshold (point 5/7 above) -- deliberately separate from the embedded
+// KillbotStrategy's own backer field (still on the default
+// rawArmyComparator), which setupReinforce/occupy/fortify below still
+// delegate to unchanged, since none of those phases make an attack-stage
+// decision. Built fresh per decision rather than cached: the same shared
+// KillbotV2Strategy instance serves every game, and different games can
+// carry different tuning snapshots (point 7) -- BetterPixieStrategy is a
+// trivial, stateless struct, so this costs nothing worth caching.
+func (k *KillbotV2Strategy) backerFor(tuning risk.BotTuning) *BetterPixieStrategy {
+	return NewBetterPixieStrategy(WithAttackComparator(winProbabilityComparator(tuning.MinAttackWinProbability)))
 }
 
 // NextCommand dispatches on g.Phase, mirroring KillbotStrategy's own
@@ -181,12 +197,13 @@ func (k *KillbotV2Strategy) reinforce(g *risk.Game, playerID string) (Command, e
 	if cmd, ok := voluntaryCardTurnIn(g, playerID); ok {
 		return cmd, nil
 	}
+	tuning := effectiveBotTuning(g)
 	pi := playerIndex(g, playerID)
-	if target, ok := killTarget(g, pi, killbotV2KillAdvantageRatio); ok && targetHasSingleReachableCluster(g, target) {
+	if target, ok := killTarget(g, pi, tuning.KillAdvantageRatio); ok && targetHasSingleReachableCluster(g, target, tuning.KillClusterMaxSize) {
 		if from, to, _, ok := cheapestAttackHopToPlayer(g, pi, target); ok {
 			src := g.Territories[from]
 			forecast := risk.ForecastAttack(src.Armies+g.PendingReinforcements, g.Territories[to].Armies)
-			if forecast.WinProbability >= killbotV2MinAttackWinProbability {
+			if forecast.WinProbability >= tuning.MinAttackWinProbability {
 				cmd := Command{
 					Action:     ActionPlaceReinforcement,
 					Territory:  string(from),
@@ -198,7 +215,7 @@ func (k *KillbotV2Strategy) reinforce(g *risk.Game, playerID string) (Command, e
 		}
 	}
 
-	cmd, err := k.backer.reinforce(g, playerID)
+	cmd, err := k.backerFor(tuning).reinforce(g, playerID)
 	if err != nil || cmd.Action != ActionPlaceReinforcement {
 		return cmd, err
 	}
@@ -225,9 +242,9 @@ func (k *KillbotV2Strategy) guardPlacement(g *risk.Game, playerID string, cmd Co
 }
 
 // killbotV2ShouldGoHogWild is shouldGoHogWild (strategy_cluster.go) with
-// its absolute 1500-army cap replaced by killbotV2HogWildArmiesPerTerritory
-// times the board's actual territory count -- see doc comment above.
-func killbotV2ShouldGoHogWild(g *risk.Game, pi int) bool {
+// its absolute 1500-army cap replaced by armiesPerTerritory times the
+// board's actual territory count -- see doc comment above.
+func killbotV2ShouldGoHogWild(g *risk.Game, pi int, armiesPerTerritory int) bool {
 	total, own := 0, 0
 	for _, t := range g.Board.Order {
 		ts := g.Territories[t]
@@ -239,7 +256,7 @@ func killbotV2ShouldGoHogWild(g *risk.Game, pi int) bool {
 	if own > total-own {
 		return true
 	}
-	return own > len(g.Board.Order)*killbotV2HogWildArmiesPerTerritory
+	return own > len(g.Board.Order)*armiesPerTerritory
 }
 
 // attack mirrors KillbotStrategy.attack (strategy_killbot.go), with three
@@ -250,24 +267,26 @@ func killbotV2ShouldGoHogWild(g *risk.Game, pi int) bool {
 // phase) once a committed kill route can't fire this turn and hogwild
 // doesn't apply either (point 3) -- see doc comment above.
 func (k *KillbotV2Strategy) attack(g *risk.Game, playerID string) (Command, error) {
+	tuning := effectiveBotTuning(g)
 	pi := playerIndex(g, playerID)
+	backer := k.backerFor(tuning)
 
 	if plan, ok := g.KillPlans[pi]; ok && plan.Committed && !g.Players[plan.Target].Eliminated {
 		if from, to, _, ok := cheapestAttackHopToPlayer(g, pi, plan.Target); ok {
 			src := g.Territories[from]
 			if src.Armies > 1 {
 				forecast := risk.ForecastAttack(src.Armies, g.Territories[to].Armies)
-				if forecast.WinProbability >= killbotV2MinAttackWinProbability {
+				if forecast.WinProbability >= tuning.MinAttackWinProbability {
 					return Command{Action: ActionAttack, From: string(from), To: string(to), AttackerDice: min(3, src.Armies-1)}, nil
 				}
 			}
 		}
-		if killbotV2ShouldGoHogWild(g, pi) {
-			if cmd, ok := attackAsMuchAsPossible(g, pi, k.backer.cmp); ok {
+		if killbotV2ShouldGoHogWild(g, pi, tuning.HogwildArmiesPerTerritory) {
+			if cmd, ok := attackAsMuchAsPossible(g, pi, backer.cmp); ok {
 				return cmd, nil
 			}
 		}
 	}
 
-	return k.backer.attack(g, playerID)
+	return backer.attack(g, playerID)
 }

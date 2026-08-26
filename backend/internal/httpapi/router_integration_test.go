@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/nmiano1111/global-conquest/backend/internal/auth"
 	"github.com/nmiano1111/global-conquest/backend/internal/game"
+	"github.com/nmiano1111/global-conquest/backend/internal/risk"
 	"github.com/nmiano1111/global-conquest/backend/internal/service"
 	"github.com/nmiano1111/global-conquest/backend/internal/store"
 	"net/http"
@@ -27,14 +28,16 @@ type fakeUsersService struct {
 }
 
 type fakeGamesService struct {
-	createClassicGameFn    func(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool) (store.Game, error)
-	joinClassicGameFn      func(ctx context.Context, gameID, playerID string) (store.Game, error)
-	getGameFn              func(ctx context.Context, gameID string) (store.Game, error)
-	getGameBootstrapFn     func(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
-	listGameReplayEventsFn func(ctx context.Context, gameID, requesterUserID string, afterSequence int64, limit int) ([]service.GameReplayEntry, error)
-	listGamesFn            func(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error)
-	updateGameStateFn      func(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
-	deleteGameFn           func(ctx context.Context, gameID string) error
+	createClassicGameFn     func(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool) (store.Game, error)
+	joinClassicGameFn       func(ctx context.Context, gameID, playerID string) (store.Game, error)
+	getGameFn               func(ctx context.Context, gameID string) (store.Game, error)
+	getGameBootstrapFn      func(ctx context.Context, gameID, requesterUserID string) (service.GameBootstrap, error)
+	listGameReplayEventsFn  func(ctx context.Context, gameID, requesterUserID string, afterSequence int64, limit int) ([]service.GameReplayEntry, error)
+	listGamesFn             func(ctx context.Context, ownerUserID, status string, limit, offset int) ([]service.GameSummary, error)
+	updateGameStateFn       func(ctx context.Context, gameID, status string, state json.RawMessage) (store.Game, error)
+	deleteGameFn            func(ctx context.Context, gameID string) error
+	getBotTuningConfigFn    func(ctx context.Context) (risk.BotTuning, error)
+	updateBotTuningConfigFn func(ctx context.Context, updatedByUserID string, cfg risk.BotTuning) (risk.BotTuning, error)
 }
 
 type fakeChatService struct {
@@ -135,6 +138,20 @@ func (f *fakeGamesService) DeleteGame(ctx context.Context, gameID string) error 
 	return nil
 }
 
+func (f *fakeGamesService) GetBotTuningConfig(ctx context.Context) (risk.BotTuning, error) {
+	if f.getBotTuningConfigFn != nil {
+		return f.getBotTuningConfigFn(ctx)
+	}
+	return risk.BotTuning{}, nil
+}
+
+func (f *fakeGamesService) UpdateBotTuningConfig(ctx context.Context, updatedByUserID string, cfg risk.BotTuning) (risk.BotTuning, error) {
+	if f.updateBotTuningConfigFn != nil {
+		return f.updateBotTuningConfigFn(ctx, updatedByUserID, cfg)
+	}
+	return cfg, nil
+}
+
 func (f *fakeChatService) ListLobbyMessages(ctx context.Context, limit int) ([]store.ChatMessage, error) {
 	return f.listLobbyMessagesFn(ctx, limit)
 }
@@ -150,9 +167,11 @@ func newTestRouterWithServices(userSvc *fakeUsersService, games *fakeGamesServic
 
 func newTestRouter(svc *fakeUsersService) http.Handler {
 	games := &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
 		getGameBootstrapFn: func(context.Context, string, string) (service.GameBootstrap, error) {
 			return service.GameBootstrap{}, nil
 		},
@@ -441,9 +460,11 @@ func TestGetGameBootstrapSuccess(t *testing.T) {
 		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	gamesSvc := &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
 		getGameBootstrapFn: func(_ context.Context, gameID, requesterUserID string) (service.GameBootstrap, error) {
 			if gameID != "g1" || requesterUserID != "u1" {
 				t.Fatalf("unexpected args: gameID=%s requester=%s", gameID, requesterUserID)
@@ -484,9 +505,11 @@ func TestGetGameBootstrapForbidden(t *testing.T) {
 		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	gamesSvc := &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
 		getGameBootstrapFn: func(context.Context, string, string) (service.GameBootstrap, error) {
 			return service.GameBootstrap{}, service.ErrGameForbidden
 		},
@@ -566,6 +589,126 @@ func TestAdminUsersSuccess(t *testing.T) {
 	}
 }
 
+func TestBotTuningConfigForbiddenForNonAdmin(t *testing.T) {
+	router := newTestRouter(&fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "alice", Role: "player"}, nil
+		},
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	})
+
+	if rr := doJSONWithAuth(t, router, http.MethodGet, "/api/admin/bot-tuning", "valid-token", nil); rr.code != http.StatusForbidden {
+		t.Fatalf("expected 403 for GET, got %d body=%s", rr.code, rr.body.String())
+	}
+	if rr := doJSONWithAuth(t, router, http.MethodPut, "/api/admin/bot-tuning", "valid-token", map[string]any{
+		"kill_advantage_ratio": 1.5, "kill_cluster_max_size": 20, "min_attack_win_probability": 0.5, "hogwild_armies_per_territory": 36,
+	}); rr.code != http.StatusForbidden {
+		t.Fatalf("expected 403 for PUT, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestGetBotTuningConfigSuccess(t *testing.T) {
+	userSvc := &fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "admin1", UserName: "root", Role: "admin"}, nil
+		},
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	}
+	gamesSvc := &fakeGamesService{
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
+		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:         func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
+		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+		getBotTuningConfigFn: func(context.Context) (risk.BotTuning, error) {
+			return risk.BotTuning{KillAdvantageRatio: 1.5, KillClusterMaxSize: 20, MinAttackWinProbability: 0.5, HogwildArmiesPerTerritory: 36}, nil
+		},
+	}
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
+
+	rr := doJSONWithAuth(t, router, http.MethodGet, "/api/admin/bot-tuning", "valid-token", nil)
+	if rr.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.code, rr.body.String())
+	}
+	var got risk.BotTuning
+	if err := json.Unmarshal(rr.body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.KillAdvantageRatio != 1.5 || got.KillClusterMaxSize != 20 {
+		t.Fatalf("unexpected response body: %+v", got)
+	}
+}
+
+func TestUpdateBotTuningConfigSuccess(t *testing.T) {
+	userSvc := &fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "admin1", UserName: "root", Role: "admin"}, nil
+		},
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	}
+	var gotUpdatedBy string
+	var gotCfg risk.BotTuning
+	gamesSvc := &fakeGamesService{
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
+		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:         func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
+		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+		updateBotTuningConfigFn: func(_ context.Context, updatedByUserID string, cfg risk.BotTuning) (risk.BotTuning, error) {
+			gotUpdatedBy, gotCfg = updatedByUserID, cfg
+			return cfg, nil
+		},
+	}
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
+
+	rr := doJSONWithAuth(t, router, http.MethodPut, "/api/admin/bot-tuning", "valid-token", map[string]any{
+		"kill_advantage_ratio":         1.3,
+		"kill_cluster_max_size":        18,
+		"min_attack_win_probability":   0.55,
+		"hogwild_armies_per_territory": 30,
+	})
+	if rr.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.code, rr.body.String())
+	}
+	if gotUpdatedBy != "admin1" {
+		t.Fatalf("expected updated_by_user_id=admin1, got %q", gotUpdatedBy)
+	}
+	if gotCfg.KillAdvantageRatio != 1.3 || gotCfg.KillClusterMaxSize != 18 {
+		t.Fatalf("unexpected config passed to service: %+v", gotCfg)
+	}
+}
+
+func TestUpdateBotTuningConfigRejectsInvalidValues(t *testing.T) {
+	router := newTestRouter(&fakeUsersService{
+		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "admin1", UserName: "root", Role: "admin"}, nil
+		},
+		listUsersFn: func(context.Context) ([]store.User, error) { return nil, nil },
+		getUserFn:   func(context.Context, string) (store.User, error) { return store.User{}, nil },
+		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
+	})
+
+	rr := doJSONWithAuth(t, router, http.MethodPut, "/api/admin/bot-tuning", "valid-token", map[string]any{
+		"kill_advantage_ratio":         1.5,
+		"kill_cluster_max_size":        20,
+		"min_attack_win_probability":   1.5, // out of [0,1]
+		"hogwild_armies_per_territory": 36,
+	})
+	if rr.code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an out-of-range win probability, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
 func TestAdminRevokeSessionsSuccess(t *testing.T) {
 	router := newTestRouter(&fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },
@@ -634,11 +777,13 @@ func TestListLobbyMessagesSuccess(t *testing.T) {
 		loginFn: func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	router := newTestRouterWithServices(svc, &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
-		listGamesFn:         func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
-		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:       func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
+		updateGameStateFn: func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}, &fakeChatService{
 		listLobbyMessagesFn: func(context.Context, int) ([]store.ChatMessage, error) {
 			return []store.ChatMessage{{ID: "m1", Room: "lobby", UserID: "u1", UserName: "alice", Body: "hello", CreatedAt: now}}, nil
@@ -664,11 +809,13 @@ func TestPostLobbyMessageSuccess(t *testing.T) {
 		loginFn: func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	router := newTestRouterWithServices(svc, &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
-		listGamesFn:         func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
-		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:       func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
+		updateGameStateFn: func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}, &fakeChatService{
 		listLobbyMessagesFn: func(context.Context, int) ([]store.ChatMessage, error) { return nil, nil },
 		postLobbyMessageFn: func(_ context.Context, userID, body string) (store.ChatMessage, error) {
@@ -832,7 +979,9 @@ func TestJoinGameSuccess(t *testing.T) {
 		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	gamesSvc := &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
 		joinClassicGameFn: func(_ context.Context, gameID, playerID string) (store.Game, error) {
 			if gameID != "g1" || playerID != "u2" {
 				t.Fatalf("unexpected join input")
@@ -862,11 +1011,13 @@ func TestGetGameNotFound(t *testing.T) {
 		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	gamesSvc := &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, service.ErrGameNotFound },
-		listGamesFn:         func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
-		updateGameStateFn:   func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, service.ErrGameNotFound },
+		listGamesFn:       func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
+		updateGameStateFn: func(context.Context, string, string, json.RawMessage) (store.Game, error) { return store.Game{}, nil },
 	}
 	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
 
@@ -887,10 +1038,12 @@ func TestUpdateGameStateSuccess(t *testing.T) {
 		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	gamesSvc := &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
-		listGamesFn:         func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		listGamesFn:       func(context.Context, string, string, int, int) ([]service.GameSummary, error) { return nil, nil },
 		updateGameStateFn: func(_ context.Context, gameID, status string, state json.RawMessage) (store.Game, error) {
 			if gameID != "g1" || status != "in_progress" || len(state) == 0 {
 				t.Fatalf("unexpected update input")
@@ -920,9 +1073,11 @@ func TestListGamesSuccess(t *testing.T) {
 		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	gamesSvc := &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
 		listGamesFn: func(_ context.Context, owner, status string, limit, offset int) ([]service.GameSummary, error) {
 			if owner != "u1" || status != "lobby" || limit != 10 || offset != 5 {
 				t.Fatalf("unexpected list filters")
@@ -950,9 +1105,11 @@ func TestListGamesBadLimit(t *testing.T) {
 		loginFn:     func(context.Context, string, string) (service.LoginResult, error) { return service.LoginResult{}, nil },
 	}
 	gamesSvc := &fakeGamesService{
-		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) { return store.Game{}, nil },
-		joinClassicGameFn:   func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
-		getGameFn:           func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
+		createClassicGameFn: func(context.Context, string, int, string, int, bool, bool) (store.Game, error) {
+			return store.Game{}, nil
+		},
+		joinClassicGameFn: func(context.Context, string, string) (store.Game, error) { return store.Game{}, nil },
+		getGameFn:         func(context.Context, string) (store.Game, error) { return store.Game{}, nil },
 		listGamesFn: func(context.Context, string, string, int, int) ([]service.GameSummary, error) {
 			t.Fatalf("list should not be called")
 			return nil, nil

@@ -165,6 +165,16 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 			effectiveMode = ExecutionSimulation
 		}
 
+		// A game with its own BotTuning snapshot (admin-tuned at creation,
+		// see tuning.go) paces with the pacing it was created under, not
+		// r's own compiled-in/constructor-supplied default -- consistent
+		// with every other tuning knob KillbotV2Strategy reads from the
+		// same snapshot.
+		pacing := r.pacing
+		if g.BotTuning != nil {
+			pacing = fromBotPacing(g.BotTuning.Pacing)
+		}
+
 		current := g.Players[g.CurrentPlayer]
 		if !current.IsBot() {
 			if first {
@@ -176,7 +186,7 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 			botPlayerID = current.ID
 			first = false
 			log.Printf("bot: runner started game_id=%s player_id=%s strategy=%s phase=%s", gameID, botPlayerID, current.Strategy, g.Phase)
-			if err := r.pace(ctx, effectiveMode, r.pacing.TurnStartMin, r.pacing.TurnStartMax); err != nil {
+			if err := r.pace(ctx, effectiveMode, pacing.TurnStartMin, pacing.TurnStartMax); err != nil {
 				return StopCanceled, nil
 			}
 		} else if current.ID != botPlayerID {
@@ -215,7 +225,7 @@ func (r *Runner) RunTurn(ctx context.Context, gameID string, mode ExecutionMode)
 		} else {
 			lastAttackTarget = ""
 		}
-		decision := r.pacing.classifyAction(cmd, update, repeatTarget)
+		decision := pacing.classifyAction(cmd, update, repeatTarget)
 		log.Printf("bot: command committed game_id=%s player_id=%s action=%s phase=%s pace=%s %s", gameID, botPlayerID, cmd.Action, update.Phase, decision.category, expl)
 
 		if err := r.pace(ctx, effectiveMode, decision.min, decision.max); err != nil {

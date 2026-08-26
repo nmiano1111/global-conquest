@@ -90,6 +90,8 @@ func NewRouter(h *Handler) *gin.Engine {
 			admin.PUT("/users/:id/access", h.UpdateUserAccess)
 			admin.PUT("/users/:id/sandbox", h.UpdateUserSandbox)
 			admin.POST("/users/:id/revoke-sessions", h.RevokeUserSessions)
+			admin.GET("/bot-tuning", h.GetBotTuningConfig)
+			admin.PUT("/bot-tuning", h.UpdateBotTuningConfig)
 		}
 
 	}

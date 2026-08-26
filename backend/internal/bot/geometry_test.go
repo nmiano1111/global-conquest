@@ -695,7 +695,7 @@ func TestTargetHasSingleReachableClusterTrueForSmallSingleCluster(t *testing.T) 
 	}
 	setOwner(g, 1, "Indonesia", "New Guinea", "Western Australia", "Eastern Australia")
 
-	if !targetHasSingleReachableCluster(g, 1) {
+	if !targetHasSingleReachableCluster(g, 1, killTargetDefaultClusterMaxSize) {
 		t.Fatal("expected a single 4-territory cluster to pass the gate")
 	}
 }
@@ -709,7 +709,7 @@ func TestTargetHasSingleReachableClusterFalseForMultipleClusters(t *testing.T) {
 	// them) form two disconnected clusters.
 	setOwner(g, 1, "Indonesia", "New Guinea", "Western Australia", "Eastern Australia", "Iceland")
 
-	if targetHasSingleReachableCluster(g, 1) {
+	if targetHasSingleReachableCluster(g, 1, killTargetDefaultClusterMaxSize) {
 		t.Fatal("expected two disconnected clusters to fail the gate")
 	}
 }
@@ -732,7 +732,7 @@ func TestTargetHasSingleReachableClusterFalseAtOrAboveTwentyOneTerritories(t *te
 		"North Africa",
 	)
 
-	if targetHasSingleReachableCluster(g, 1) {
+	if targetHasSingleReachableCluster(g, 1, killTargetDefaultClusterMaxSize) {
 		t.Fatal("expected a single cluster of exactly 21 territories to fail the < 21 cap")
 	}
 }

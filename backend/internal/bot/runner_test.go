@@ -386,6 +386,37 @@ func TestRunnerAllBotGameSkipsPacingEvenInLiveMode(t *testing.T) {
 	}
 }
 
+// TestRunnerUsesGameBotTuningPacingOverConstructorDefault confirms
+// RunTurn's per-game pacing lookup (runner.go) actually reads
+// g.BotTuning.Pacing when the loaded game has one, rather than always
+// using r's own constructor-supplied PacingConfig. TurnStartMinMs ==
+// TurnStartMaxMs collapses the sampled range to one exact value, making
+// the resulting sleep duration a precise, deterministic signal.
+func TestRunnerUsesGameBotTuningPacingOverConstructorDefault(t *testing.T) {
+	g := botGame("bot1", risk.ControllerBot)
+	tuning := DefaultBotTuning()
+	tuning.Pacing.TurnStartMinMs = 12345
+	tuning.Pacing.TurnStartMaxMs = 12345
+	g.BotTuning = &tuning
+
+	loader := &fakeLoader{states: []loadedState{{game: g, status: "in_progress"}}}
+	submitter := &fakeSubmitter{respFn: func(call int, in game.GameActionInput) (game.GameActionUpdate, error) {
+		return game.GameActionUpdate{}, errors.New("stop after one call")
+	}}
+	strat := &fakeStrategy{cmd: Command{Action: ActionEndTurn}}
+	sleeper := &fakeSleeper{}
+	// A constructor default with drastically different (default) bounds,
+	// to prove the per-game snapshot -- not this -- decided the duration.
+	r := NewRunner(loader, submitter, StrategyRegistry{StrategyBasicV1: strat}, sleeper, DefaultPacingConfig())
+
+	if _, err := r.RunTurn(context.Background(), "g1", ExecutionLive); err == nil {
+		t.Fatalf("expected the rejected command to bubble up as an error eventually")
+	}
+	if len(sleeper.delays) != 1 || sleeper.delays[0] != 12345*time.Millisecond {
+		t.Fatalf("expected the single turn-start sleep to use g.BotTuning.Pacing's exact 12345ms bound, got %v", sleeper.delays)
+	}
+}
+
 type recordingOrderSleeper struct {
 	order *[]string
 }

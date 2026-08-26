@@ -724,20 +724,28 @@ func killTarget(g *risk.Game, pi int, minAdvantageRatio float64) (target int, ok
 	return target, true
 }
 
+// killTargetDefaultClusterMaxSize is targetHasSingleReachableCluster's
+// original, Lux-faithful cluster-size cap. Every existing caller
+// (StrategyKillbotV1) passes this, so its live behavior is unchanged by
+// targetHasSingleReachableCluster taking the cap as a parameter.
+const killTargetDefaultClusterMaxSize = 20
+
 // targetHasSingleReachableCluster reports whether target's territory
-// forms one connected landmass no larger than 20 -- Lux's
-// Vulture.placeToKill gate (CountryClusterSet.getAllCountriesOwnedBy(
+// forms one connected landmass no larger than maxClusterSize
+// (killTargetDefaultClusterMaxSize, 20, matches Lux's own Vulture exactly)
+// -- Lux's Vulture.placeToKill gate (CountryClusterSet.getAllCountriesOwnedBy(
 // toKillPlayer, ...).numberOfClusters() == 1, plus the "cluster.size() <
 // 21" cap Vulture.java's own comment attributes to avoiding a search that
 // "can hang the app on large search-spaces"). Ported as a straight gate
 // here since, unlike Lux, nothing downstream of it does a search whose
 // cost scales with cluster size: cheapestAttackHopToPlayer stays a single
 // Dijkstra hop regardless of how fragmented or large target's territory
-// is. The cap is kept anyway, since a fragmented, 20+-territory rival is
+// is. The cap is kept anyway, since a fragmented rival above the cap is
 // exactly the case Lux's own Vulture declines to commit to killing
 // outright -- skipping this gate would let killTarget's selection logic
-// resolve to attempts the real Lux AI would never make.
-func targetHasSingleReachableCluster(g *risk.Game, target int) bool {
+// resolve to attempts the real Lux AI would never make. A caller may pass
+// a higher cap to commit to fragmented kill targets more readily.
+func targetHasSingleReachableCluster(g *risk.Game, target int, maxClusterSize int) bool {
 	components := connectedComponents(g, ownedTerritories(g, target))
-	return len(components) == 1 && len(components[0]) < 21
+	return len(components) == 1 && len(components[0]) <= maxClusterSize
 }
