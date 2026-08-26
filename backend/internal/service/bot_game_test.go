@@ -58,7 +58,7 @@ func TestCreateClassicGameThreePlayersOneHumanTwoBots(t *testing.T) {
 	svc := createServiceCapturingGame(t, &captured)
 	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart"))
 
-	g, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2)
+	g, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2, false, false)
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestCreateClassicGameFourPlayersTwoHumansTwoBots(t *testing.T) {
 	svc := createServiceCapturingGame(t, &captured)
 	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart"))
 
-	g, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 2)
+	g, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 2, false, false)
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestCreateClassicGameFivePlayersOneHumanFourBots(t *testing.T) {
 	svc := createServiceCapturingGame(t, &captured)
 	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart", "Ric Flair", "Sting"))
 
-	g, err := svc.CreateClassicGame(context.Background(), "u1", 5, "", 4)
+	g, err := svc.CreateClassicGame(context.Background(), "u1", 5, "", 4, false, false)
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestCreateClassicGameRejectsNegativeBotCount(t *testing.T) {
 	var captured store.NewGame
 	svc := createServiceCapturingGame(t, &captured)
 
-	_, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", -1)
+	_, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", -1, false, false)
 	if err != ErrInvalidGameInput {
 		t.Fatalf("expected ErrInvalidGameInput for negative bot_count, got %v", err)
 	}
@@ -150,11 +150,81 @@ func TestCreateClassicGameRejectsBotCountAtOrAbovePlayerCount(t *testing.T) {
 	var captured store.NewGame
 	svc := createServiceCapturingGame(t, &captured)
 
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 4); err != ErrInvalidGameInput {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 4, false, false); err != ErrInvalidGameInput {
 		t.Fatalf("expected ErrInvalidGameInput when bot_count == player_count, got %v", err)
 	}
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 5); err != ErrInvalidGameInput {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 5, false, false); err != ErrInvalidGameInput {
 		t.Fatalf("expected ErrInvalidGameInput when bot_count > player_count, got %v", err)
+	}
+}
+
+// --- all-bots admin games: zero human players, creator never a player ---
+
+func TestCreateClassicGameAllBotsRejectsMismatchedBotCount(t *testing.T) {
+	var captured store.NewGame
+	svc := createServiceCapturingGame(t, &captured)
+
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 3, true, false); err != ErrInvalidGameInput {
+		t.Fatalf("expected ErrInvalidGameInput when all_bots and bot_count < player_count, got %v", err)
+	}
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 5, true, false); err != ErrInvalidGameInput {
+		t.Fatalf("expected ErrInvalidGameInput when all_bots and bot_count > player_count, got %v", err)
+	}
+}
+
+func TestCreateClassicGameAllBotsHasNoHumanPlayers(t *testing.T) {
+	var captured store.NewGame
+	svc := createServiceCapturingGame(t, &captured)
+	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart", "Ric Flair", "Sting"))
+
+	g, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 4, true, false)
+	if err != nil {
+		t.Fatalf("create classic game: %v", err)
+	}
+	// Every slot is a bot, so the lobby is full immediately regardless of
+	// the creator ever joining as a player.
+	if g.Status != "in_progress" {
+		t.Fatalf("expected in_progress (all slots bot-filled at creation), got %s", g.Status)
+	}
+	var engine risk.Game
+	if err := json.Unmarshal(captured.State, &engine); err != nil {
+		t.Fatalf("decode engine state: %v", err)
+	}
+	if len(engine.Players) != 4 {
+		t.Fatalf("expected 4 players, got %d", len(engine.Players))
+	}
+	for _, p := range engine.Players {
+		if !p.IsBot() {
+			t.Fatalf("expected every player to be bot-controlled, found a human: %+v", p)
+		}
+		if p.ID == "u1" {
+			t.Fatalf("expected the creator (u1) never to occupy a player slot in an all_bots game")
+		}
+	}
+}
+
+func TestCreateClassicGameHiddenSetsIsHiddenFlag(t *testing.T) {
+	var captured store.NewGame
+	svc := createServiceCapturingGame(t, &captured)
+	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart", "Ric Flair", "Sting"))
+
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 4, true, true); err != nil {
+		t.Fatalf("create classic game: %v", err)
+	}
+	if !captured.IsHidden {
+		t.Fatalf("expected IsHidden to be set on the created game's store.NewGame")
+	}
+}
+
+func TestCreateClassicGameNotHiddenByDefault(t *testing.T) {
+	var captured store.NewGame
+	svc := createServiceCapturingGame(t, &captured)
+
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 0, false, false); err != nil {
+		t.Fatalf("create classic game: %v", err)
+	}
+	if captured.IsHidden {
+		t.Fatalf("expected IsHidden to default to false for a normal game")
 	}
 }
 
@@ -165,7 +235,7 @@ func TestCreateClassicGameCreatorRemainsHumanAndBotsUseKillbotV2(t *testing.T) {
 	svc := createServiceCapturingGame(t, &captured)
 	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart"))
 
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2); err != nil {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2, false, false); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
 	var engine risk.Game
@@ -203,7 +273,7 @@ func TestCreateClassicGameBotsGetUniqueIDsAndNonEmptyNames(t *testing.T) {
 
 	// 5 total, 1 human + 3 bots: one human slot stays open, so this stays
 	// in "lobby" and we can inspect the lobby-state shape directly.
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 5, "", 3); err != nil {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 5, "", 3, false, false); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
 	lobby := decodeLobby(t, captured.State)
@@ -246,7 +316,7 @@ func TestCreateClassicGameExcludesOwnerNameFromBotAssigner(t *testing.T) {
 		return out
 	})
 
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2); err != nil {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2, false, false); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
 	if len(gotExclude) != 1 || gotExclude[0] == "" {
@@ -261,7 +331,7 @@ func TestCreateClassicGameAutoStartDistributesTerritoriesToBotsToo(t *testing.T)
 	svc := createServiceCapturingGame(t, &captured)
 	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart"))
 
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2); err != nil {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2, false, false); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
 	var engine risk.Game
@@ -286,7 +356,7 @@ func TestCreateClassicGameBotsCountTowardFilledSlots(t *testing.T) {
 	svc := createServiceCapturingGame(t, &captured)
 	svc.SetBotNameAssigner(fixedBotNames("Randy Savage", "Bret Hart"))
 
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 2); err != nil {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 2, false, false); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
 	lobby := decodeLobby(t, captured.State)
@@ -385,7 +455,7 @@ func TestCreateClassicGameHumanOnlyOmittedBotCountStillWorks(t *testing.T) {
 	var captured store.NewGame
 	svc := createServiceCapturingGame(t, &captured)
 
-	g, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 0)
+	g, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 0, false, false)
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -413,7 +483,7 @@ func TestCreateClassicGameNotifiesGameStartedHookWhenFullAtCreation(t *testing.T
 	var notified []string
 	svc.SetGameStartedHook(func(gameID string) { notified = append(notified, gameID) })
 
-	g, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2)
+	g, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2, false, false)
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -430,7 +500,7 @@ func TestCreateClassicGameDoesNotNotifyWhenLobbyStaysOpen(t *testing.T) {
 	var notified []string
 	svc.SetGameStartedHook(func(gameID string) { notified = append(notified, gameID) })
 
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 1); err != nil {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 1, false, false); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
 	if len(notified) != 0 {
@@ -587,7 +657,7 @@ func TestCreateClassicGameEnqueuesGameStartedWhenFullAtCreation(t *testing.T) {
 	outboxStore := &fakeDiscordOutboxStore{}
 	svc.SetDiscordOutboxStore(outboxStore)
 
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2); err != nil {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 2, false, false); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
 	var engine risk.Game
@@ -611,7 +681,7 @@ func TestCreateClassicGameDoesNotEnqueueGameStartedWhenLobbyStaysOpen(t *testing
 	outboxStore := &fakeDiscordOutboxStore{}
 	svc.SetDiscordOutboxStore(outboxStore)
 
-	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 1); err != nil {
+	if _, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 1, false, false); err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
 	if outboxStore.gameStartedCalls != 0 {

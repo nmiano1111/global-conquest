@@ -29,7 +29,7 @@ type userService interface {
 }
 
 type gameService interface {
-	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error)
+	CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool) (store.Game, error)
 	JoinClassicGame(ctx context.Context, gameID, playerID string, joinerIsAdmin, joinerIsSandboxed bool) (store.Game, error)
 	GetGameForViewer(ctx context.Context, gameID, viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool) (store.Game, error)
 	GetGameBootstrap(ctx context.Context, gameID, requesterUserID string, requesterIsAdmin, requesterIsSandboxed bool) (service.GameBootstrap, error)
@@ -85,8 +85,18 @@ type createGameReq struct {
 	// bot-controlled players immediately. Omitted/zero preserves existing
 	// human-only game creation. The creator always occupies one human
 	// slot, so bot_count must leave at least one open (validated again,
-	// authoritatively, in GamesService.CreateClassicGame).
+	// authoritatively, in GamesService.CreateClassicGame) -- unless
+	// AllBots is set.
 	BotCount int `json:"bot_count" binding:"min=0"`
+	// AllBots requests a game with zero human players: every player_count
+	// slot filled by a bot, with the creator never occupying a player
+	// slot themselves (bot_count must equal player_count exactly).
+	// Admin-only -- see CreateGame.
+	AllBots bool `json:"all_bots"`
+	// Hidden excludes the created game from ListGames for everyone but
+	// admins and its own creator (see GamesService's gameVisible).
+	// Admin-only -- see CreateGame.
+	Hidden bool `json:"hidden"`
 }
 
 type updateGameStateReq struct {
@@ -260,16 +270,23 @@ func (h *Handler) CreateGame(c *gin.Context) {
 		return
 	}
 
+	isAdmin := strings.EqualFold(authUser.Role, "admin")
+
 	setupMode := ""
 	if req.SetupMode == "manual" {
-		if !strings.EqualFold(authUser.Role, "admin") {
+		if !isAdmin {
 			c.JSON(http.StatusForbidden, gin.H{"error": "admin role required to set setup_mode"})
 			return
 		}
 		setupMode = "manual"
 	}
 
-	g, err := h.games.CreateClassicGame(c.Request.Context(), authUser.ID, req.PlayerCount, setupMode, req.BotCount)
+	if (req.AllBots || req.Hidden) && !isAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "admin role required for all_bots/hidden games"})
+		return
+	}
+
+	g, err := h.games.CreateClassicGame(c.Request.Context(), authUser.ID, req.PlayerCount, setupMode, req.BotCount, req.AllBots, req.Hidden)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidGameInput),

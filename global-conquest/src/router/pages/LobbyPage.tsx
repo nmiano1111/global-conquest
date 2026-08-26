@@ -62,6 +62,8 @@ export function LobbyPage() {
   const [playerCount, setPlayerCount] = useState(3);
   const [botCount, setBotCount] = useState(0);
   const [setupMode, setSetupMode] = useState<"random" | "manual">("random");
+  const [allBots, setAllBots] = useState(false);
+  const [hidden, setHidden] = useState(false);
   const [creatingGame, setCreatingGame] = useState(false);
   const [createError, setCreateError] = useState("");
   const [joiningGameID, setJoiningGameID] = useState("");
@@ -194,19 +196,39 @@ export function LobbyPage() {
 
   const onPlayerCountChange = (value: number) => {
     setPlayerCount(value);
+    if (allBots) {
+      // An all-bots game has no creator slot to leave open -- bot_count
+      // must track player_count exactly.
+      setBotCount(value);
+      return;
+    }
     // At least one human slot (the creator) must remain open, so clamp
     // rather than leave a bot count the new total can no longer support.
     setBotCount((prev) => Math.min(prev, Math.max(0, value - 1)));
   };
 
+  const onAllBotsChange = (value: boolean) => {
+    setAllBots(value);
+    // Toggling on fills every slot with bots (no creator slot to leave
+    // open); toggling off falls back to the normal "leave one slot open"
+    // default.
+    setBotCount(value ? playerCount : 0);
+  };
+
   const onCreateGame = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setCreateError("");
+    const isAdmin = auth.user?.role === "admin";
     if (playerCount < 3 || playerCount > 6) {
       setCreateError("Player count must be between 3 and 6.");
       return;
     }
-    if (botCount < 0 || botCount > playerCount - 1) {
+    if (isAdmin && allBots) {
+      if (botCount !== playerCount) {
+        setCreateError("An all-bots game must have bot_count equal to player_count.");
+        return;
+      }
+    } else if (botCount < 0 || botCount > playerCount - 1) {
       setCreateError("Computer players must leave at least one human slot open.");
       return;
     }
@@ -216,7 +238,9 @@ export function LobbyPage() {
       await createGame({
         playerCount,
         botCount,
-        setupMode: auth.user?.role === "admin" ? setupMode : undefined,
+        setupMode: isAdmin ? setupMode : undefined,
+        allBots: isAdmin ? allBots : undefined,
+        hidden: isAdmin ? hidden : undefined,
       });
       await loadGames();
     } catch (err) {
@@ -370,6 +394,7 @@ export function LobbyPage() {
                 className={`${inputClass} w-28`}
                 value={botCount}
                 onChange={(e) => setBotCount(Number(e.target.value))}
+                disabled={allBots}
               >
                 {Array.from({ length: maxBotCount + 1 }, (_, n) => n).map((n) => (
                   <option key={n} value={n}>
@@ -379,17 +404,35 @@ export function LobbyPage() {
               </select>
             </label>
             {auth.user?.role === "admin" && (
-              <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
-                Setup Mode
-                <select
-                  className={`${inputClass} w-36`}
-                  value={setupMode}
-                  onChange={(e) => setSetupMode(e.target.value as "random" | "manual")}
-                >
-                  <option value="random">Random</option>
-                  <option value="manual">Manual</option>
-                </select>
-              </label>
+              <>
+                <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
+                  Setup Mode
+                  <select
+                    className={`${inputClass} w-36`}
+                    value={setupMode}
+                    onChange={(e) => setSetupMode(e.target.value as "random" | "manual")}
+                  >
+                    <option value="random">Random</option>
+                    <option value="manual">Manual</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-1.5 pb-1.5 text-xs font-medium text-gc-muted">
+                  <input
+                    type="checkbox"
+                    checked={allBots}
+                    onChange={(e) => onAllBotsChange(e.target.checked)}
+                  />
+                  All bots (admin)
+                </label>
+                <label className="flex items-center gap-1.5 pb-1.5 text-xs font-medium text-gc-muted">
+                  <input
+                    type="checkbox"
+                    checked={hidden}
+                    onChange={(e) => setHidden(e.target.checked)}
+                  />
+                  Hidden (admin)
+                </label>
+              </>
             )}
             <button className={buttonPrimaryClass} type="submit" disabled={creatingGame}>
               {creatingGame ? "Creating…" : "Create Game"}
@@ -398,9 +441,12 @@ export function LobbyPage() {
           <p className="mt-2 text-xs text-gc-muted">
             {playerCount}-player game: {pluralize(playerCount - botCount, "human player")}, {pluralize(botCount, "computer player")}.
             {" "}
-            {playerCount - botCount - 1 > 0
-              ? `You occupy one of the human slots. ${pluralize(playerCount - botCount - 1, "additional human player")} will need to join.`
-              : "You occupy the only human slot."}
+            {allBots
+              ? "No human players; you (admin) do not occupy a slot."
+              : playerCount - botCount - 1 > 0
+                ? `You occupy one of the human slots. ${pluralize(playerCount - botCount - 1, "additional human player")} will need to join.`
+                : "You occupy the only human slot."}
+            {hidden ? " This game will be hidden from other players." : ""}
           </p>
           {createError ? (
             <p className="mt-2 text-sm text-gc-danger">{createError}</p>
@@ -521,6 +567,11 @@ export function LobbyPage() {
                       {g.viewerEliminated ? (
                         <span className="rounded-full border border-gc-danger/40 bg-gc-danger/10 px-2 py-0.5 text-[11px] font-medium text-gc-danger">
                           Eliminated
+                        </span>
+                      ) : null}
+                      {g.isHidden ? (
+                        <span className="rounded-full border border-gc-border bg-gc-surface-2 px-2 py-0.5 text-[11px] font-medium text-gc-muted">
+                          Hidden
                         </span>
                       ) : null}
                     </div>

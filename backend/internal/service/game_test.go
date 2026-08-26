@@ -141,22 +141,22 @@ func TestCreateClassicGameValidation(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	_, err := svc.CreateClassicGame(context.Background(), "", 3, "", 0)
+	_, err := svc.CreateClassicGame(context.Background(), "", 3, "", 0, false, false)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", 1, "", 0)
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 1, "", 0, false, false)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", 2, "", 0)
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 2, "", 0, false, false)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}
 
-	_, err = svc.CreateClassicGame(context.Background(), "u1", 7, "", 0)
+	_, err = svc.CreateClassicGame(context.Background(), "u1", 7, "", 0, false, false)
 	if !errors.Is(err, ErrInvalidGameInput) {
 		t.Fatalf("expected ErrInvalidGameInput for player count, got %v", err)
 	}
@@ -294,7 +294,7 @@ func TestCreateClassicGamePersistsLobbyState(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	out, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 0)
+	out, err := svc.CreateClassicGame(context.Background(), "u1", 4, "", 0, false, false)
 	if err != nil {
 		t.Fatalf("create classic game: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestCreateClassicGameRejectsUnknownOwner(t *testing.T) {
 		updateStateFn:    func(context.Context, db.Querier, store.UpdateGameState) (store.Game, error) { return store.Game{}, nil },
 	})
 
-	_, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 0)
+	_, err := svc.CreateClassicGame(context.Background(), "u1", 3, "", 0, false, false)
 	if !errors.Is(err, ErrUnknownPlayerIDs) {
 		t.Fatalf("expected ErrUnknownPlayerIDs, got %v", err)
 	}
@@ -1386,23 +1386,27 @@ func TestGameVisible(t *testing.T) {
 		viewerSandboxed bool
 		ownerUserID     string
 		gameSandboxed   bool
+		gameHidden      bool
 		want            bool
 	}{
-		{"admin sees a regular game", "admin1", true, false, "u1", false, true},
-		{"admin sees a sandboxed game", "admin1", true, false, "u1", true, true},
-		{"owner always sees their own sandboxed game", "u1", false, false, "u1", true, true},
-		{"owner always sees their own regular game", "u1", false, false, "u1", false, true},
-		{"regular viewer sees a regular game", "u2", false, false, "u1", false, true},
-		{"regular viewer blocked from a sandboxed game", "u2", false, false, "u1", true, false},
-		{"sandboxed viewer blocked from a regular game", "u2", false, true, "u1", false, false},
-		{"sandboxed viewer blocked from another sandboxed player's game", "u2", false, true, "u1", true, false},
+		{"admin sees a regular game", "admin1", true, false, "u1", false, false, true},
+		{"admin sees a sandboxed game", "admin1", true, false, "u1", true, false, true},
+		{"admin sees a hidden game", "admin1", true, false, "u1", false, true, true},
+		{"owner always sees their own sandboxed game", "u1", false, false, "u1", true, false, true},
+		{"owner always sees their own regular game", "u1", false, false, "u1", false, false, true},
+		{"owner always sees their own hidden game", "u1", false, false, "u1", false, true, true},
+		{"regular viewer sees a regular game", "u2", false, false, "u1", false, false, true},
+		{"regular viewer blocked from a sandboxed game", "u2", false, false, "u1", true, false, false},
+		{"regular viewer blocked from a hidden game", "u2", false, false, "u1", false, true, false},
+		{"sandboxed viewer blocked from a regular game", "u2", false, true, "u1", false, false, false},
+		{"sandboxed viewer blocked from another sandboxed player's game", "u2", false, true, "u1", true, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := gameVisible(tc.viewerUserID, tc.viewerIsAdmin, tc.viewerSandboxed, tc.ownerUserID, tc.gameSandboxed)
+			got := gameVisible(tc.viewerUserID, tc.viewerIsAdmin, tc.viewerSandboxed, tc.ownerUserID, tc.gameSandboxed, tc.gameHidden)
 			if got != tc.want {
-				t.Errorf("gameVisible(%q, %v, %v, %q, %v) = %v, want %v",
-					tc.viewerUserID, tc.viewerIsAdmin, tc.viewerSandboxed, tc.ownerUserID, tc.gameSandboxed, got, tc.want)
+				t.Errorf("gameVisible(%q, %v, %v, %q, %v, %v) = %v, want %v",
+					tc.viewerUserID, tc.viewerIsAdmin, tc.viewerSandboxed, tc.ownerUserID, tc.gameSandboxed, tc.gameHidden, got, tc.want)
 			}
 		})
 	}

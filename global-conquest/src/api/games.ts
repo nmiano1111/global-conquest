@@ -13,6 +13,8 @@ export type GameRecord = {
   phase: string;
   currentPlayerName: string;
   viewerEliminated: boolean;
+  /** Excluded from other players' game lists (admin-only, set at creation). */
+  isHidden: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -22,6 +24,10 @@ export type CreateGameRequest = {
   setupMode?: string;
   /** How many of playerCount should be bot-controlled. Omitted/0 creates a human-only game. */
   botCount?: number;
+  /** Admin-only: every slot is bot-controlled, and the creator does not occupy a player slot. */
+  allBots?: boolean;
+  /** Admin-only: excludes the created game from other players' game lists. */
+  hidden?: boolean;
 };
 
 export type Card = {
@@ -108,6 +114,7 @@ function normalizeGame(value: unknown): GameRecord {
       phase: "",
       currentPlayerName: "",
       viewerEliminated: false,
+      isHidden: false,
       createdAt: "",
       updatedAt: "",
     };
@@ -146,6 +153,7 @@ function normalizeGame(value: unknown): GameRecord {
     phase: readString(record.phase ?? record.Phase),
     currentPlayerName: readString(record.current_player_name ?? record.currentPlayerName),
     viewerEliminated: readBoolean(record.viewer_eliminated ?? record.viewerEliminated),
+    isHidden: readBoolean(record.is_hidden ?? record.isHidden ?? record.IsHidden),
     createdAt: readString(record.created_at ?? record.CreatedAt),
     updatedAt: readString(record.updated_at ?? record.UpdatedAt),
   };
@@ -274,6 +282,8 @@ export async function createGame(input: CreateGameRequest): Promise<GameRecord> 
   const data: Record<string, unknown> = { player_count: input.playerCount };
   if (input.setupMode) data.setup_mode = input.setupMode;
   if (input.botCount) data.bot_count = input.botCount;
+  if (input.allBots) data.all_bots = true;
+  if (input.hidden) data.hidden = true;
   const res = await request<unknown>({ method: "POST", url: "/games/", data });
   return normalizeGame(res);
 }

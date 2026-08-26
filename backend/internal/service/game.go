@@ -486,28 +486,43 @@ type GameOccupyRequirement struct {
 // CreateClassicGame creates a new classic-mode game lobby owned by
 // ownerUserID with room for playerCount players (3-6), of which up to
 // botCount may be bot-controlled (the creator always occupies one human
-// slot, so botCount must be between 0 and playerCount-1). setupMode selects
-// how territories are assigned once the lobby fills ("manual" for random
-// territory claims via risk.NewClassicRandomTerritoryGame, anything else
-// for auto-distributed armies via risk.NewClassicAutoStartGame). Bot
-// players are assigned synthetic UUIDs and curated wrestler display names
-// immediately and occupy lobby slots right away — they are never inserted
-// into the users or game_players tables. If bots fill every non-creator
-// slot, the game is started immediately instead of waiting for
-// JoinClassicGame, and SetGameStartedHook's callback (if configured) is
-// invoked. It returns ErrInvalidGameInput for invalid ownerUserID,
-// playerCount, or botCount, and ErrUnknownPlayerIDs if ownerUserID does not
-// correspond to an existing user.
-func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int) (store.Game, error) {
+// slot, so botCount must be between 0 and playerCount-1) -- unless allBots
+// is set, in which case botCount must equal playerCount exactly and the
+// creator never occupies a player slot at all: the game is entirely
+// bot-controlled, with ownerUserID only recorded as the game's creator/
+// manager. allBots and hidden are both admin-only in practice (validated
+// in httpapi.Handler.CreateGame, not here -- this method trusts whatever
+// its caller already authorized, the same way setupMode's "manual" value
+// is handled). setupMode selects how territories are assigned once the
+// lobby fills ("manual" for random territory claims via
+// risk.NewClassicRandomTerritoryGame, anything else for auto-distributed
+// armies via risk.NewClassicAutoStartGame). Bot players are assigned
+// synthetic UUIDs and curated wrestler display names immediately and
+// occupy lobby slots right away — they are never inserted into the users
+// or game_players tables. If bots fill every non-creator slot (or every
+// slot, for an allBots game), the game is started immediately instead of
+// waiting for JoinClassicGame, and SetGameStartedHook's callback (if
+// configured) is invoked. hidden sets the created game's IsHidden flag
+// (see gameVisible) — excluded from ListGames for everyone but admins and
+// its own creator. It returns ErrInvalidGameInput for invalid
+// ownerUserID, playerCount, or botCount, and ErrUnknownPlayerIDs if
+// ownerUserID does not correspond to an existing user.
+func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool) (store.Game, error) {
 	if ownerUserID == "" {
 		return store.Game{}, ErrInvalidGameInput
 	}
 	if playerCount < 3 || playerCount > 6 {
 		return store.Game{}, ErrInvalidGameInput
 	}
-	// The creator always occupies one human slot, so at most playerCount-1
-	// slots may be bots.
-	if botCount < 0 || botCount > playerCount-1 {
+	if allBots {
+		// Every slot must be a bot -- there is no creator slot to leave
+		// open.
+		if botCount != playerCount {
+			return store.Game{}, ErrInvalidGameInput
+		}
+	} else if botCount < 0 || botCount > playerCount-1 {
+		// The creator always occupies one human slot, so at most
+		// playerCount-1 slots may be bots.
 		return store.Game{}, ErrInvalidGameInput
 	}
 
@@ -531,7 +546,10 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 		ownerName = names[ownerUserID]
 	}
 
-	playerIDs := []string{ownerUserID}
+	var playerIDs []string
+	if !allBots {
+		playerIDs = []string{ownerUserID}
+	}
 	botNames := map[string]string{}
 	if botCount > 0 {
 		assigned := s.assignBotNames(botCount, []string{ownerName})
@@ -576,6 +594,7 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 		Status:      status,
 		State:       stateJSON,
 		IsSandboxed: ownerSandboxed,
+		IsHidden:    hidden,
 	})
 	if err != nil {
 		return store.Game{}, err
@@ -679,18 +698,23 @@ func anyHuman(players []risk.PlayerState, ids ...string) bool {
 
 // gameVisible reports whether a viewer with the given admin/sandboxed
 // status may see, join, or otherwise access ownerUserID's game, given that
-// game's own (creation-time-snapshotted) sandboxed flag. An admin sees
-// everything; a viewer always sees their own games; otherwise a sandboxed
-// viewer and a sandboxed game are each invisible to everyone but the two
-// exceptions above -- so a sandboxed player is isolated even from other
+// game's own (creation-time-snapshotted) sandboxed and hidden flags. An
+// admin sees everything; a viewer always sees their own games; otherwise a
+// hidden game (see GamesService.CreateClassicGame's hidden parameter) is
+// invisible to everyone but those two exceptions, and a sandboxed viewer
+// and a sandboxed game are each invisible to everyone but those two
+// exceptions -- so a sandboxed player is isolated even from other
 // sandboxed players' games, and a regular player never sees a sandboxed
 // player's games.
-func gameVisible(viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool, ownerUserID string, gameIsSandboxed bool) bool {
+func gameVisible(viewerUserID string, viewerIsAdmin, viewerIsSandboxed bool, ownerUserID string, gameIsSandboxed, gameIsHidden bool) bool {
 	if viewerIsAdmin {
 		return true
 	}
 	if viewerUserID != "" && viewerUserID == ownerUserID {
 		return true
+	}
+	if gameIsHidden {
+		return false
 	}
 	return !viewerIsSandboxed && !gameIsSandboxed
 }
@@ -768,7 +792,7 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 		if g.Status != "lobby" {
 			return ErrGameNotJoinable
 		}
-		if !gameVisible(playerID, joinerIsAdmin, joinerIsSandboxed, g.OwnerUserID, g.IsSandboxed) {
+		if !gameVisible(playerID, joinerIsAdmin, joinerIsSandboxed, g.OwnerUserID, g.IsSandboxed, g.IsHidden) {
 			return ErrGameForbidden
 		}
 
@@ -915,7 +939,7 @@ func (s *GamesService) GetGameForViewer(ctx context.Context, gameID, viewerUserI
 	if err != nil {
 		return store.Game{}, err
 	}
-	if !gameVisible(viewerUserID, viewerIsAdmin, viewerIsSandboxed, g.OwnerUserID, g.IsSandboxed) {
+	if !gameVisible(viewerUserID, viewerIsAdmin, viewerIsSandboxed, g.OwnerUserID, g.IsSandboxed, g.IsHidden) {
 		return store.Game{}, ErrGameForbidden
 	}
 	return g, nil
@@ -940,7 +964,7 @@ func (s *GamesService) CanAccessGame(ctx context.Context, gameID, userID string)
 	if err != nil {
 		return false, err
 	}
-	return gameVisible(userID, isAdmin, isSandboxed, g.OwnerUserID, g.IsSandboxed), nil
+	return gameVisible(userID, isAdmin, isSandboxed, g.OwnerUserID, g.IsSandboxed, g.IsHidden), nil
 }
 
 // DeleteGame permanently removes a game and everything derived from it
@@ -1466,7 +1490,7 @@ func (s *GamesService) GetGameBootstrap(ctx context.Context, gameID, requesterUs
 	if err != nil {
 		return GameBootstrap{}, err
 	}
-	if !gameVisible(requesterUserID, requesterIsAdmin, requesterIsSandboxed, g.OwnerUserID, g.IsSandboxed) {
+	if !gameVisible(requesterUserID, requesterIsAdmin, requesterIsSandboxed, g.OwnerUserID, g.IsSandboxed, g.IsHidden) {
 		return GameBootstrap{}, ErrGameForbidden
 	}
 
@@ -1652,7 +1676,7 @@ func (s *GamesService) ListGameReplayEvents(ctx context.Context, gameID, request
 	if err != nil {
 		return nil, err
 	}
-	if !gameVisible(requesterUserID, requesterIsAdmin, requesterIsSandboxed, g.OwnerUserID, g.IsSandboxed) {
+	if !gameVisible(requesterUserID, requesterIsAdmin, requesterIsSandboxed, g.OwnerUserID, g.IsSandboxed, g.IsHidden) {
 		return nil, ErrGameForbidden
 	}
 	if s.gameReplayEvents == nil {
