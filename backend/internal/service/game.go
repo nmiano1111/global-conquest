@@ -33,6 +33,10 @@ type gameDB interface {
 type gamePlayersStore interface {
 	InsertGamePlayers(ctx context.Context, q db.Querier, players []store.NewGamePlayer) error
 	SetGameWinner(ctx context.Context, q db.Querier, gameID, winnerUserID string) error
+}
+
+type playerGameStatsStore interface {
+	RecordGameResult(ctx context.Context, q db.Querier, gameID string, playerCount int, results []store.PlayerGameResult) error
 	GetLeaderboard(ctx context.Context, q db.Querier, limit int) ([]store.LeaderboardEntry, error)
 }
 
@@ -66,6 +70,7 @@ type GamesService struct {
 	games              store.GamesStore
 	gameEvent          gameEventStore
 	gamePlayers        gamePlayersStore
+	playerGameStats    playerGameStatsStore
 	gameDomainEvents   gameDomainEventStore
 	gameReplayEvents   gameReplayEventStore
 	discordOutbox      discordOutboxStore
@@ -107,11 +112,12 @@ var (
 )
 
 // NewGamesService constructs a GamesService backed by the given database
-// and games store. The optional stores (game events, game players, domain
-// events, Discord outbox) and hooks are wired in separately via the
-// SetGameEventStore/SetGamePlayersStore/SetGameDomainEventStore/
-// SetDiscordOutboxStore/SetBotNameAssigner/SetGameStartedHook setters, and
-// every one of them is nil-safe when unset.
+// and games store. The optional stores (game events, game players, player
+// game stats, domain events, Discord outbox) and hooks are wired in
+// separately via the SetGameEventStore/SetGamePlayersStore/
+// SetPlayerGameStatsStore/SetGameDomainEventStore/SetDiscordOutboxStore/
+// SetBotNameAssigner/SetGameStartedHook setters, and every one of them is
+// nil-safe when unset.
 func NewGamesService(db gameDB, games store.GamesStore) *GamesService {
 	return &GamesService{
 		db:    db,
@@ -198,11 +204,22 @@ func (s *GamesService) SetGameEventStore(gameEvent gameEventStore) {
 }
 
 // SetGamePlayersStore wires in the store used to record game_players rows
-// (for the leaderboard) and set a game's winner. It is nil-safe: until set,
-// GetLeaderboard returns an empty result and player-row bookkeeping is
-// skipped.
+// and set a game's winner there. It is nil-safe: until set, player-row
+// bookkeeping is skipped. This store no longer backs GetLeaderboard -- see
+// SetPlayerGameStatsStore.
 func (s *GamesService) SetGamePlayersStore(gp gamePlayersStore) {
 	s.gamePlayers = gp
+}
+
+// SetPlayerGameStatsStore wires in the store used to record durable
+// per-player win/loss rows (player_game_stats) at game-completion time and
+// to serve GetLeaderboard. Unlike game_players, these rows have no FK to
+// games and are never touched by DeleteGame, so they remain the
+// authoritative history for a game after it's deleted. It is nil-safe:
+// until set, no rows are recorded and GetLeaderboard returns an empty
+// result.
+func (s *GamesService) SetPlayerGameStatsStore(ps playerGameStatsStore) {
+	s.playerGameStats = ps
 }
 
 // SetGameDomainEventStore wires in the store used to persist typed
@@ -719,6 +736,32 @@ func humanGamePlayers(gameID string, players []risk.PlayerState) []store.NewGame
 	return out
 }
 
+// allHuman reports whether every player is human. Recording a
+// player_game_stats row is skipped entirely for games with any bot
+// player, mirroring GetLeaderboard's existing human-only filter
+// (internal/store/game_players.go) -- bots have no users row, so a mixed
+// game can't be recorded without either violating the FK or silently
+// dropping the bot's seat from player_count.
+func allHuman(players []risk.PlayerState) bool {
+	for _, p := range players {
+		if p.IsBot() {
+			return false
+		}
+	}
+	return true
+}
+
+// humanGameResults builds one PlayerGameResult per player, recording
+// whether each won. Callers must only invoke this for all-human games
+// (see allHuman).
+func humanGameResults(players []risk.PlayerState, winnerID string) []store.PlayerGameResult {
+	out := make([]store.PlayerGameResult, 0, len(players))
+	for _, p := range players {
+		out = append(out, store.PlayerGameResult{UserID: p.ID, Won: p.ID == winnerID})
+	}
+	return out
+}
+
 // anyHuman reports whether at least one of the given player IDs belongs to
 // a human. Discord notifications name one or more specific players (e.g.
 // "X ended their turn, Y is up"); a Discord channel only cares about a
@@ -942,18 +985,19 @@ func (s *GamesService) JoinClassicGame(ctx context.Context, gameID, playerID str
 	return out, err
 }
 
-// GetLeaderboard returns up to limit leaderboard entries ordered by the
-// underlying store's ranking. A limit of 0 or less defaults to 20. If no
-// game-players store has been configured via SetGamePlayersStore, it
-// returns an empty slice rather than an error.
+// GetLeaderboard returns up to limit leaderboard entries, each including a
+// win/loss breakdown by player count, ordered by the underlying store's
+// ranking. A limit of 0 or less defaults to 20. If no player-game-stats
+// store has been configured via SetPlayerGameStatsStore, it returns an
+// empty slice rather than an error.
 func (s *GamesService) GetLeaderboard(ctx context.Context, limit int) ([]store.LeaderboardEntry, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	if s.gamePlayers == nil {
+	if s.playerGameStats == nil {
 		return []store.LeaderboardEntry{}, nil
 	}
-	return s.gamePlayers.GetLeaderboard(ctx, s.db.Queryer(), limit)
+	return s.playerGameStats.GetLeaderboard(ctx, s.db.Queryer(), limit)
 }
 
 // GetGame fetches the game identified by gameID without locking the row.
@@ -1423,6 +1467,11 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 		}
 		if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.gamePlayers != nil {
 			if err := s.gamePlayers.SetGameWinner(ctx, q, g.ID, engine.Winner); err != nil {
+				return err
+			}
+		}
+		if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.playerGameStats != nil && allHuman(engine.Players) {
+			if err := s.playerGameStats.RecordGameResult(ctx, q, g.ID, len(engine.Players), humanGameResults(engine.Players, engine.Winner)); err != nil {
 				return err
 			}
 		}

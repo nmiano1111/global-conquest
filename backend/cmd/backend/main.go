@@ -66,6 +66,8 @@ func main() {
 	gamesSvc.SetGameEventStore(gameEventStore)
 	gamePlayersStore := store.NewPostgresGamePlayersStore()
 	gamesSvc.SetGamePlayersStore(gamePlayersStore)
+	playerGameStatsStore := store.NewPostgresPlayerGameStatsStore()
+	gamesSvc.SetPlayerGameStatsStore(playerGameStatsStore)
 	gameDomainEventStore := store.NewPostgresGameDomainEventStore()
 	gamesSvc.SetGameDomainEventStore(gameDomainEventStore)
 	gameReplayEventStore := store.NewPostgresGameReplayEventStore()
