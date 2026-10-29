@@ -94,7 +94,9 @@ func NewRouter(h *Handler) *gin.Engine {
 			admin.PUT("/bot-tuning", h.UpdateBotTuningConfig)
 			admin.POST("/maps", h.CreateMap)
 			admin.GET("/maps", h.ListMaps)
+			admin.POST("/maps/graph", h.CreateMapFromGraph)
 			admin.GET("/maps/:id", h.GetMap)
+			admin.PUT("/maps/:id", h.UpdateMap)
 			admin.DELETE("/maps/:id", h.DeleteMap)
 		}
 

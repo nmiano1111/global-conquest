@@ -23,9 +23,13 @@ export type MapTerritoryPosition = {
 
 export type MapDetail = MapSummary & {
   continents: Record<string, MapContinentInfo>;
+  /** Continent names in authored order (the board's own map is unordered). */
+  continentOrder: string[];
   territories: Record<string, MapTerritoryPosition>;
   edges: Array<[string, string]>;
   order: string[];
+  /** Games referencing this map; a map with any games is read-only. */
+  gameCount: number;
 };
 
 export type CreateMapContinentRequest = {
@@ -44,6 +48,14 @@ export type CreateMapRequest = {
   name: string;
   continents: CreateMapContinentRequest[];
   borders: CreateMapBorderRequest[];
+};
+
+/** A fully hand-drawn board from the map editor. */
+export type MapGraphRequest = {
+  name: string;
+  continents: Array<{ name: string; bonus: number }>;
+  territories: Array<{ name: string; continent: string; x: number; y: number }>;
+  edges: Array<[string, string]>;
 };
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -114,7 +126,25 @@ function normalizeMapDetail(value: unknown): MapDetail {
     }
   }
 
-  return { ...summary, continents, territories, edges, order };
+  // spec.Continents keeps the authored continent order; mapgen.MapSpec has
+  // no JSON tags, so its fields serialize with Go's capitalized names.
+  const specContinents = asRecord(definition?.spec)?.Continents;
+  const continentOrder = Array.isArray(specContinents)
+    ? specContinents.map((c) => readString(asRecord(c)?.Name)).filter((name) => name in continents)
+    : [];
+  for (const name of Object.keys(continents)) {
+    if (!continentOrder.includes(name)) continentOrder.push(name);
+  }
+
+  return {
+    ...summary,
+    continents,
+    continentOrder,
+    territories,
+    edges,
+    order,
+    gameCount: readNumber(record?.game_count),
+  };
 }
 
 export async function listMaps(): Promise<MapSummary[]> {
@@ -135,6 +165,16 @@ export async function createMap(input: CreateMapRequest): Promise<MapDetail> {
     borders: input.borders.map((b) => ({ a: b.a, b: b.b, crossings: b.crossings })),
   };
   const res = await request<unknown>({ method: "POST", url: "/admin/maps", data });
+  return normalizeMapDetail(res);
+}
+
+export async function createMapFromGraph(input: MapGraphRequest): Promise<MapDetail> {
+  const res = await request<unknown>({ method: "POST", url: "/admin/maps/graph", data: input });
+  return normalizeMapDetail(res);
+}
+
+export async function updateMap(mapID: string, input: MapGraphRequest): Promise<MapDetail> {
+  const res = await request<unknown>({ method: "PUT", url: `/admin/maps/${encodeURIComponent(mapID)}`, data: input });
   return normalizeMapDetail(res);
 }
 

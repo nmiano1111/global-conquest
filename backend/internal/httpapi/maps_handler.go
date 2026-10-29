@@ -28,6 +28,43 @@ type createMapReq struct {
 	Borders    []createMapBorderReq    `json:"borders" binding:"dive"`
 }
 
+type mapGraphContinentReq struct {
+	Name  string `json:"name" binding:"required"`
+	Bonus int    `json:"bonus" binding:"min=0"`
+}
+
+type mapGraphTerritoryReq struct {
+	Name      string  `json:"name" binding:"required"`
+	Continent string  `json:"continent" binding:"required"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+}
+
+// mapGraphReq is a fully hand-drawn board from the admin map editor; see
+// mapgen.MapGraph. Edges are unordered [a, b] territory-name pairs.
+type mapGraphReq struct {
+	Name        string                 `json:"name" binding:"required"`
+	Continents  []mapGraphContinentReq `json:"continents" binding:"required,min=2,dive"`
+	Territories []mapGraphTerritoryReq `json:"territories" binding:"required,min=1,dive"`
+	Edges       [][2]string            `json:"edges"`
+}
+
+func (r mapGraphReq) toGraph() mapgen.MapGraph {
+	g := mapgen.MapGraph{
+		Name:        r.Name,
+		Continents:  make([]mapgen.GraphContinent, len(r.Continents)),
+		Territories: make([]mapgen.GraphTerritory, len(r.Territories)),
+		Edges:       r.Edges,
+	}
+	for i, c := range r.Continents {
+		g.Continents[i] = mapgen.GraphContinent{Name: c.Name, Bonus: c.Bonus}
+	}
+	for i, t := range r.Territories {
+		g.Territories[i] = mapgen.GraphTerritory{Name: t.Name, Continent: t.Continent, X: t.X, Y: t.Y}
+	}
+	return g
+}
+
 // CreateMap godoc
 // @Summary      Create a custom map
 // @Description  Generates and persists a new admin-authored map from a continent/border spec. Admin only.
@@ -73,6 +110,84 @@ func (h *Handler) CreateMap(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, m)
+}
+
+// CreateMapFromGraph godoc
+// @Summary      Create a custom map from a drawn graph
+// @Description  Persists a new admin-authored map from an explicit territory/continent/edge graph drawn in the map editor. Admin only.
+// @Tags         maps
+// @Accept       json
+// @Produce      json
+// @Param        request body mapGraphReq true "Map graph"
+// @Success      201 {object} service.MapDetail
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/admin/maps/graph [post]
+func (h *Handler) CreateMapFromGraph(c *gin.Context) {
+	var req mapGraphReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	m, err := h.maps.CreateMapFromGraph(c.Request.Context(), authUser.ID, req.Name, req.toGraph())
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidMapInput) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create map"})
+		return
+	}
+	c.JSON(http.StatusCreated, m)
+}
+
+// UpdateMap godoc
+// @Summary      Update a custom map
+// @Description  Replaces a map's name and board with a drawn graph. Fails if any game references the map. Admin only.
+// @Tags         maps
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Map ID"
+// @Param        request body mapGraphReq true "Map graph"
+// @Success      200 {object} service.MapDetail
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      409 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/admin/maps/{id} [put]
+func (h *Handler) UpdateMap(c *gin.Context) {
+	mapID := c.Param("id")
+	if mapID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "map id is required"})
+		return
+	}
+	var req mapGraphReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	m, err := h.maps.UpdateMap(c.Request.Context(), mapID, req.Name, req.toGraph())
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidMapInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, service.ErrMapNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "map not found"})
+		case errors.Is(err, service.ErrMapInUse):
+			c.JSON(http.StatusConflict, gin.H{"error": "map is in use by one or more games"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update map"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, m)
 }
 
 // ListMaps godoc

@@ -18,6 +18,19 @@ type fakeMapsStore struct {
 	getByIDFn func(context.Context, db.Querier, string) (store.Map, error)
 	listFn    func(context.Context, db.Querier, string) ([]store.Map, error)
 	deleteFn  func(context.Context, db.Querier, string) error
+	updateFn  func(context.Context, db.Querier, string, store.MapUpdate) (store.Map, error)
+	countFn   func(context.Context, db.Querier, string) (int, error)
+}
+
+func (f *fakeMapsStore) Update(ctx context.Context, q db.Querier, mapID string, in store.MapUpdate) (store.Map, error) {
+	return f.updateFn(ctx, q, mapID, in)
+}
+
+func (f *fakeMapsStore) CountGames(ctx context.Context, q db.Querier, mapID string) (int, error) {
+	if f.countFn == nil {
+		return 0, nil
+	}
+	return f.countFn(ctx, q, mapID)
 }
 
 func (f *fakeMapsStore) Create(ctx context.Context, q db.Querier, in store.NewMap) (store.Map, error) {
@@ -176,5 +189,116 @@ func TestDeleteMap_Success(t *testing.T) {
 
 	if err := svc.DeleteMap(context.Background(), "m1"); err != nil {
 		t.Fatalf("DeleteMap: %v", err)
+	}
+}
+
+func sampleMapGraph() mapgen.MapGraph {
+	return mapgen.MapGraph{
+		Continents: []mapgen.GraphContinent{{Name: "Redland", Bonus: 2}, {Name: "Blueland", Bonus: 1}},
+		Territories: []mapgen.GraphTerritory{
+			{Name: "R1", Continent: "Redland", X: 0, Y: 0},
+			{Name: "R2", Continent: "Redland", X: 10, Y: 0},
+			{Name: "B1", Continent: "Blueland", X: 20, Y: 10},
+		},
+		Edges: [][2]string{{"R1", "R2"}, {"R2", "B1"}},
+	}
+}
+
+func TestCreateMapFromGraph(t *testing.T) {
+	var created store.NewMap
+	fake := &fakeMapsStore{
+		createFn: func(_ context.Context, _ db.Querier, in store.NewMap) (store.Map, error) {
+			created = in
+			return store.Map{ID: "m1", OwnerUserID: in.OwnerUserID, Name: in.Name, Definition: in.Definition}, nil
+		},
+	}
+	svc := NewMapsService(&fakeDB{q: countQuerier{}}, fake)
+
+	out, err := svc.CreateMapFromGraph(context.Background(), "u1", "Drawn", sampleMapGraph())
+	if err != nil {
+		t.Fatalf("CreateMapFromGraph: %v", err)
+	}
+	if created.Name != "Drawn" || created.OwnerUserID != "u1" {
+		t.Fatalf("unexpected insert: %#v", created)
+	}
+	if len(out.Definition.Board.Order) != 3 || !out.Definition.Board.IsAdjacent("R2", "B1") {
+		t.Fatalf("unexpected board: %#v", out.Definition.Board)
+	}
+	if out.Definition.Spec.Name != "Drawn" {
+		t.Fatalf("expected spec name Drawn, got %q", out.Definition.Spec.Name)
+	}
+}
+
+func TestCreateMapFromGraph_InvalidGraph(t *testing.T) {
+	svc := NewMapsService(&fakeDB{q: countQuerier{}}, &fakeMapsStore{})
+	g := sampleMapGraph()
+	g.Edges = g.Edges[:1] // B1 disconnected
+
+	if _, err := svc.CreateMapFromGraph(context.Background(), "u1", "Drawn", g); !errors.Is(err, ErrInvalidMapInput) {
+		t.Fatalf("expected ErrInvalidMapInput, got %v", err)
+	}
+}
+
+func TestUpdateMap(t *testing.T) {
+	var updatedID string
+	fake := &fakeMapsStore{
+		updateFn: func(_ context.Context, _ db.Querier, mapID string, in store.MapUpdate) (store.Map, error) {
+			updatedID = mapID
+			return store.Map{ID: mapID, Name: in.Name, Definition: in.Definition}, nil
+		},
+	}
+	svc := NewMapsService(&fakeDB{q: countQuerier{}}, fake)
+
+	out, err := svc.UpdateMap(context.Background(), "m1", "Renamed", sampleMapGraph())
+	if err != nil {
+		t.Fatalf("UpdateMap: %v", err)
+	}
+	if updatedID != "m1" || out.Name != "Renamed" {
+		t.Fatalf("unexpected update: id=%q out=%#v", updatedID, out)
+	}
+}
+
+func TestUpdateMap_NotFoundVsInUse(t *testing.T) {
+	noRows := func(context.Context, db.Querier, string, store.MapUpdate) (store.Map, error) {
+		return store.Map{}, pgx.ErrNoRows
+	}
+	cases := map[string]struct {
+		getErr error
+		want   error
+	}{
+		"missing map": {getErr: pgx.ErrNoRows, want: ErrMapNotFound},
+		"map in use":  {getErr: nil, want: ErrMapInUse},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeMapsStore{
+				updateFn: noRows,
+				getByIDFn: func(context.Context, db.Querier, string) (store.Map, error) {
+					return store.Map{ID: "m1", Definition: json.RawMessage(`{}`)}, tc.getErr
+				},
+			}
+			svc := NewMapsService(&fakeDB{q: countQuerier{}}, fake)
+			if _, err := svc.UpdateMap(context.Background(), "m1", "Renamed", sampleMapGraph()); !errors.Is(err, tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestGetMap_IncludesGameCount(t *testing.T) {
+	fake := &fakeMapsStore{
+		getByIDFn: func(context.Context, db.Querier, string) (store.Map, error) {
+			return store.Map{ID: "m1", Definition: json.RawMessage(`{}`)}, nil
+		},
+		countFn: func(context.Context, db.Querier, string) (int, error) { return 2, nil },
+	}
+	svc := NewMapsService(&fakeDB{q: countQuerier{}}, fake)
+
+	out, err := svc.GetMap(context.Background(), "m1")
+	if err != nil {
+		t.Fatalf("GetMap: %v", err)
+	}
+	if out.GameCount != 2 {
+		t.Fatalf("expected GameCount 2, got %d", out.GameCount)
 	}
 }

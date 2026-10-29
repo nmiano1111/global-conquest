@@ -13,6 +13,7 @@ import {
   LeaderboardPage,
   LobbyPage,
   LoginPage,
+  MapEditorPage,
   ProfilePage,
   RootLayout,
   SignupPage,
@@ -126,11 +127,33 @@ const adminRoute = createRoute({
   component: AdminPage,
 });
 
+const requireAdmin = ({ context }: { context: RouterContext }) => {
+  if (context.auth.user?.role !== "admin") {
+    throw redirect({ to: "/app/lobby" });
+  }
+};
+
+// The map editor is one page for both drawing a new map and editing an
+// existing one; "new" is a static segment, so it wins over $mapID.
+const newMapRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/admin/maps/new",
+  beforeLoad: requireAdmin,
+  component: MapEditorPage,
+});
+
+const editMapRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/admin/maps/$mapID",
+  beforeLoad: requireAdmin,
+  component: MapEditorPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   signupRoute,
-  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, gameReplayRoute, adminRoute]),
+  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, gameReplayRoute, adminRoute, newMapRoute, editMapRoute]),
 ]);
 
 export const router = createRouter({

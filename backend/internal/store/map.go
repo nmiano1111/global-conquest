@@ -36,11 +36,22 @@ type NewMap struct {
 	Definition json.RawMessage
 }
 
+// MapUpdate is the input for replacing a map's name and definition via
+// Update.
+type MapUpdate struct {
+	// Name is the map's new display name.
+	Name string
+	// Definition is the new JSONB-serialized mapgen.MapDefinition.
+	Definition json.RawMessage
+}
+
 // MapsStore defines the persistence operations for custom maps.
 type MapsStore interface {
 	Create(ctx context.Context, q db.Querier, in NewMap) (Map, error)
 	GetByID(ctx context.Context, q db.Querier, mapID string) (Map, error)
 	List(ctx context.Context, q db.Querier, ownerUserID string) ([]Map, error)
+	Update(ctx context.Context, q db.Querier, mapID string, in MapUpdate) (Map, error)
+	CountGames(ctx context.Context, q db.Querier, mapID string) (int, error)
 	Delete(ctx context.Context, q db.Querier, mapID string) error
 }
 
@@ -112,6 +123,34 @@ func (s *PostgresMapsStore) List(ctx context.Context, exec db.Querier, ownerUser
 		return nil, err
 	}
 	return out, nil
+}
+
+// Update replaces a map's name and definition, but only while no game
+// references it: a game's bootstrap reads its layout from this row, so
+// editing a map in use would desync every game on it. It returns
+// pgx.ErrNoRows both when mapID doesn't exist and when the map is in use;
+// callers distinguish the two with GetByID.
+func (s *PostgresMapsStore) Update(ctx context.Context, exec db.Querier, mapID string, in MapUpdate) (Map, error) {
+	const stmt = `
+		UPDATE maps
+		SET name = $2, definition = $3::jsonb, updated_at = now()
+		WHERE id = $1::uuid
+		  AND NOT EXISTS (SELECT 1 FROM games WHERE map_id = $1::uuid)
+		RETURNING id::text, owner_user_id::text, name, definition, created_at, updated_at
+	`
+	var m Map
+	err := exec.QueryRow(ctx, stmt, mapID, in.Name, in.Definition).Scan(
+		&m.ID, &m.OwnerUserID, &m.Name, &m.Definition, &m.CreatedAt, &m.UpdatedAt,
+	)
+	return m, err
+}
+
+// CountGames returns how many games (of any status) reference mapID.
+func (s *PostgresMapsStore) CountGames(ctx context.Context, exec db.Querier, mapID string) (int, error) {
+	const stmt = `SELECT COUNT(*) FROM games WHERE map_id = $1::uuid`
+	var n int
+	err := exec.QueryRow(ctx, stmt, mapID).Scan(&n)
+	return n, err
 }
 
 // Delete removes a map row. Fails with a foreign_key_violation (pg code

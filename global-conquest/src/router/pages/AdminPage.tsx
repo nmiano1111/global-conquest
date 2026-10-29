@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
 import { getBotTuningConfig, updateBotTuningConfig, type BotPacingConfig, type BotTuningConfig } from "../../api/botTuning";
 import { createMap, deleteMap, getMap, listMaps, type MapDetail, type MapSummary } from "../../api/maps";
@@ -658,18 +658,23 @@ export function AdminPage() {
         <div>
           <h2 className="text-xl font-semibold text-gc-text">Custom Maps</h2>
           <p className="mt-0.5 text-sm text-gc-muted">
-            Generate a custom board graph: continents, per-continent territory counts and army bonuses, and how many
-            territory-to-territory crossings connect each bordering pair of continents.
+            Draw a board by hand in the map editor, or generate one below from continents, per-continent territory
+            counts and army bonuses, and how many crossings connect each bordering pair of continents.
           </p>
         </div>
-        <button
-          className={buttonGhostClass}
-          type="button"
-          onClick={() => void loadMaps()}
-          disabled={mapsLoading || !!busyMapID}
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className={buttonGhostClass}
+            type="button"
+            onClick={() => void loadMaps()}
+            disabled={mapsLoading || !!busyMapID}
+          >
+            Refresh
+          </button>
+          <Link to="/app/admin/maps/new" className={buttonPrimaryClass}>
+            Draw a map
+          </Link>
+        </div>
       </div>
 
       <section className="mb-6 rounded-xl border border-gc-border bg-gc-surface p-4">
@@ -825,6 +830,9 @@ export function AdminPage() {
                 </p>
                 <p className="font-mono text-[11px] text-gc-muted">{m.id}</p>
               </div>
+              <Link to="/app/admin/maps/$mapID" params={{ mapID: m.id }} className={buttonGhostClass}>
+                Open editor
+              </Link>
               <button className={buttonGhostClass} type="button" disabled={isBusy} onClick={() => void handleDeleteMap(m)}>
                 {isBusy ? "Deleting…" : "Delete"}
               </button>

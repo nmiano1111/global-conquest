@@ -121,3 +121,36 @@ func TestPostgresMapsStoreDeleteNotFound(t *testing.T) {
 		t.Fatalf("expected pgx.ErrNoRows, got %v", err)
 	}
 }
+
+func TestPostgresMapsStoreUpdate(t *testing.T) {
+	now := time.Now().UTC()
+	def := json.RawMessage(`{"board":{}}`)
+	q := &stubQuerier{
+		row: &stubRow{values: []any{"m1", "u1", "Renamed", def, now, now}},
+	}
+	s := NewPostgresMapsStore()
+
+	out, err := s.Update(context.Background(), q, "m1", MapUpdate{Name: "Renamed", Definition: def})
+	if err != nil {
+		t.Fatalf("update map: %v", err)
+	}
+	if !strings.Contains(q.lastSQL, "UPDATE maps") || !strings.Contains(q.lastSQL, "NOT EXISTS (SELECT 1 FROM games") {
+		t.Fatalf("expected guarded maps update SQL, got %q", q.lastSQL)
+	}
+	if out.Name != "Renamed" {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestPostgresMapsStoreCountGames(t *testing.T) {
+	q := &stubQuerier{row: &stubRow{values: []any{3}}}
+	s := NewPostgresMapsStore()
+
+	n, err := s.CountGames(context.Background(), q, "m1")
+	if err != nil {
+		t.Fatalf("count games: %v", err)
+	}
+	if n != 3 || !strings.Contains(q.lastSQL, "FROM games WHERE map_id") {
+		t.Fatalf("unexpected count %d / SQL %q", n, q.lastSQL)
+	}
+}

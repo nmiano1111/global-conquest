@@ -19,10 +19,12 @@ var (
 	// not exist.
 	ErrMapNotFound = errors.New("map not found")
 	// ErrInvalidMapInput is returned when CreateMap's spec fails
-	// mapgen.Generate's validation (wraps mapgen.ErrInvalidSpec).
+	// mapgen.Generate's validation, or CreateMapFromGraph/UpdateMap's graph
+	// fails mapgen.FromGraph's (wraps mapgen.ErrInvalidSpec).
 	ErrInvalidMapInput = errors.New("invalid map input")
-	// ErrMapInUse is returned by DeleteMap when one or more games still
-	// reference the map (games.map_id is ON DELETE RESTRICT).
+	// ErrMapInUse is returned by DeleteMap and UpdateMap when one or more
+	// games still reference the map (games.map_id is ON DELETE RESTRICT;
+	// see also store.PostgresMapsStore.Update).
 	ErrMapInUse = errors.New("map is in use by one or more games")
 )
 
@@ -66,7 +68,11 @@ type MapDetail struct {
 	Name        string               `json:"name"`
 	OwnerUserID string               `json:"owner_user_id"`
 	Definition  mapgen.MapDefinition `json:"definition"`
-	CreatedAt   time.Time            `json:"created_at"`
+	// GameCount is how many games reference this map. A map with any games
+	// is read-only (see UpdateMap); populated by GetMap only, always zero
+	// on a freshly created or updated map.
+	GameCount int       `json:"game_count"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // CreateMap generates a new board from spec (via mapgen.Generate) and
@@ -99,6 +105,67 @@ func (s *MapsService) CreateMap(ctx context.Context, ownerUserID, name string, s
 	return toMapDetail(row)
 }
 
+// CreateMapFromGraph builds a board from a hand-drawn graph (via
+// mapgen.FromGraph) and persists it, owned by ownerUserID. It returns a
+// wrapped ErrInvalidMapInput if graph fails validation.
+func (s *MapsService) CreateMapFromGraph(ctx context.Context, ownerUserID, name string, graph mapgen.MapGraph) (MapDetail, error) {
+	if ownerUserID == "" || name == "" {
+		return MapDetail{}, ErrInvalidMapInput
+	}
+	defJSON, err := definitionFromGraph(name, graph)
+	if err != nil {
+		return MapDetail{}, err
+	}
+	row, err := s.maps.Create(ctx, s.db.Queryer(), store.NewMap{
+		OwnerUserID: ownerUserID,
+		Name:        name,
+		Definition:  defJSON,
+	})
+	if err != nil {
+		return MapDetail{}, err
+	}
+	return toMapDetail(row)
+}
+
+// UpdateMap replaces an existing map's name and board with a hand-drawn
+// graph. It returns a wrapped ErrInvalidMapInput if graph fails
+// validation, ErrMapNotFound if mapID does not correspond to a stored map,
+// or ErrMapInUse if any game references it (games read their layout from
+// the map row, so an in-use map is frozen -- save a copy instead).
+func (s *MapsService) UpdateMap(ctx context.Context, mapID, name string, graph mapgen.MapGraph) (MapDetail, error) {
+	if mapID == "" || name == "" {
+		return MapDetail{}, ErrInvalidMapInput
+	}
+	defJSON, err := definitionFromGraph(name, graph)
+	if err != nil {
+		return MapDetail{}, err
+	}
+	row, err := s.maps.Update(ctx, s.db.Queryer(), mapID, store.MapUpdate{Name: name, Definition: defJSON})
+	if err == nil {
+		return toMapDetail(row)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return MapDetail{}, err
+	}
+	// Update matches no row both for a missing map and for one in use.
+	if _, getErr := s.maps.GetByID(ctx, s.db.Queryer(), mapID); getErr != nil {
+		if errors.Is(getErr, pgx.ErrNoRows) {
+			return MapDetail{}, ErrMapNotFound
+		}
+		return MapDetail{}, getErr
+	}
+	return MapDetail{}, ErrMapInUse
+}
+
+func definitionFromGraph(name string, graph mapgen.MapGraph) ([]byte, error) {
+	graph.Name = name
+	def, err := mapgen.FromGraph(graph)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidMapInput, err)
+	}
+	return json.Marshal(def)
+}
+
 // ListMaps returns every stored map as a summary, most recently created
 // first.
 func (s *MapsService) ListMaps(ctx context.Context) ([]MapSummary, error) {
@@ -124,7 +191,8 @@ func (s *MapsService) ListMaps(ctx context.Context) ([]MapSummary, error) {
 	return out, nil
 }
 
-// GetMap fetches a single map's full detail (board + layout) by ID. It
+// GetMap fetches a single map's full detail (board + layout, plus how many
+// games use it) by ID. It
 // returns ErrMapNotFound if mapID does not correspond to a stored map.
 func (s *MapsService) GetMap(ctx context.Context, mapID string) (MapDetail, error) {
 	row, err := s.maps.GetByID(ctx, s.db.Queryer(), mapID)
@@ -134,7 +202,15 @@ func (s *MapsService) GetMap(ctx context.Context, mapID string) (MapDetail, erro
 		}
 		return MapDetail{}, err
 	}
-	return toMapDetail(row)
+	detail, err := toMapDetail(row)
+	if err != nil {
+		return MapDetail{}, err
+	}
+	detail.GameCount, err = s.maps.CountGames(ctx, s.db.Queryer(), mapID)
+	if err != nil {
+		return MapDetail{}, err
+	}
+	return detail, nil
 }
 
 // DeleteMap permanently deletes a map. It returns ErrMapNotFound if mapID

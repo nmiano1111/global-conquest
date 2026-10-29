@@ -6,4 +6,5 @@ export { GamePage } from "./pages/GamePage";
 export { GameReplayPage } from "./pages/GameReplayPage";
 export { ProfilePage } from "./pages/ProfilePage";
 export { AdminPage } from "./pages/AdminPage";
+export { MapEditorPage } from "./pages/MapEditorPage";
 export { LeaderboardPage } from "./pages/LeaderboardPage";
