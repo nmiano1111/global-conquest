@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -177,7 +176,9 @@ func recoverBotGames(ctx context.Context, gamesSvc *service.GamesService, botMan
 
 // runMigrations applies any unapplied SQL migration files from the migrations/
 // directory. It tracks applied versions in a schema_migrations table and runs
-// files in lexicographic order (V1__, V2__, …).
+// files in numeric version order (V1__, V2__, …, V10__; see orderMigrations).
+// Files are tracked by full filename, so existing databases are unaffected by
+// the ordering.
 func runMigrations(ctx context.Context, pool *pgxpool.Pool) {
 	_, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -199,7 +200,10 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) {
 			names = append(names, e.Name())
 		}
 	}
-	sort.Strings(names)
+	names, err = orderMigrations(names)
+	if err != nil {
+		log.Fatal("migrations: ", err)
+	}
 
 	for _, name := range names {
 		var applied bool
