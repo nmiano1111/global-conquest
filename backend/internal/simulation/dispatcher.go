@@ -64,6 +64,34 @@ func Dispatch(g *risk.Game, playerID string, cmd bot.Command) (DispatchResult, e
 				return DispatchResult{}, err
 			}
 		}
+		// Same mirroring, same warning, for StrategicGoal: a non-empty
+		// value commits playerID to completing that continent
+		// (risk.Game.SetStrategicGoal), consumed by GoalKillbotStrategy's
+		// own reinforce/attack/occupy/fortify decisions. Missing this
+		// would make GoalKillbotStrategy's whole persistent-goal mechanism
+		// silently inert in every simulated/tournament game, exactly like
+		// the KillTarget bug above.
+		if cmd.StrategicGoal != "" {
+			if err := g.SetStrategicGoal(playerID, risk.Continent(cmd.StrategicGoal)); err != nil {
+				return DispatchResult{}, err
+			}
+		} else if cmd.AbandonStrategicGoal {
+			if err := g.ClearStrategicGoal(playerID); err != nil {
+				return DispatchResult{}, err
+			}
+		}
+		// Same mirroring for StrategicGoalStatus, applied independently
+		// (not else-if) since a single command can both commit a
+		// brand-new goal above and immediately advance its status (see
+		// GoalKillbotV2Strategy.reinforce). Missing this would make
+		// GoalKillbotV2Strategy's Active/Securing lifecycle silently
+		// inert in every simulated/tournament game, the same class of
+		// bug as the KillTarget/StrategicGoal warnings above.
+		if cmd.StrategicGoalStatus != "" {
+			if err := g.AdvanceStrategicGoalStatus(playerID, risk.GoalStatus(cmd.StrategicGoalStatus)); err != nil {
+				return DispatchResult{}, err
+			}
+		}
 		return DispatchResult{}, nil
 
 	case bot.ActionAttack:

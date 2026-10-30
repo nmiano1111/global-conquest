@@ -140,6 +140,23 @@ type GameActionInput struct {
 	// No human client ever sets this; it defaults to "" (a no-op) for
 	// every WebSocket-originated action.
 	KillTarget string
+	// StrategicGoal, when non-empty, is the continent name the acting
+	// player is committing to complete full ownership of -- only
+	// meaningful alongside a "place_reinforcement" Action (see
+	// service.GamesService.ApplyGameAction and risk.Game.SetStrategicGoal).
+	// No human client ever sets this. Mutually exclusive with
+	// AbandonStrategicGoal.
+	StrategicGoal string
+	// AbandonStrategicGoal, when true, clears the acting player's
+	// committed StrategicGoal this turn (risk.Game.ClearStrategicGoal).
+	// No human client ever sets this.
+	AbandonStrategicGoal bool
+	// StrategicGoalStatus, when non-empty, transitions the acting
+	// player's EXISTING committed StrategicGoal to the named
+	// risk.GoalStatus (risk.Game.AdvanceStrategicGoalStatus) -- only
+	// meaningful alongside a "place_reinforcement" Action. No human
+	// client ever sets this. NOT mutually exclusive with StrategicGoal.
+	StrategicGoalStatus string
 }
 
 // GameActionPlayer is the per-player state included in a GameActionUpdate.

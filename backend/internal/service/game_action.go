@@ -39,6 +39,10 @@ func (s *GameActionService) ApplyGameAction(ctx context.Context, in game.GameAct
 		DefenderDice: in.DefenderDice,
 		CardIndices:  in.CardIndices,
 		KillTarget:   in.KillTarget,
+
+		StrategicGoal:        in.StrategicGoal,
+		AbandonStrategicGoal: in.AbandonStrategicGoal,
+		StrategicGoalStatus:  in.StrategicGoalStatus,
 	})
 	if err != nil {
 		return game.GameActionUpdate{}, err

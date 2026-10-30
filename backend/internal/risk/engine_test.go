@@ -270,6 +270,189 @@ func TestStartTurnClearsIncomingPlayersKillPlan(t *testing.T) {
 	}
 }
 
+func TestStrategicGoalSurvivesJSONRoundTrip(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.SetStrategicGoal(p0, "south_america"); err != nil {
+		t.Fatalf("SetStrategicGoal: %v", err)
+	}
+
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal game: %v", err)
+	}
+	var restored Game
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatalf("unmarshal game: %v", err)
+	}
+
+	goal, ok := restored.StrategicGoals[0]
+	if !ok || !goal.Committed || goal.Continent != "south_america" || goal.StartTurn != g.TurnNumber {
+		t.Fatalf("expected StrategicGoals[0] to survive the round trip, got %+v (ok=%v)", goal, ok)
+	}
+}
+
+func TestSetStrategicGoalRejectsUnknownContinent(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.SetStrategicGoal(p0, "atlantis"); err == nil {
+		t.Fatal("expected an error for an unknown continent")
+	}
+}
+
+func TestSetStrategicGoalPreservesStartTurnOnReaffirmation(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.SetStrategicGoal(p0, "south_america"); err != nil {
+		t.Fatalf("SetStrategicGoal (first): %v", err)
+	}
+	firstStart := g.StrategicGoals[0].StartTurn
+
+	g.TurnNumber += 5
+	if err := g.SetStrategicGoal(p0, "south_america"); err != nil {
+		t.Fatalf("SetStrategicGoal (reaffirm): %v", err)
+	}
+	if got := g.StrategicGoals[0].StartTurn; got != firstStart {
+		t.Fatalf("expected StartTurn to stay %d on reaffirmation of the same continent, got %d", firstStart, got)
+	}
+
+	if err := g.SetStrategicGoal(p0, "north_america"); err != nil {
+		t.Fatalf("SetStrategicGoal (switch): %v", err)
+	}
+	if got := g.StrategicGoals[0].StartTurn; got == firstStart {
+		t.Fatalf("expected StartTurn to reset when committing to a different continent, got unchanged %d", got)
+	}
+}
+
+func TestStrategicGoalNotClearedByStartTurn(t *testing.T) {
+	g := mustGame(t)
+	g.CurrentPlayer = 0
+	g.KillPlans[0] = KillPlan{Target: 1, Committed: true}
+	g.StrategicGoals[0] = StrategicGoal{Continent: "south_america", StartTurn: 0, Committed: true}
+
+	g.startTurn()
+
+	if _, ok := g.KillPlans[0]; ok {
+		t.Fatalf("test setup invalid: expected startTurn to still clear KillPlans as before, got %+v", g.KillPlans)
+	}
+	if _, ok := g.StrategicGoals[0]; !ok {
+		t.Fatalf("expected startTurn to leave player 0's StrategicGoal untouched, but it was cleared")
+	}
+}
+
+func TestClearStrategicGoalIsNoOpWhenAbsent(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.ClearStrategicGoal(p0); err != nil {
+		t.Fatalf("expected clearing an absent goal to be a no-op, got error: %v", err)
+	}
+}
+
+func TestSetStrategicGoalInitializesActiveStatus(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.SetStrategicGoal(p0, "south_america"); err != nil {
+		t.Fatalf("SetStrategicGoal: %v", err)
+	}
+	goal := g.StrategicGoals[0]
+	if goal.Status != GoalStatusActive || goal.StatusSince != g.TurnNumber {
+		t.Fatalf("expected a freshly committed goal to start Active with StatusSince == TurnNumber, got %+v", goal)
+	}
+}
+
+func TestAdvanceStrategicGoalStatusTransitionsAndRecordsStatusSince(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.SetStrategicGoal(p0, "south_america"); err != nil {
+		t.Fatalf("SetStrategicGoal: %v", err)
+	}
+	g.TurnNumber += 3
+	if err := g.AdvanceStrategicGoalStatus(p0, GoalStatusSecuring); err != nil {
+		t.Fatalf("AdvanceStrategicGoalStatus: %v", err)
+	}
+	goal := g.StrategicGoals[0]
+	if goal.Status != GoalStatusSecuring || goal.StatusSince != g.TurnNumber {
+		t.Fatalf("expected Status=Securing with StatusSince updated to the current turn, got %+v", goal)
+	}
+}
+
+func TestAdvanceStrategicGoalStatusSameStatusLeavesStatusSinceUnchanged(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.SetStrategicGoal(p0, "south_america"); err != nil {
+		t.Fatalf("SetStrategicGoal: %v", err)
+	}
+	firstStatusSince := g.StrategicGoals[0].StatusSince
+
+	g.TurnNumber += 3
+	if err := g.AdvanceStrategicGoalStatus(p0, GoalStatusActive); err != nil {
+		t.Fatalf("AdvanceStrategicGoalStatus (same status): %v", err)
+	}
+	if got := g.StrategicGoals[0].StatusSince; got != firstStatusSince {
+		t.Fatalf("expected StatusSince to stay %d when re-affirming the same status, got %d", firstStatusSince, got)
+	}
+}
+
+func TestAdvanceStrategicGoalStatusErrorsWithoutACommittedGoal(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.AdvanceStrategicGoalStatus(p0, GoalStatusSecuring); err == nil {
+		t.Fatal("expected an error advancing status with no committed goal")
+	}
+}
+
+func TestStrategicGoalStatusSurvivesJSONRoundTrip(t *testing.T) {
+	g := mustGame(t)
+	p0 := g.Players[0].ID
+	g.CurrentPlayer = 0
+	g.Phase = PhaseReinforce
+
+	if err := g.SetStrategicGoal(p0, "south_america"); err != nil {
+		t.Fatalf("SetStrategicGoal: %v", err)
+	}
+	if err := g.AdvanceStrategicGoalStatus(p0, GoalStatusSecuring); err != nil {
+		t.Fatalf("AdvanceStrategicGoalStatus: %v", err)
+	}
+
+	raw, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal game: %v", err)
+	}
+	var restored Game
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatalf("unmarshal game: %v", err)
+	}
+
+	goal, ok := restored.StrategicGoals[0]
+	if !ok || goal.Status != GoalStatusSecuring || goal.StatusSince != g.TurnNumber {
+		t.Fatalf("expected Status/StatusSince to survive the round trip, got %+v (ok=%v)", goal, ok)
+	}
+}
+
 func TestAttackAfterJSONRoundTripUsesDefaultRNG(t *testing.T) {
 	g := mustGame(t)
 	g.Phase = PhaseAttack

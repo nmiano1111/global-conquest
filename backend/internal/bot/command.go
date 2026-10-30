@@ -54,6 +54,26 @@ type Command struct {
 	// Empty is a no-op for every other action, the same convention every
 	// other unused-per-action GameActionInput field already follows.
 	KillTarget string
+	// StrategicGoal, when non-empty, is the continent name this command's
+	// actor is committing to complete full ownership of -- only ever set
+	// alongside ActionPlaceReinforcement (see GoalKillbotStrategy.reinforce),
+	// consumed as a side effect of that action via risk.Game.SetStrategicGoal.
+	// Mutually exclusive with AbandonStrategicGoal.
+	StrategicGoal string
+	// AbandonStrategicGoal, when true, clears this command's actor's
+	// committed StrategicGoal this turn (risk.Game.ClearStrategicGoal) --
+	// only ever set alongside ActionPlaceReinforcement, once
+	// viability/inertia checks decide an existing goal should end, whether
+	// by completion or abandonment.
+	AbandonStrategicGoal bool
+	// StrategicGoalStatus, when non-empty, transitions this command's
+	// actor's EXISTING committed StrategicGoal to the named
+	// risk.GoalStatus (risk.Game.AdvanceStrategicGoalStatus) -- only ever
+	// set alongside ActionPlaceReinforcement. NOT mutually exclusive with
+	// StrategicGoal: a single command can both commit a brand-new goal
+	// and immediately advance its status in the same call (see
+	// GoalKillbotV2Strategy.reinforce).
+	StrategicGoalStatus string
 }
 
 // toGameActionInput attaches the game and actor identity the runner knows
@@ -71,5 +91,9 @@ func (c Command) toGameActionInput(gameID, playerID string) game.GameActionInput
 		DefenderDice: c.DefenderDice,
 		CardIndices:  c.CardIndices,
 		KillTarget:   c.KillTarget,
+
+		StrategicGoal:        c.StrategicGoal,
+		AbandonStrategicGoal: c.AbandonStrategicGoal,
+		StrategicGoalStatus:  c.StrategicGoalStatus,
 	}
 }

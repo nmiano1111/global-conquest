@@ -412,6 +412,21 @@ type GameActionInput struct {
 	// in ApplyGameAction and risk.Game.SetKillPlan). Empty is a no-op for
 	// every other action.
 	KillTarget string
+	// StrategicGoal, when non-empty, is the continent name PlayerUserID is
+	// committing to complete full ownership of -- only consulted alongside
+	// "place_reinforcement" (see the "place_reinforcement" case in
+	// ApplyGameAction and risk.Game.SetStrategicGoal). Mutually exclusive
+	// with AbandonStrategicGoal.
+	StrategicGoal string
+	// AbandonStrategicGoal, when true, clears PlayerUserID's committed
+	// StrategicGoal this turn (risk.Game.ClearStrategicGoal).
+	AbandonStrategicGoal bool
+	// StrategicGoalStatus, when non-empty, transitions PlayerUserID's
+	// EXISTING committed StrategicGoal to the named risk.GoalStatus (see
+	// the "place_reinforcement" case in ApplyGameAction and
+	// risk.Game.AdvanceStrategicGoalStatus). NOT mutually exclusive with
+	// StrategicGoal.
+	StrategicGoalStatus string
 }
 
 // GameActionPlayer is one player's post-action projection returned as part
@@ -1274,6 +1289,24 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 			}
 			if in.KillTarget != "" {
 				if err := engine.SetKillPlan(in.PlayerUserID, in.KillTarget); err != nil {
+					return err
+				}
+			}
+			if in.StrategicGoal != "" {
+				if err := engine.SetStrategicGoal(in.PlayerUserID, risk.Continent(in.StrategicGoal)); err != nil {
+					return err
+				}
+			} else if in.AbandonStrategicGoal {
+				if err := engine.ClearStrategicGoal(in.PlayerUserID); err != nil {
+					return err
+				}
+			}
+			// StrategicGoalStatus is applied independently, not as an
+			// else-if branch: a single command can both commit a
+			// brand-new goal (above) and immediately advance its status
+			// (see GoalKillbotV2Strategy.reinforce).
+			if in.StrategicGoalStatus != "" {
+				if err := engine.AdvanceStrategicGoalStatus(in.PlayerUserID, risk.GoalStatus(in.StrategicGoalStatus)); err != nil {
 					return err
 				}
 			}

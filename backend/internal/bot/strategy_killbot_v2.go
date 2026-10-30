@@ -170,14 +170,48 @@ const killbotV2MinAttackWinProbability = 0.5
 // fights killbotV2MinAttackWinProbability's own gate would decline anyway.
 const killbotV2KillAdvantageRatio = 1.5
 
+// attackBiasFunc, when set, gives a wrapping strategy an opinion on one
+// specific candidate attack: how much to relax the normal minimum
+// win-probability bar for that (from, to) pair this turn, plus a short
+// reason string for debugging/explainability. Returns (0, "") for "no
+// opinion." This exists because attackComparator (geometry.go) has no
+// territory identity -- it can't express "relax the bar for this
+// specific candidate," only "change the bar for every candidate this
+// call scores" -- so a per-candidate bias needs its own hook rather than
+// reusing the comparator mechanism. nil is a true no-op: every check
+// below is skipped entirely, so a KillbotV2Strategy built without one
+// (every existing caller) is byte-for-byte unchanged. First built and
+// validated for a single-decision bias (see
+// project-docs/bot_player/phase_3_continuous_improvement/
+// 12_Symbolic_Strategic_Reasoning_Layer.md); re-added here to serve
+// GoalKillbotStrategy's persistent-goal attack bias -- the hook itself
+// is unchanged from that earlier, already-proven-safe version.
+type attackBiasFunc func(g *risk.Game, pi int, from, to risk.Territory) (delta float64, reason string)
+
 // KillbotV2Strategy implements StrategyKillbotV2.
 type KillbotV2Strategy struct {
 	*KillbotStrategy
+	bias attackBiasFunc // nil by default -- see attackBiasFunc's doc comment
 }
 
-// NewKillbotV2Strategy creates a KillbotV2Strategy.
-func NewKillbotV2Strategy() *KillbotV2Strategy {
-	return &KillbotV2Strategy{KillbotStrategy: NewKillbotStrategy()}
+// WithAttackBias sets an optional per-candidate attack-bias hook,
+// mirroring BetterPixieStrategy's WithAttackComparator option
+// (strategy_betterpixie.go) in shape: a functional option a wrapping
+// strategy supplies at construction, never touched by KillbotV2Strategy
+// itself beyond storing and consulting it.
+func WithAttackBias(b attackBiasFunc) func(*KillbotV2Strategy) {
+	return func(k *KillbotV2Strategy) { k.bias = b }
+}
+
+// NewKillbotV2Strategy creates a KillbotV2Strategy. With no options, its
+// behavior is identical to before opts existed -- opts is additive and
+// every existing zero-arg call site keeps compiling unchanged.
+func NewKillbotV2Strategy(opts ...func(*KillbotV2Strategy)) *KillbotV2Strategy {
+	k := &KillbotV2Strategy{KillbotStrategy: NewKillbotStrategy()}
+	for _, opt := range opts {
+		opt(k)
+	}
+	return k
 }
 
 // backerFor builds KillbotV2Strategy's BetterPixieStrategy backer,
@@ -349,6 +383,12 @@ func (k *KillbotV2Strategy) attack(g *risk.Game, playerID string) (Command, erro
 		}
 	}
 
+	if k.bias != nil {
+		if cmd, ok := k.biasedAttack(g, pi, playerID, tuning); ok {
+			return cmd, nil
+		}
+	}
+
 	if killbotV2ShouldGoHogWild(g, pi, tuning.HogwildArmiesPerTerritory) {
 		if cmd, ok := attackAsMuchAsPossible(g, pi, rawArmyComparator); ok {
 			return cmd, nil
@@ -356,4 +396,33 @@ func (k *KillbotV2Strategy) attack(g *risk.Game, playerID string) (Command, erro
 	}
 
 	return backer.attack(g, playerID)
+}
+
+// biasedAttack scans every legal attack for the single candidate k.bias
+// has the strongest opinion on (largest relaxation), firing it if the
+// relaxed bar clears real risk.ForecastAttack math -- the same direct
+// ForecastAttack pattern the committed-kill-route check above already
+// uses, just against a lowered bar instead of the flat one. Picks the
+// best candidate across all of risk.LegalAttacks, not the first match,
+// consistent with this file's other "find the best candidate" helpers
+// (killTarget, biggestArmyTerritoryWithEnemyNeighbor in geometry.go).
+func (k *KillbotV2Strategy) biasedAttack(g *risk.Game, pi int, playerID string, tuning risk.BotTuning) (Command, bool) {
+	bestDelta := 0.0
+	var best risk.AttackAction
+	found := false
+	for _, a := range risk.LegalAttacks(g, playerID) {
+		delta, _ := k.bias(g, pi, a.From, a.To)
+		if delta > bestDelta {
+			bestDelta, best, found = delta, a, true
+		}
+	}
+	if !found {
+		return Command{}, false
+	}
+	src := g.Territories[best.From]
+	forecast := risk.ForecastAttack(src.Armies, g.Territories[best.To].Armies)
+	if forecast.WinProbability < tuning.MinAttackWinProbability-bestDelta {
+		return Command{}, false
+	}
+	return Command{Action: ActionAttack, From: string(best.From), To: string(best.To), AttackerDice: min(3, src.Armies-1)}, true
 }

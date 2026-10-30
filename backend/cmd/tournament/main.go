@@ -92,6 +92,9 @@ func run(args []string) (completed bool, err error) {
 		bot.StrategyKillbotV2:     bot.NewKillbotV2Strategy(),
 		bot.StrategyKillbotOldV1:  bot.NewKillbotOldStrategy(),
 		bot.StrategyTurtleV1:      bot.NewTurtleStrategy(),
+		bot.StrategyGoalKillbotV1: bot.NewGoalKillbotStrategy(),
+		bot.StrategyGoalKillbotV2: bot.NewGoalKillbotV2Strategy(),
+		bot.StrategyDirectorV1:    bot.NewSymbolicDirectorStrategy(),
 	}
 	if err := registerWeightsVariants(registry, weightsVariants); err != nil {
 		return false, err

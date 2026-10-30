@@ -586,6 +586,21 @@ func cheapestAttackHopToContinent(g *risk.Game, pi int, cont risk.Continent) (fr
 	return res.found, res.nextHop, res.cost, true
 }
 
+// cheapestAttackHopToTerritory finds the cheapest attack route from pi's
+// own territory toward a single specific target territory t -- the
+// single-territory analogue of cheapestAttackHopToContinent/
+// cheapestAttackHopToPlayer above, needed by GoalKillbotStrategy's
+// CompleteContinentGoal integration (a goal's missing territory is one
+// risk.Territory, not a continent's whole border or a player's whole
+// holdings).
+func cheapestAttackHopToTerritory(g *risk.Game, pi int, t risk.Territory) (from, to risk.Territory, cost int, ok bool) {
+	res, ok := cheapestRouteSearch(g, pi, []risk.Territory{t})
+	if !ok || !res.hasHop {
+		return "", "", 0, false
+	}
+	return res.found, res.nextHop, res.cost, true
+}
+
 // ownedTerritories returns pi's owned territories in canonical board
 // order -- used as cheapestRouteSearch's starting set for
 // cheapestAttackHopToPlayer (unlike the continent-scoped wrappers above,

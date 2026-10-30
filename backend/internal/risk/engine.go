@@ -156,6 +156,60 @@ type KillPlan struct {
 	Committed bool `json:"committed"`
 }
 
+// StrategicGoal is one player's own persistent, multi-turn strategic
+// commitment -- unlike KillPlan (turn-scoped, re-established fresh every
+// turn, see startTurn's cleanup), a StrategicGoal is deliberately NOT
+// cleared at any turn boundary: its entire purpose is to survive across
+// turns until the committing player's own strategy explicitly completes
+// or abandons it via SetStrategicGoal/ClearStrategicGoal. See
+// Game.StrategicGoals.
+type StrategicGoal struct {
+	// Continent is the positive-bonus continent this goal commits to
+	// fully owning. Which single territory is still missing is
+	// deliberately not stored here: it's re-derived fresh from current
+	// Territories ownership every time it's read (internal/bot's own
+	// fact-extraction logic), the same way KillPlan stores only Target,
+	// never a precomputed route.
+	Continent Continent `json:"continent"`
+	// StartTurn is the TurnNumber this goal was first committed to,
+	// letting the committing strategy enforce a turn-count inertia cap
+	// without any further engine bookkeeping.
+	StartTurn int `json:"start_turn"`
+	// Committed mirrors KillPlan.Committed's own convention exactly:
+	// entries are removed outright (ClearStrategicGoal), not marked
+	// false, once no longer active -- kept explicit, not
+	// map-key-presence alone, for the same self-documentation reason
+	// KillPlan gives.
+	Committed bool `json:"committed"`
+	// Status is Active (covers both "not yet executable" and "executable
+	// now" -- these behave identically at the engine level, see
+	// AdvanceStrategicGoalStatus's own doc comment) or Securing (the
+	// continent is fully owned; a short post-completion consolidation
+	// tail before the goal clears). "Executable now" is deliberately not
+	// its own stored status: like the missing territory itself, it's
+	// re-derived fresh by whoever reads this back, not persisted.
+	Status GoalStatus `json:"status"`
+	// StatusSince is the TurnNumber Status last changed to its current
+	// value, letting a Securing tail enforce its own short duration cap
+	// the same way StartTurn lets Active enforce its inertia cap --
+	// without any further engine bookkeeping.
+	StatusSince int `json:"status_since"`
+}
+
+// GoalStatus is a StrategicGoal's coarse lifecycle stage.
+type GoalStatus string
+
+const (
+	// GoalStatusActive covers a committed goal that has not yet
+	// completed its continent -- whether or not it happens to already be
+	// executable with current armies is deliberately not a distinct
+	// stored status (see StrategicGoal.Status's doc comment).
+	GoalStatusActive GoalStatus = "active"
+	// GoalStatusSecuring is a short post-completion consolidation tail:
+	// the continent is now fully owned, but the goal hasn't cleared yet.
+	GoalStatusSecuring GoalStatus = "securing"
+)
+
 // AttackResult reports the outcome of a single call to Attack: dice rolled,
 // losses on each side, and whether the target territory was conquered.
 type AttackResult struct {
@@ -244,6 +298,15 @@ type Game struct {
 	// skips them, so it's never read again).
 	KillPlans map[int]KillPlan `json:"kill_plans,omitempty"`
 
+	// StrategicGoals holds each player's own persistent, multi-turn
+	// strategic commitment, keyed by player index (matching KillPlans'
+	// own map[int]V convention) -- see StrategicGoal's doc comment for
+	// why this is deliberately NOT cleared by startTurn the way
+	// KillPlans is; a stale entry for an eliminated player is harmless,
+	// bounded garbage for the same reason KillPlans' own doc comment
+	// gives.
+	StrategicGoals map[int]StrategicGoal `json:"strategic_goals,omitempty"`
+
 	// BotTuning snapshots the admin-configured bot tuning values (see
 	// internal/service's BotTuningConfig) at the moment this game was
 	// created, if any bot-controlled player was assigned one -- fixed for
@@ -290,15 +353,16 @@ func NewClassicGame(playerIDs []string, rng RNG) (*Game, error) {
 	}
 
 	g := &Game{
-		Board:         b,
-		Players:       make([]PlayerState, len(playerIDs)),
-		Territories:   make(map[Territory]TerritoryState, len(b.Order)),
-		CurrentPlayer: 0,
-		Phase:         PhaseSetupClaim,
-		SetupReserves: map[int]int{},
-		KillPlans:     map[int]KillPlan{},
-		Deck:          ClassicDeck(b.Order),
-		rng:           rng,
+		Board:          b,
+		Players:        make([]PlayerState, len(playerIDs)),
+		Territories:    make(map[Territory]TerritoryState, len(b.Order)),
+		CurrentPlayer:  0,
+		Phase:          PhaseSetupClaim,
+		SetupReserves:  map[int]int{},
+		KillPlans:      map[int]KillPlan{},
+		StrategicGoals: map[int]StrategicGoal{},
+		Deck:           ClassicDeck(b.Order),
+		rng:            rng,
 	}
 	shuffled := make([]string, len(playerIDs))
 	copy(shuffled, playerIDs)
@@ -600,6 +664,83 @@ func (g *Game) SetKillPlan(playerID, targetID string) error {
 	return nil
 }
 
+// SetStrategicGoal commits playerID to completing full ownership of
+// continent -- a persisted, multi-turn commitment (see StrategicGoal's
+// doc comment), unlike SetKillPlan's turn-scoped one. Re-affirming the
+// SAME continent an already-committed goal names preserves the original
+// StartTurn, so a strategy re-confirming an unchanged commitment every
+// turn (expected: this is how the commitment survives, since nothing
+// clears it automatically) doesn't reset its own inertia clock;
+// committing to a *different* continent starts a fresh StartTurn -- the
+// caller's own viability/inertia logic decides whether that's a
+// legitimate goal switch, not this setter.
+func (g *Game) SetStrategicGoal(playerID string, continent Continent) error {
+	pi, err := g.requireCurrentPlayer(playerID)
+	if err != nil {
+		return err
+	}
+	if _, ok := g.Board.Continents[continent]; !ok {
+		return fmt.Errorf("%w: unknown continent %q", ErrInvalidMove, continent)
+	}
+	if g.StrategicGoals == nil {
+		g.StrategicGoals = make(map[int]StrategicGoal)
+	}
+	startTurn, statusSince := g.TurnNumber, g.TurnNumber
+	if existing, ok := g.StrategicGoals[pi]; ok && existing.Committed && existing.Continent == continent {
+		startTurn, statusSince = existing.StartTurn, existing.StatusSince
+	}
+	g.StrategicGoals[pi] = StrategicGoal{
+		Continent: continent, StartTurn: startTurn, Committed: true,
+		Status: GoalStatusActive, StatusSince: statusSince,
+	}
+	return nil
+}
+
+// AdvanceStrategicGoalStatus transitions playerID's existing committed
+// goal to status (Active -> Securing on continent completion; Securing
+// is cleared outright via ClearStrategicGoal once its own tail elapses,
+// not advanced to a third status). Errors if no committed goal exists --
+// unlike SetStrategicGoal/ClearStrategicGoal, there's no sensible no-op
+// interpretation of "advance a goal that isn't there." Setting the SAME
+// status again leaves StatusSince untouched (idempotent re-affirmation,
+// matching SetStrategicGoal's own re-affirmation-preserves-StartTurn
+// convention).
+func (g *Game) AdvanceStrategicGoalStatus(playerID string, status GoalStatus) error {
+	pi, err := g.requireCurrentPlayer(playerID)
+	if err != nil {
+		return err
+	}
+	goal, ok := g.StrategicGoals[pi]
+	if !ok || !goal.Committed {
+		return fmt.Errorf("%w: no committed strategic goal", ErrInvalidMove)
+	}
+	if goal.Status != status {
+		goal.Status = status
+		goal.StatusSince = g.TurnNumber
+		g.StrategicGoals[pi] = goal
+	}
+	return nil
+}
+
+// ClearStrategicGoal removes playerID's committed StrategicGoal, if any --
+// called on completion (continent now fully owned) or abandonment (no
+// longer viable, or a turn-count inertia cap elapsed). Deliberately one
+// method for both, not two: like KillPlan, presence-implies-committed is
+// the only state this field tracks engine-side; completion vs.
+// abandonment is distinguishable by whoever reads goal state back out
+// (internal/bot, instrumentation) simply by checking whether the
+// continent is now fully owned at the moment the goal disappears -- no
+// separate engine-level status is needed for that distinction. A no-op,
+// not an error, if playerID has no committed goal.
+func (g *Game) ClearStrategicGoal(playerID string) error {
+	pi, err := g.requireCurrentPlayer(playerID)
+	if err != nil {
+		return err
+	}
+	delete(g.StrategicGoals, pi)
+	return nil
+}
+
 // Attack resolves one round of combat from an owned territory against an
 // adjacent enemy territory, enforcing the standard Risk dice rules: up to 3
 // attacker dice (never more than one less than the source's army count)
@@ -857,6 +998,8 @@ func (g *Game) startTurn() {
 	g.ForcedCardTrade = false
 	g.Occupy = nil
 	delete(g.KillPlans, g.CurrentPlayer)
+	// StrategicGoals is deliberately NOT cleared here, unlike KillPlans --
+	// see StrategicGoal's own doc comment. Don't "fix" this asymmetry.
 	g.PendingReinforcements = g.reinforcementsFor(g.CurrentPlayer)
 }
 
