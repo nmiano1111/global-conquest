@@ -111,8 +111,8 @@ db-logs:
 
 db-create:
 	@echo "==> Ensuring database $(DB_NAME) exists on $(DB_HOST):$(DB_PORT)"
-    	PGPASSWORD=$(DB_PASSWORD) psql -h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d postgres \
-    		-c "SELECT 'CREATE DATABASE $(DB_NAME)' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$(DB_NAME)')\gexec"
+	@printf '%s\n' "SELECT 'CREATE DATABASE $(DB_NAME)' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$(DB_NAME)')\gexec" \
+		| PGPASSWORD=$(DB_PASSWORD) psql -v ON_ERROR_STOP=1 -h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d postgres
 
 db-connect:
 	@echo "==> Connecting to postgres ($(DB_HOST):$(DB_PORT)) db=$(DB_NAME) user=$(DB_USER)"

@@ -202,15 +202,18 @@ function MapEditor({ mapID, detail, initial, onSaved }: MapEditorProps) {
           <Link to="/app/admin" className="text-lg text-gc-muted transition-colors hover:text-gc-text" title="Back to admin">
             ←
           </Link>
-          <input
-            className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-2 py-1 font-display text-xl font-semibold text-gc-text outline-none transition hover:border-gc-border focus:border-gc-accent sm:max-w-md"
-            value={name}
-            placeholder="Untitled map"
-            onChange={(e) => {
-              setName(e.target.value);
-              setDirty(true);
-            }}
-          />
+          <label className="flex min-w-0 flex-1 flex-col gap-1 sm:max-w-md">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-gc-muted">Map name</span>
+            <input
+              className="min-w-0 rounded-md border border-gc-border bg-gc-surface-2 px-2.5 py-1.5 font-display text-lg font-semibold text-gc-text outline-none transition placeholder:font-normal placeholder:text-gc-muted hover:border-gc-muted focus:border-gc-accent"
+              value={name}
+              placeholder="Name this map"
+              onChange={(e) => {
+                setName(e.target.value);
+                setDirty(true);
+              }}
+            />
+          </label>
           <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${status.cls}`}>{status.label}</span>
         </div>
         <div className="flex items-center gap-2">
