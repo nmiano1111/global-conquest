@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ReactFlowProvider, useEdgesState, useNodesState } from "@xyflow/react";
 import type { ApiError } from "../../api/client";
 import { createMapFromGraph, getMap, updateMap, type MapDetail } from "../../api/maps";
 import { useAuth } from "../../auth";
+import { GeneratePanel } from "../../map-editor/GeneratePanel";
 import { MapEditorCanvas } from "../../map-editor/MapEditorCanvas";
 import {
+  CLASSIC_SIZED_SPEC,
   MAX_CONTINENTS,
   editorStateFromMap,
   editorStats,
@@ -13,6 +15,7 @@ import {
   newID,
   nextContinentColor,
   neighborsByNode,
+  specFromEditorState,
   toGraphRequest,
   validateEditorState,
   type BorderEdge,
@@ -22,11 +25,12 @@ import {
 } from "../../map-editor/editorModel";
 import { buttonDangerClass, buttonGhostClass, buttonPrimaryClass, inputClass } from "./styles";
 
-type Tab = "canvas" | "territories";
+type Tab = "canvas" | "territories" | "generate";
 
 // Shared by /app/admin/maps/new (no mapID) and /app/admin/maps/$mapID.
 export function MapEditorPage() {
   const { mapID } = useParams({ strict: false }) as { mapID?: string };
+  const { generate } = useSearch({ strict: false }) as { generate?: boolean };
   const navigate = useNavigate();
   const auth = useAuth();
 
@@ -85,6 +89,7 @@ export function MapEditorPage() {
         mapID={mapID}
         detail={mapID ? loaded!.detail : null}
         initial={mapID ? loaded!.state : draft}
+        initialTab={!mapID && generate ? "generate" : "canvas"}
         onSaved={(detail) => setLoaded((prev) => (prev ? { ...prev, detail } : prev))}
       />
     </ReactFlowProvider>
@@ -95,12 +100,13 @@ type MapEditorProps = {
   mapID?: string;
   detail: MapDetail | null;
   initial: EditorState;
+  initialTab: Tab;
   onSaved: (detail: MapDetail) => void;
 };
 
-function MapEditor({ mapID, detail, initial, onSaved }: MapEditorProps) {
+function MapEditor({ mapID, detail, initial, initialTab, onSaved }: MapEditorProps) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>("canvas");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [name, setName] = useState(detail?.name ?? "");
   const [continents, setContinents] = useState<EditorContinent[]>(initial.continents);
   const [nodes, setNodes, onNodesChange] = useNodesState<TerritoryNode>(initial.nodes);
@@ -115,6 +121,8 @@ function MapEditor({ mapID, detail, initial, onSaved }: MapEditorProps) {
   const issues = useMemo(() => validateEditorState(name, state), [name, state]);
   const errors = issues.filter((i) => i.level === "error");
   const stats = useMemo(() => editorStats(state), [state]);
+  // New maps start from a classic-sized spec; existing maps from their own shape.
+  const [initialSpec] = useState(() => (mapID ? specFromEditorState(initial) : CLASSIC_SIZED_SPEC));
 
   // React Flow reports selection and measurement through the same change
   // stream as edits; only count changes that alter the map itself.
@@ -157,6 +165,17 @@ function MapEditor({ mapID, detail, initial, onSaved }: MapEditorProps) {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
+
+  // A generated board replaces the canvas wholesale, as an unsaved draft.
+  const applyGenerated = (generated: MapDetail) => {
+    const next = editorStateFromMap(generated);
+    setContinents(next.continents);
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    setActiveContinentID(next.continents[0]?.id ?? "");
+    setDirty(true);
+    setTab("canvas");
+  };
 
   const save = async (asNew: boolean) => {
     setSaveError("");
@@ -273,6 +292,7 @@ function MapEditor({ mapID, detail, initial, onSaved }: MapEditorProps) {
       <div className="flex items-center border-b border-gc-border">
         <TabButton active={tab === "canvas"} onClick={() => setTab("canvas")} label="Canvas" />
         <TabButton active={tab === "territories"} onClick={() => setTab("territories")} label={`Territories (${nodes.length})`} />
+        <TabButton active={tab === "generate"} onClick={() => setTab("generate")} label="Generate" />
       </div>
 
       {tab === "canvas" ? (
@@ -299,9 +319,19 @@ function MapEditor({ mapID, detail, initial, onSaved }: MapEditorProps) {
             onActiveContinentChange={setActiveContinentID}
           />
         </div>
-      ) : (
+      ) : tab === "territories" ? (
         <TerritoryTable continents={continents} nodes={nodes} edges={edges} />
-      )}
+      ) : null}
+      {/* Kept mounted so the spec survives tab switches and can be re-rolled. */}
+      <div className={tab === "generate" ? "" : "hidden"}>
+        <GeneratePanel
+          initialSpec={initialSpec}
+          specFromCanvas={() => specFromEditorState(state)}
+          canvasTerritoryCount={nodes.length}
+          mapName={name}
+          onGenerated={applyGenerated}
+        />
+      </div>
     </div>
   );
 }

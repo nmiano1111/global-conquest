@@ -105,6 +105,20 @@ func (s *MapsService) CreateMap(ctx context.Context, ownerUserID, name string, s
 	return toMapDetail(row)
 }
 
+// GenerateMap runs mapgen.Generate on spec without persisting anything, so
+// the map editor can show a generated board as an editable draft (saved
+// later through CreateMapFromGraph). The returned detail has no ID. name
+// may be empty. It returns a wrapped ErrInvalidMapInput if spec fails
+// validation.
+func (s *MapsService) GenerateMap(name string, spec mapgen.MapSpec) (MapDetail, error) {
+	spec.Name = name
+	def, err := mapgen.Generate(spec, nil)
+	if err != nil {
+		return MapDetail{}, fmt.Errorf("%w: %v", ErrInvalidMapInput, err)
+	}
+	return MapDetail{Name: name, Definition: def}, nil
+}
+
 // CreateMapFromGraph builds a board from a hand-drawn graph (via
 // mapgen.FromGraph) and persists it, owned by ownerUserID. It returns a
 // wrapped ErrInvalidMapInput if graph fails validation.

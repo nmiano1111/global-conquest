@@ -28,6 +28,28 @@ type createMapReq struct {
 	Borders    []createMapBorderReq    `json:"borders" binding:"dive"`
 }
 
+// generateMapReq is createMapReq for a preview: same spec, optional name.
+type generateMapReq struct {
+	Name       string                  `json:"name"`
+	Continents []createMapContinentReq `json:"continents" binding:"required,min=2,dive"`
+	Borders    []createMapBorderReq    `json:"borders" binding:"dive"`
+}
+
+func mapSpecFromReq(name string, continents []createMapContinentReq, borders []createMapBorderReq) mapgen.MapSpec {
+	spec := mapgen.MapSpec{
+		Name:       name,
+		Continents: make([]mapgen.ContinentSpec, len(continents)),
+		Borders:    make([]mapgen.ContinentBorder, len(borders)),
+	}
+	for i, cont := range continents {
+		spec.Continents[i] = mapgen.ContinentSpec{Name: cont.Name, Bonus: cont.Bonus, TerritoryCount: cont.TerritoryCount}
+	}
+	for i, b := range borders {
+		spec.Borders[i] = mapgen.ContinentBorder{A: risk.Continent(b.A), B: risk.Continent(b.B), Crossings: b.Crossings}
+	}
+	return spec
+}
+
 type mapGraphContinentReq struct {
 	Name  string `json:"name" binding:"required"`
 	Bonus int    `json:"bonus" binding:"min=0"`
@@ -88,18 +110,7 @@ func (h *Handler) CreateMap(c *gin.Context) {
 		return
 	}
 
-	spec := mapgen.MapSpec{
-		Name:       req.Name,
-		Continents: make([]mapgen.ContinentSpec, len(req.Continents)),
-		Borders:    make([]mapgen.ContinentBorder, len(req.Borders)),
-	}
-	for i, cont := range req.Continents {
-		spec.Continents[i] = mapgen.ContinentSpec{Name: cont.Name, Bonus: cont.Bonus, TerritoryCount: cont.TerritoryCount}
-	}
-	for i, b := range req.Borders {
-		spec.Borders[i] = mapgen.ContinentBorder{A: risk.Continent(b.A), B: risk.Continent(b.B), Crossings: b.Crossings}
-	}
-
+	spec := mapSpecFromReq(req.Name, req.Continents, req.Borders)
 	m, err := h.maps.CreateMap(c.Request.Context(), authUser.ID, req.Name, spec)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidMapInput) {
@@ -110,6 +121,34 @@ func (h *Handler) CreateMap(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, m)
+}
+
+// GenerateMap godoc
+// @Summary      Generate a map without saving it
+// @Description  Runs the map generator on a continent/border spec and returns the result (no id) for the map editor to load as an editable draft. Nothing is persisted. Admin only.
+// @Tags         maps
+// @Accept       json
+// @Produce      json
+// @Param        request body generateMapReq true "Generate map request"
+// @Success      200 {object} service.MapDetail
+// @Failure      400 {object} map[string]string
+// @Router       /api/admin/maps/generate [post]
+func (h *Handler) GenerateMap(c *gin.Context) {
+	var req generateMapReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	m, err := h.maps.GenerateMap(req.Name, mapSpecFromReq(req.Name, req.Continents, req.Borders))
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidMapInput) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate map"})
+		return
+	}
+	c.JSON(http.StatusOK, m)
 }
 
 // CreateMapFromGraph godoc

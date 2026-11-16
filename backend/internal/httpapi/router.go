@@ -95,6 +95,7 @@ func NewRouter(h *Handler) *gin.Engine {
 			admin.POST("/maps", h.CreateMap)
 			admin.GET("/maps", h.ListMaps)
 			admin.POST("/maps/graph", h.CreateMapFromGraph)
+			admin.POST("/maps/generate", h.GenerateMap)
 			admin.GET("/maps/:id", h.GetMap)
 			admin.PUT("/maps/:id", h.UpdateMap)
 			admin.DELETE("/maps/:id", h.DeleteMap)

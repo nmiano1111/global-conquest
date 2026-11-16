@@ -12,12 +12,17 @@ import (
 )
 
 type fakeMapService struct {
+	generateMapFn        func(name string, spec mapgen.MapSpec) (service.MapDetail, error)
 	createMapFromGraphFn func(ctx context.Context, ownerUserID, name string, graph mapgen.MapGraph) (service.MapDetail, error)
 	updateMapFn          func(ctx context.Context, mapID, name string, graph mapgen.MapGraph) (service.MapDetail, error)
 }
 
 func (f *fakeMapService) CreateMap(context.Context, string, string, mapgen.MapSpec) (service.MapDetail, error) {
 	return service.MapDetail{}, nil
+}
+
+func (f *fakeMapService) GenerateMap(name string, spec mapgen.MapSpec) (service.MapDetail, error) {
+	return f.generateMapFn(name, spec)
 }
 
 func (f *fakeMapService) CreateMapFromGraph(ctx context.Context, ownerUserID, name string, graph mapgen.MapGraph) (service.MapDetail, error) {
@@ -136,5 +141,53 @@ func TestUpdateMapSuccess(t *testing.T) {
 	}
 	if gotID != "m1" {
 		t.Fatalf("expected map id m1, got %q", gotID)
+	}
+}
+
+func sampleMapSpecBody() map[string]any {
+	return map[string]any{
+		"continents": []map[string]any{
+			{"name": "Redland", "bonus": 2, "territory_count": 3},
+			{"name": "Blueland", "bonus": 1, "territory_count": 2},
+		},
+		"borders": []map[string]any{{"a": "Redland", "b": "Blueland", "crossings": 1}},
+	}
+}
+
+func TestGenerateMapForbiddenForNonAdmin(t *testing.T) {
+	router := newMapsTestRouter("player", &fakeMapService{})
+	if rr := doJSONWithAuth(t, router, http.MethodPost, "/api/admin/maps/generate", "valid-token", sampleMapSpecBody()); rr.code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%s", rr.code, rr.body.String())
+	}
+}
+
+func TestGenerateMapSuccessWithoutName(t *testing.T) {
+	var gotSpec mapgen.MapSpec
+	router := newMapsTestRouter("admin", &fakeMapService{
+		generateMapFn: func(name string, spec mapgen.MapSpec) (service.MapDetail, error) {
+			gotSpec = spec
+			return service.MapDetail{Name: name}, nil
+		},
+	})
+	rr := doJSONWithAuth(t, router, http.MethodPost, "/api/admin/maps/generate", "valid-token", sampleMapSpecBody())
+	if rr.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.code, rr.body.String())
+	}
+	if len(gotSpec.Continents) != 2 || gotSpec.Continents[0] != (mapgen.ContinentSpec{Name: "Redland", Bonus: 2, TerritoryCount: 3}) {
+		t.Fatalf("unexpected continents: %+v", gotSpec.Continents)
+	}
+	if len(gotSpec.Borders) != 1 || gotSpec.Borders[0].A != "Redland" || gotSpec.Borders[0].Crossings != 1 {
+		t.Fatalf("unexpected borders: %+v", gotSpec.Borders)
+	}
+}
+
+func TestGenerateMapInvalidSpec(t *testing.T) {
+	router := newMapsTestRouter("admin", &fakeMapService{
+		generateMapFn: func(string, mapgen.MapSpec) (service.MapDetail, error) {
+			return service.MapDetail{}, service.ErrInvalidMapInput
+		},
+	})
+	if rr := doJSONWithAuth(t, router, http.MethodPost, "/api/admin/maps/generate", "valid-token", sampleMapSpecBody()); rr.code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.code, rr.body.String())
 	}
 }

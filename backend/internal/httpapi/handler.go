@@ -51,6 +51,7 @@ type chatService interface {
 
 type mapService interface {
 	CreateMap(ctx context.Context, ownerUserID, name string, spec mapgen.MapSpec) (service.MapDetail, error)
+	GenerateMap(name string, spec mapgen.MapSpec) (service.MapDetail, error)
 	CreateMapFromGraph(ctx context.Context, ownerUserID, name string, graph mapgen.MapGraph) (service.MapDetail, error)
 	UpdateMap(ctx context.Context, mapID, name string, graph mapgen.MapGraph) (service.MapDetail, error)
 	ListMaps(ctx context.Context) ([]service.MapSummary, error)

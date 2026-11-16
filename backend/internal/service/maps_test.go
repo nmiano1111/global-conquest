@@ -90,6 +90,27 @@ func TestCreateMap(t *testing.T) {
 	}
 }
 
+func TestGenerateMap_DoesNotPersist(t *testing.T) {
+	fake := &fakeMapsStore{
+		createFn: func(context.Context, db.Querier, store.NewMap) (store.Map, error) {
+			t.Fatalf("GenerateMap must not persist")
+			return store.Map{}, nil
+		},
+	}
+	svc := NewMapsService(&fakeDB{q: countQuerier{}}, fake)
+
+	out, err := svc.GenerateMap("", sampleMapSpec())
+	if err != nil {
+		t.Fatalf("GenerateMap: %v", err)
+	}
+	if out.ID != "" || len(out.Definition.Board.Order) != 6 || len(out.Definition.Layout) != 6 {
+		t.Fatalf("unexpected output: id=%q order=%d layout=%d", out.ID, len(out.Definition.Board.Order), len(out.Definition.Layout))
+	}
+	if _, err := svc.GenerateMap("x", mapgen.MapSpec{}); !errors.Is(err, ErrInvalidMapInput) {
+		t.Fatalf("expected ErrInvalidMapInput, got %v", err)
+	}
+}
+
 func TestCreateMap_InvalidSpecRejected(t *testing.T) {
 	fake := &fakeMapsStore{
 		createFn: func(context.Context, db.Querier, store.NewMap) (store.Map, error) {

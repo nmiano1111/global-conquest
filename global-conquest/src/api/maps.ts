@@ -168,6 +168,20 @@ export async function createMap(input: CreateMapRequest): Promise<MapDetail> {
   return normalizeMapDetail(res);
 }
 
+/**
+ * Runs the map generator without saving anything; the result has no id and
+ * is meant to be loaded into the map editor as an editable draft.
+ */
+export async function generateMap(input: Omit<CreateMapRequest, "name"> & { name?: string }): Promise<MapDetail> {
+  const data = {
+    name: input.name ?? "",
+    continents: input.continents.map((c) => ({ name: c.name, bonus: c.bonus, territory_count: c.territoryCount })),
+    borders: input.borders.map((b) => ({ a: b.a, b: b.b, crossings: b.crossings })),
+  };
+  const res = await request<unknown>({ method: "POST", url: "/admin/maps/generate", data });
+  return normalizeMapDetail(res);
+}
+
 export async function createMapFromGraph(input: MapGraphRequest): Promise<MapDetail> {
   const res = await request<unknown>({ method: "POST", url: "/admin/maps/graph", data: input });
   return normalizeMapDetail(res);

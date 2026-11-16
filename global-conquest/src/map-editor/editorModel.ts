@@ -93,6 +93,30 @@ export function emptyEditorState(): EditorState {
   return { continents: [a, b], nodes, edges };
 }
 
+// Approximate territory card size; layouts store centers, React Flow wants
+// top-left corners.
+const CARD_HALF_WIDTH = 75;
+const CARD_HALF_HEIGHT = 22;
+const MIN_CARD_SPACING = 200;
+
+/**
+ * Scale for laying a normalized layout onto the canvas: at least
+ * CANVAS_SCALE, and enough that the closest two territories sit about a
+ * card apart. Generated layouts pack each continent into a tight ring, so
+ * a fixed scale would stack their cards on top of each other.
+ */
+function layoutScale(positions: Array<{ x: number; y: number }>): number {
+  let minDist = Infinity;
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      const d = Math.hypot(positions[i].x - positions[j].x, positions[i].y - positions[j].y);
+      if (d > 0 && d < minDist) minDist = d;
+    }
+  }
+  if (!Number.isFinite(minDist)) return CANVAS_SCALE;
+  return Math.min(CANVAS_SCALE * 5, Math.max(CANVAS_SCALE, MIN_CARD_SPACING / minDist));
+}
+
 export function editorStateFromMap(detail: MapDetail): EditorState {
   const continents: EditorContinent[] = detail.continentOrder.map((name, i) => ({
     id: newID("c"),
@@ -106,9 +130,15 @@ export function editorStateFromMap(detail: MapDetail): EditorState {
   }
 
   const nodeIDByName = new Map<string, string>();
+  const scale = layoutScale(detail.order.map((name) => detail.territories[name] ?? { x: 0.5, y: 0.5 }));
   const nodes: TerritoryNode[] = detail.order.map((name) => {
     const pos = detail.territories[name] ?? { x: 0.5, y: 0.5 };
-    const node = makeTerritory(name, continentIDByTerritory.get(name) ?? "", pos.x * CANVAS_SCALE, pos.y * CANVAS_SCALE);
+    const node = makeTerritory(
+      name,
+      continentIDByTerritory.get(name) ?? "",
+      pos.x * scale - CARD_HALF_WIDTH,
+      pos.y * scale - CARD_HALF_HEIGHT
+    );
     nodeIDByName.set(name, node.id);
     return node;
   });
@@ -136,6 +166,65 @@ export function toGraphRequest(name: string, state: EditorState): MapGraphReques
       y: n.position.y + (n.measured?.height ?? 0) / 2,
     })),
     edges: state.edges.map((e) => [territoryName.get(e.source) ?? "", territoryName.get(e.target) ?? ""]),
+  };
+}
+
+export type SpecContinent = { name: string; bonus: number; territoryCount: number };
+export type SpecBorder = { a: string; b: string; crossings: number };
+export type GenerateSpec = { continents: SpecContinent[]; borders: SpecBorder[] };
+
+/**
+ * A spec shaped like the classic board: 6 continents and 42 territories,
+ * with the same per-continent sizes, bonuses and number of crossings
+ * between each bordering pair. Names are generic compass directions.
+ */
+export const CLASSIC_SIZED_SPEC: GenerateSpec = {
+  continents: [
+    { name: "Northwest", bonus: 5, territoryCount: 9 },
+    { name: "Southwest", bonus: 2, territoryCount: 4 },
+    { name: "North", bonus: 5, territoryCount: 7 },
+    { name: "South", bonus: 3, territoryCount: 6 },
+    { name: "East", bonus: 7, territoryCount: 12 },
+    { name: "Southeast", bonus: 2, territoryCount: 4 },
+  ],
+  borders: [
+    { a: "Northwest", b: "Southwest", crossings: 1 },
+    { a: "Northwest", b: "North", crossings: 1 },
+    { a: "Northwest", b: "East", crossings: 1 },
+    { a: "Southwest", b: "South", crossings: 1 },
+    { a: "North", b: "South", crossings: 3 },
+    { a: "North", b: "East", crossings: 4 },
+    { a: "South", b: "East", crossings: 2 },
+    { a: "East", b: "Southeast", crossings: 1 },
+  ],
+};
+
+/**
+ * The generator spec that matches what's on the canvas: each continent's
+ * name, bonus and territory count, and how many borders cross between
+ * each pair of continents. Lets "Generate" re-roll the current structure.
+ */
+export function specFromEditorState(state: EditorState): GenerateSpec {
+  const continentOf = new Map(state.nodes.map((n) => [n.id, n.data.continentId]));
+  const nameOf = new Map(state.continents.map((c) => [c.id, c.name.trim()]));
+  const crossings = new Map<string, SpecBorder>();
+  for (const e of state.edges) {
+    const a = nameOf.get(continentOf.get(e.source) ?? "") ?? "";
+    const b = nameOf.get(continentOf.get(e.target) ?? "") ?? "";
+    if (!a || !b || a === b) continue;
+    const [x, y] = a < b ? [a, b] : [b, a];
+    const key = `${x}|${y}`;
+    const border = crossings.get(key) ?? { a: x, b: y, crossings: 0 };
+    border.crossings += 1;
+    crossings.set(key, border);
+  }
+  return {
+    continents: state.continents.map((c) => ({
+      name: c.name.trim(),
+      bonus: c.bonus,
+      territoryCount: Math.max(1, state.nodes.filter((n) => n.data.continentId === c.id).length),
+    })),
+    borders: [...crossings.values()],
   };
 }
 

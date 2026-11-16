@@ -138,6 +138,9 @@ const requireAdmin = ({ context }: { context: RouterContext }) => {
 const newMapRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/admin/maps/new",
+  // ?generate=true opens the editor on its Generate tab.
+  validateSearch: (search: Record<string, unknown>): { generate?: boolean } =>
+    search.generate === true || search.generate === "true" ? { generate: true } : {},
   beforeLoad: requireAdmin,
   component: MapEditorPage,
 });

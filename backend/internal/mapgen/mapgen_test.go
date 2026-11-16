@@ -177,3 +177,41 @@ func TestGenerate_AcceptsInjectedRNG(t *testing.T) {
 		t.Fatalf("Generate with injected rng returned error: %v", err)
 	}
 }
+
+// The map editor's default "classic size" spec (CLASSIC_SIZED_SPEC in
+// global-conquest/src/map-editor/editorModel.ts) must stay generatable.
+func TestGenerate_ClassicSizedSpec(t *testing.T) {
+	spec := MapSpec{
+		Name: "Classic sized",
+		Continents: []ContinentSpec{
+			{Name: "Northwest", Bonus: 5, TerritoryCount: 9},
+			{Name: "Southwest", Bonus: 2, TerritoryCount: 4},
+			{Name: "North", Bonus: 5, TerritoryCount: 7},
+			{Name: "South", Bonus: 3, TerritoryCount: 6},
+			{Name: "East", Bonus: 7, TerritoryCount: 12},
+			{Name: "Southeast", Bonus: 2, TerritoryCount: 4},
+		},
+		Borders: []ContinentBorder{
+			{A: "Northwest", B: "Southwest", Crossings: 1},
+			{A: "Northwest", B: "North", Crossings: 1},
+			{A: "Northwest", B: "East", Crossings: 1},
+			{A: "Southwest", B: "South", Crossings: 1},
+			{A: "North", B: "South", Crossings: 3},
+			{A: "North", B: "East", Crossings: 4},
+			{A: "South", B: "East", Crossings: 2},
+			{A: "East", B: "Southeast", Crossings: 1},
+		},
+	}
+	for i := 0; i < 20; i++ {
+		def, err := Generate(spec, nil)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		if got := len(def.Board.Order); got != 42 {
+			t.Fatalf("expected 42 territories, got %d", got)
+		}
+		if got := len(def.Board.Continents); got != 6 {
+			t.Fatalf("expected 6 continents, got %d", got)
+		}
+	}
+}
