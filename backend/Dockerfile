@@ -11,7 +11,7 @@ RUN go mod download
 # Copy source
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /app/server ./cmd/backend/main.go && \
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /app/server ./cmd/backend && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -o /app/discord-bot ./cmd/discord-bot
 
 # ---- Runtime ----

@@ -82,7 +82,7 @@ Frontend reconnects with exponential backoff: `250ms × 2^attempt`, capped at 8s
 # Backend
 cd backend
 docker compose up -d           # Postgres on :5432
-go run ./cmd/backend/main.go   # :8080; migrations run automatically
+go run ./cmd/backend           # :8080; migrations run automatically
 go run ./cmd/seed/main.go      # seed test users (password: "password")
 ```
 

@@ -398,7 +398,7 @@ docker compose up -d
 
 # Run migrations (Flyway-style V*.sql files applied on startup)
 # Start server (listens :8080)
-go run ./cmd/backend/main.go
+go run ./cmd/backend
 
 # Seed test data (users: test_alice, test_bob …; password: "password")
 go run ./cmd/seed/main.go
