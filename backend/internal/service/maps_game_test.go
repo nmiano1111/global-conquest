@@ -209,3 +209,18 @@ func TestGetGameBootstrap_ClassicGameOmitsBoard(t *testing.T) {
 		t.Fatalf("expected classic game to omit map fields, got MapID=%q Board=%v MapLayout=%v", out.MapID, out.Board, out.MapLayout)
 	}
 }
+
+func TestCountsTowardLeaderboard(t *testing.T) {
+	humans := []risk.PlayerState{{ID: "u1"}, {ID: "u2"}, {ID: "u3"}}
+	withBot := []risk.PlayerState{{ID: "u1"}, {ID: "b1", Controller: risk.ControllerBot}, {ID: "u3"}}
+
+	if !countsTowardLeaderboard(store.Game{ID: "g1"}, humans) {
+		t.Fatal("human-only classic game should count")
+	}
+	if countsTowardLeaderboard(store.Game{ID: "g1", MapID: "m1"}, humans) {
+		t.Fatal("custom-map game should not count")
+	}
+	if countsTowardLeaderboard(store.Game{ID: "g1"}, withBot) {
+		t.Fatal("game with a bot should not count")
+	}
+}

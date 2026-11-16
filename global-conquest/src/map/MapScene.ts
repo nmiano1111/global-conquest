@@ -35,6 +35,7 @@ import {
   type Velocity,
   zoomToward,
 } from "./cameraMath";
+import { computeContinentRegions } from "./continentRegions";
 import { customLayoutToWorld } from "./customLayout";
 import { TerritoryNode } from "./TerritoryNode";
 import type { TerritoryDisplayState, TerritoryHighlightKind } from "./types";
@@ -52,6 +53,9 @@ const MOMENTUM_STOP_SPEED = 0.02;
 /** A release must be at least this fast (px/ms) to start a glide at all — filters out slow, deliberate drags. */
 const MOMENTUM_START_SPEED = 0.15;
 
+/** Muted, earthy continent washes that sit well on parchment without competing with player colors. */
+const CONTINENT_TINTS = [0x2e6f8e, 0x6f8f2a, 0x8e3b5a, 0xc08a1e, 0x2f7a5a, 0x6a4c9c, 0xa8502a, 0x3a5a9a, 0x8a7a2a, 0x7a2e2e, 0x2a7a7a, 0x5a3a1a];
+
 /**
  * Board topology for a custom (admin-authored) map — territory positions
  * (normalized [0,1], scaled into MAP_VIEWBOX space below) and adjacency
@@ -61,6 +65,8 @@ const MOMENTUM_START_SPEED = 0.15;
 export interface MapTopology {
   territories: Record<string, { x: number; y: number }>;
   edges: Array<[string, string]>;
+  /** Continent name -> member territories; used to outline each continent. */
+  continents?: Record<string, string[]>;
 }
 
 export interface TerritoryHighlightInput {
@@ -188,10 +194,11 @@ export class MapScene {
       bg.height = MAP_VIEWBOX_HEIGHT;
       this.worldContainer.addChild(bg);
       this.worldContainer.addChild(this.overlayContainer);
+      const positions = customLayoutToWorld(topology.territories, MAP_VIEWBOX_WIDTH, MAP_VIEWBOX_HEIGHT);
+      this.overlayContainer.addChild(this.drawContinents(positions, topology.continents ?? {}));
       this.overlayContainer.addChild(this.edgesGfx);
       this.overlayContainer.addChild(this.connectorGfx);
 
-      const positions = customLayoutToWorld(topology.territories, MAP_VIEWBOX_WIDTH, MAP_VIEWBOX_HEIGHT);
       for (const [name, { x, y }] of positions) {
         const node = new TerritoryNode(name, x, y, (n) => {
           if (this.dragSuppressesClick) return;
@@ -579,6 +586,34 @@ export class MapScene {
     }
 
     this.drawConnector(selectedSource, selectedTarget);
+  }
+
+  /**
+   * Custom maps only: a faint wash over each continent's region plus an
+   * ink outline along its coast and its borders with other continents, so
+   * continents read as distinct land masses (see continentRegions).
+   */
+  private drawContinents(positions: Map<string, { x: number; y: number }>, continents: Record<string, string[]>): Graphics {
+    const g = new Graphics();
+    const continentOf = new Map<string, string>();
+    for (const [continent, members] of Object.entries(continents)) {
+      for (const t of members) continentOf.set(t, continent);
+    }
+    if (continentOf.size === 0) return g;
+
+    const regions = computeContinentRegions(positions, continentOf, MAP_VIEWBOX_WIDTH, MAP_VIEWBOX_HEIGHT);
+    // Sorted so a map's continents always get the same tints.
+    [...regions.cellsByContinent.keys()].sort().forEach((continent, i) => {
+      const tint = CONTINENT_TINTS[i % CONTINENT_TINTS.length];
+      for (const cell of regions.cellsByContinent.get(continent)!) {
+        g.poly(cell.flatMap((p) => [p.x, p.y])).fill({ color: tint, alpha: 0.3 });
+      }
+    });
+    for (const { a, b } of regions.borders) {
+      g.moveTo(a.x, a.y).lineTo(b.x, b.y);
+    }
+    g.stroke({ color: 0x3b2a1a, width: 5, alpha: 0.75, cap: "round", join: "round" });
+    return g;
   }
 
   private drawConnector(source?: string, target?: string) {

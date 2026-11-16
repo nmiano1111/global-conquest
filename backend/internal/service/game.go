@@ -812,6 +812,15 @@ func humanGamePlayers(gameID string, players []risk.PlayerState) []store.NewGame
 	return out
 }
 
+// countsTowardLeaderboard reports whether a finished game's result should
+// be recorded in player_game_stats: only human-only games (see allHuman)
+// on the classic board. Games on a custom map (any non-empty MapID) are
+// excluded -- admin-authored boards vary too much in size and balance for
+// their results to be comparable with classic games.
+func countsTowardLeaderboard(g store.Game, players []risk.PlayerState) bool {
+	return g.MapID == "" && allHuman(players)
+}
+
 // allHuman reports whether every player is human. Recording a
 // player_game_stats row is skipped entirely for games with any bot
 // player, mirroring GetLeaderboard's existing human-only filter
@@ -1546,7 +1555,7 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				return err
 			}
 		}
-		if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.playerGameStats != nil && allHuman(engine.Players) {
+		if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.playerGameStats != nil && countsTowardLeaderboard(g, engine.Players) {
 			if err := s.playerGameStats.RecordGameResult(ctx, q, g.ID, len(engine.Players), humanGameResults(engine.Players, engine.Winner)); err != nil {
 				return err
 			}

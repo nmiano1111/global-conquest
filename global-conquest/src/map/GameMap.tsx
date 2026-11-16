@@ -155,7 +155,7 @@ export const GameMap = forwardRef<GameMapHandle, GameMapProps>(function GameMap(
     readyOrTimeout
       .then(() => {
         const board = stateRef.current.game?.board ?? null;
-        const topology: MapTopology | null = board ? { territories: board.territories, edges: board.edges } : null;
+        const topology: MapTopology | null = board ? { territories: board.territories, edges: board.edges, continents: board.continents } : null;
         return MapScene.create(w, h, (name) => onClickRef.current(name), topology);
       })
       .then((scene) => {

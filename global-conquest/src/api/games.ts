@@ -72,6 +72,8 @@ export type GameBoard = {
   order: string[];
   territories: Record<string, { x: number; y: number }>;
   edges: Array<[string, string]>;
+  /** Continent name -> its member territories. */
+  continents: Record<string, string[]>;
 };
 
 export type GameBootstrap = {
@@ -279,7 +281,12 @@ function normalizeGameBootstrap(value: unknown): GameBootstrap {
         edges.push(from < to ? [from, to] : [to, from]);
       }
     }
-    board = { mapId, order, territories: boardTerritories, edges };
+    const continents: Record<string, string[]> = {};
+    for (const [name, info] of Object.entries(asRecord(boardRaw.continents) ?? {})) {
+      const members = asRecord(info)?.territories;
+      continents[name] = Array.isArray(members) ? members.filter((t): t is string => typeof t === "string") : [];
+    }
+    board = { mapId, order, territories: boardTerritories, edges, continents };
   }
 
   return {
