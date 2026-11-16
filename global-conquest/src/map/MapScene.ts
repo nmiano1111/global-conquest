@@ -34,6 +34,7 @@ import {
   type Velocity,
   zoomToward,
 } from "./cameraMath";
+import { customLayoutToWorld } from "./customLayout";
 import { TerritoryNode } from "./TerritoryNode";
 import type { TerritoryDisplayState, TerritoryHighlightKind } from "./types";
 
@@ -173,19 +174,17 @@ export class MapScene {
     if (topology) {
       // Custom (admin-authored) map: no pre-rendered background art exists
       // for it, so the dark app background from create() shows through, and
-      // territory positions come straight from the map's own [0,1]-normalized
-      // layout scaled into the same MAP_VIEWBOX space the camera/fit math
-      // already assumes — no overlay alignment transform needed since
+      // territory positions come from the map's own [0,1]-normalized layout,
+      // fitted into the same MAP_VIEWBOX space the camera/fit math already
+      // assumes with a margin so no node touches the edge (see
+      // customLayoutToWorld) — no overlay alignment transform needed since
       // there's no art to align onto.
       this.worldContainer.addChild(this.overlayContainer);
       this.overlayContainer.addChild(this.edgesGfx);
       this.overlayContainer.addChild(this.connectorGfx);
 
-      const positions = new Map<string, { x: number; y: number }>();
-      for (const [name, pos] of Object.entries(topology.territories)) {
-        const x = pos.x * MAP_VIEWBOX_WIDTH;
-        const y = pos.y * MAP_VIEWBOX_HEIGHT;
-        positions.set(name, { x, y });
+      const positions = customLayoutToWorld(topology.territories, MAP_VIEWBOX_WIDTH, MAP_VIEWBOX_HEIGHT);
+      for (const [name, { x, y }] of positions) {
         const node = new TerritoryNode(name, x, y, (n) => {
           if (this.dragSuppressesClick) return;
           onTerritoryClick(n);

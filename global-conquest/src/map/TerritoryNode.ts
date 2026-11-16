@@ -1,7 +1,6 @@
 import { Circle, Container, Graphics, Text, TextStyle } from "pixi.js";
+import { TERRITORY_RADIUS } from "./nodeMetrics";
 import type { TerritoryDisplayState, TerritoryHighlightKind } from "./types";
-
-const TERRITORY_RADIUS = 42;
 
 // Shared text styles — created once, reused across all 42 nodes.
 // Army count: large, centered. A solid dark stroke outline is far more readable

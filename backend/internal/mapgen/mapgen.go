@@ -12,7 +12,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/risk"
@@ -85,16 +84,16 @@ func Generate(spec MapSpec, rng risk.RNG) (MapDefinition, error) {
 	}
 
 	continents := make(map[risk.Continent]risk.ContinentInfo, len(spec.Continents))
-	territoriesByContinent := make(map[risk.Continent][]risk.Territory, len(spec.Continents))
+	terrsBySpecIndex := make([][]risk.Territory, len(spec.Continents))
 	var order []risk.Territory
-	for _, cs := range spec.Continents {
+	for ci, cs := range spec.Continents {
 		name := risk.Continent(cs.Name)
 		terrs := make([]risk.Territory, cs.TerritoryCount)
 		for i := 0; i < cs.TerritoryCount; i++ {
 			terrs[i] = risk.Territory(fmt.Sprintf("%s %d", cs.Name, i+1))
 		}
 		continents[name] = risk.ContinentInfo{Bonus: cs.Bonus, Territories: terrs}
-		territoriesByContinent[name] = terrs
+		terrsBySpecIndex[ci] = terrs
 		order = append(order, terrs...)
 	}
 
@@ -102,16 +101,10 @@ func Generate(spec MapSpec, rng risk.RNG) (MapDefinition, error) {
 	for _, t := range order {
 		adj[t] = map[risk.Territory]struct{}{}
 	}
-	addEdge := func(a, b risk.Territory) {
-		adj[a][b] = struct{}{}
-		adj[b][a] = struct{}{}
-	}
-
-	for _, cs := range spec.Continents {
-		buildIntraContinentEdges(territoriesByContinent[risk.Continent(cs.Name)], rng, addEdge)
-	}
-	for _, border := range spec.Borders {
-		buildBorderCrossings(territoriesByContinent[border.A], territoriesByContinent[border.B], border.Crossings, rng, addEdge)
+	edges, positions := generateGeometry(spec, terrsBySpecIndex, rng)
+	for _, e := range edges {
+		adj[e[0]][e[1]] = struct{}{}
+		adj[e[1]][e[0]] = struct{}{}
 	}
 
 	board := risk.Board{Continents: continents, Adjacent: adj, Order: order}
@@ -121,7 +114,7 @@ func Generate(spec MapSpec, rng risk.RNG) (MapDefinition, error) {
 
 	return MapDefinition{
 		Board:  board,
-		Layout: computeLayout(spec, territoriesByContinent),
+		Layout: normalizePoints(positions),
 		Spec:   spec,
 	}, nil
 }
@@ -217,103 +210,6 @@ func continentsConnected(spec MapSpec) bool {
 		}
 	}
 	return len(visited) == len(spec.Continents)
-}
-
-// buildIntraContinentEdges connects terrs into a random spanning tree (so
-// the continent is internally connected) plus a handful of extra random
-// edges for texture, avoiding duplicates.
-func buildIntraContinentEdges(terrs []risk.Territory, rng risk.RNG, addEdge func(a, b risk.Territory)) {
-	if len(terrs) < 2 {
-		return
-	}
-	shuffled := append([]risk.Territory(nil), terrs...)
-	shuffle(shuffled, rng)
-	for i := 1; i < len(shuffled); i++ {
-		j := rng.IntN(i)
-		addEdge(shuffled[i], shuffled[j])
-	}
-
-	extra := len(shuffled) / 3
-	for k := 0; k < extra; k++ {
-		a := shuffled[rng.IntN(len(shuffled))]
-		b := shuffled[rng.IntN(len(shuffled))]
-		if a == b {
-			continue
-		}
-		addEdge(a, b)
-	}
-}
-
-// buildBorderCrossings adds `crossings` distinct (a in fromTerrs, b in
-// toTerrs) edges chosen uniformly at random without repeats.
-func buildBorderCrossings(fromTerrs, toTerrs []risk.Territory, crossings int, rng risk.RNG, addEdge func(a, b risk.Territory)) {
-	type pair struct{ a, b risk.Territory }
-	all := make([]pair, 0, len(fromTerrs)*len(toTerrs))
-	for _, a := range fromTerrs {
-		for _, b := range toTerrs {
-			all = append(all, pair{a, b})
-		}
-	}
-	for i := len(all) - 1; i > 0; i-- {
-		j := rng.IntN(i + 1)
-		all[i], all[j] = all[j], all[i]
-	}
-	for i := 0; i < crossings && i < len(all); i++ {
-		addEdge(all[i].a, all[i].b)
-	}
-}
-
-func shuffle[T any](s []T, rng risk.RNG) {
-	for i := len(s) - 1; i > 0; i-- {
-		j := rng.IntN(i + 1)
-		s[i], s[j] = s[j], s[i]
-	}
-}
-
-// computeLayout places each continent's center evenly around a circle, and
-// each continent's own territories on a smaller circle around that center
-// — a deterministic starting layout with no overlaps, meant to be a
-// reasonable default a future drag-and-drop editor can let an admin refine
-// rather than something that needs to look hand-crafted on its own.
-func computeLayout(spec MapSpec, territoriesByContinent map[risk.Continent][]risk.Territory) map[risk.Territory]Coord {
-	layout := make(map[risk.Territory]Coord)
-	n := len(spec.Continents)
-	const (
-		centerX, centerY   = 0.5, 0.5
-		continentRadius    = 0.35
-		baseTerrRadius     = 0.08
-		minCoord, maxCoord = 0.03, 0.97
-	)
-
-	clamp := func(v float64) float64 {
-		if v < minCoord {
-			return minCoord
-		}
-		if v > maxCoord {
-			return maxCoord
-		}
-		return v
-	}
-
-	for i, cs := range spec.Continents {
-		angle := 2 * math.Pi * float64(i) / float64(n)
-		cx := centerX + continentRadius*math.Cos(angle)
-		cy := centerY + continentRadius*math.Sin(angle)
-
-		terrs := territoriesByContinent[risk.Continent(cs.Name)]
-		terrRadius := baseTerrRadius + 0.01*math.Sqrt(float64(len(terrs)))
-		if len(terrs) == 1 {
-			layout[terrs[0]] = Coord{X: clamp(cx), Y: clamp(cy)}
-			continue
-		}
-		for j, t := range terrs {
-			tAngle := 2 * math.Pi * float64(j) / float64(len(terrs))
-			x := cx + terrRadius*math.Cos(tAngle)
-			y := cy + terrRadius*math.Sin(tAngle)
-			layout[t] = Coord{X: clamp(x), Y: clamp(y)}
-		}
-	}
-	return layout
 }
 
 type stdRNG struct{}

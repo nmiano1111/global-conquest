@@ -162,31 +162,13 @@ func territoriesConnected(order []risk.Territory, adj map[risk.Territory]map[ris
 }
 
 // normalizeLayout maps editor coordinates into [0.03, 0.97] on both axes,
-// preserving aspect ratio (the larger extent fills the range, the smaller
-// one is centered), matching the bounds computeLayout uses.
+// preserving aspect ratio; see normalizePoints.
 func normalizeLayout(territories []GraphTerritory) map[risk.Territory]Coord {
-	const minCoord, maxCoord = 0.03, 0.97
-	layout := make(map[risk.Territory]Coord, len(territories))
-	if len(territories) == 0 {
-		return layout
-	}
-	minX, maxX := territories[0].X, territories[0].X
-	minY, maxY := territories[0].Y, territories[0].Y
-	for _, t := range territories[1:] {
-		minX, maxX = min(minX, t.X), max(maxX, t.X)
-		minY, maxY = min(minY, t.Y), max(maxY, t.Y)
-	}
-	extent := max(maxX-minX, maxY-minY)
-	span := maxCoord - minCoord
+	raw := make(map[risk.Territory]point, len(territories))
 	for _, t := range territories {
-		c := Coord{X: 0.5, Y: 0.5}
-		if extent > 0 {
-			c.X = minCoord + span*((t.X-minX)+(extent-(maxX-minX))/2)/extent
-			c.Y = minCoord + span*((t.Y-minY)+(extent-(maxY-minY))/2)/extent
-		}
-		layout[risk.Territory(strings.TrimSpace(t.Name))] = c
+		raw[risk.Territory(strings.TrimSpace(t.Name))] = point{t.X, t.Y}
 	}
-	return layout
+	return normalizePoints(raw)
 }
 
 func deriveSpec(graph MapGraph, continents map[risk.Continent]risk.ContinentInfo, crossings map[[2]string]int) MapSpec {

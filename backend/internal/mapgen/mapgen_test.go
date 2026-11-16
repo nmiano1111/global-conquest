@@ -180,8 +180,8 @@ func TestGenerate_AcceptsInjectedRNG(t *testing.T) {
 
 // The map editor's default "classic size" spec (CLASSIC_SIZED_SPEC in
 // global-conquest/src/map-editor/editorModel.ts) must stay generatable.
-func TestGenerate_ClassicSizedSpec(t *testing.T) {
-	spec := MapSpec{
+func classicSizedSpec() MapSpec {
+	return MapSpec{
 		Name: "Classic sized",
 		Continents: []ContinentSpec{
 			{Name: "Northwest", Bonus: 5, TerritoryCount: 9},
@@ -202,6 +202,10 @@ func TestGenerate_ClassicSizedSpec(t *testing.T) {
 			{A: "East", B: "Southeast", Crossings: 1},
 		},
 	}
+}
+
+func TestGenerate_ClassicSizedSpec(t *testing.T) {
+	spec := classicSizedSpec()
 	for i := 0; i < 20; i++ {
 		def, err := Generate(spec, nil)
 		if err != nil {
@@ -213,5 +217,45 @@ func TestGenerate_ClassicSizedSpec(t *testing.T) {
 		if got := len(def.Board.Continents); got != 6 {
 			t.Fatalf("expected 6 continents, got %d", got)
 		}
+	}
+}
+
+// Generated boards derive borders from territory positions, so no two
+// border lines should cross on the rendered map.
+func TestGenerate_BordersDoNotCross(t *testing.T) {
+	for run := 0; run < 200; run++ {
+		def, err := Generate(classicSizedSpec(), nil)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		at := func(tt risk.Territory) point { c := def.Layout[tt]; return point{c.X, c.Y} }
+		var edges [][2]risk.Territory
+		for a, ns := range def.Board.Adjacent {
+			for b := range ns {
+				if a < b {
+					edges = append(edges, [2]risk.Territory{a, b})
+				}
+			}
+		}
+		for i := range edges {
+			for j := i + 1; j < len(edges); j++ {
+				if segmentsCross(at(edges[i][0]), at(edges[i][1]), at(edges[j][0]), at(edges[j][1])) {
+					t.Fatalf("run %d: borders %v and %v cross", run, edges[i], edges[j])
+				}
+			}
+		}
+	}
+}
+
+func TestSegmentsCross(t *testing.T) {
+	a, b, c, d := point{0, 0}, point{2, 2}, point{0, 2}, point{2, 0}
+	if !segmentsCross(a, b, c, d) {
+		t.Fatal("X-shaped segments should cross")
+	}
+	if segmentsCross(a, b, b, point{3, 0}) {
+		t.Fatal("segments sharing an endpoint should not count as crossing")
+	}
+	if segmentsCross(a, point{1, 0}, point{0, 1}, point{1, 1}) {
+		t.Fatal("parallel segments should not cross")
 	}
 }
