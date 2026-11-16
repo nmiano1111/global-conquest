@@ -8,6 +8,7 @@ import {
   Sprite,
   Texture,
 } from "pixi.js";
+import parchmentImage from "../assets/images/parchment_background.jpg";
 import riskBoardImage from "../assets/images/risk0.png";
 import {
   MAP_CENTER_X,
@@ -99,6 +100,8 @@ export class MapScene {
   private readonly overlayContainer: Container;
   private readonly nodes: Map<string, TerritoryNode> = new Map();
   private readonly connectorGfx: Graphics;
+  /** Source→target line style; custom maps swap in a darker one that reads on parchment. */
+  private connectorStyle = { color: 0xfbbf24, width: 3, alpha: 0.55 };
   /**
    * Static adjacency lines for a custom-map board (see MapTopology) — drawn
    * once at build time, unlike connectorGfx which redraws per selection.
@@ -172,13 +175,18 @@ export class MapScene {
 
   private async buildScene(onTerritoryClick: (name: string) => void, topology: MapTopology | null) {
     if (topology) {
-      // Custom (admin-authored) map: no pre-rendered background art exists
-      // for it, so the dark app background from create() shows through, and
-      // territory positions come from the map's own [0,1]-normalized layout,
-      // fitted into the same MAP_VIEWBOX space the camera/fit math already
-      // assumes with a margin so no node touches the edge (see
-      // customLayoutToWorld) — no overlay alignment transform needed since
-      // there's no art to align onto.
+      // Custom (admin-authored) map: no pre-rendered art exists for it, so
+      // it sits on a generic parchment texture stretched over the same
+      // MAP_VIEWBOX space (both are 3:2). Territory positions come from the
+      // map's own [0,1]-normalized layout, fitted into that space with a
+      // margin so no node touches the edge (see customLayoutToWorld) — no
+      // overlay alignment transform needed since there's no art to align onto.
+      this.connectorStyle = { color: 0xb45309, width: 4, alpha: 0.85 };
+      const texture = await Assets.load<Texture>(parchmentImage);
+      const bg = new Sprite(texture);
+      bg.width = MAP_VIEWBOX_WIDTH;
+      bg.height = MAP_VIEWBOX_HEIGHT;
+      this.worldContainer.addChild(bg);
       this.worldContainer.addChild(this.overlayContainer);
       this.overlayContainer.addChild(this.edgesGfx);
       this.overlayContainer.addChild(this.connectorGfx);
@@ -196,7 +204,7 @@ export class MapScene {
         const pa = positions.get(a);
         const pb = positions.get(b);
         if (!pa || !pb) continue;
-        this.edgesGfx.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y).stroke({ color: 0x64748b, width: 2, alpha: 0.5 });
+        this.edgesGfx.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y).stroke({ color: 0x4a3423, width: 3, alpha: 0.55 }); // dark ink, legible on parchment
       }
     } else {
       // --- Background sprite (world space: 0,0 → MAP_VIEWBOX_WIDTH × MAP_VIEWBOX_HEIGHT) ---
@@ -582,7 +590,7 @@ export class MapScene {
     this.connectorGfx
       .moveTo(from.position.x, from.position.y)
       .lineTo(to.position.x, to.position.y)
-      .stroke({ color: 0xfbbf24, width: 3, alpha: 0.55 });
+      .stroke(this.connectorStyle);
   }
 
   zoomIn() {
