@@ -39,7 +39,7 @@ func TestPostgresMapsStoreGetByID(t *testing.T) {
 	now := time.Now().UTC()
 	def := json.RawMessage(`{"board":{}}`)
 	q := &stubQuerier{
-		row: &stubRow{values: []any{"m1", "u1", "Custom Map", def, now, now}},
+		row: &stubRow{values: []any{"m1", "u1", "alice", "Custom Map", def, now, now}},
 	}
 	s := NewPostgresMapsStore()
 
@@ -50,7 +50,7 @@ func TestPostgresMapsStoreGetByID(t *testing.T) {
 	if !strings.Contains(q.lastSQL, "FROM maps") {
 		t.Fatalf("expected maps select SQL, got %q", q.lastSQL)
 	}
-	if out.Name != "Custom Map" {
+	if out.Name != "Custom Map" || out.OwnerUserName != "alice" {
 		t.Fatalf("unexpected output: %#v", out)
 	}
 }
@@ -70,8 +70,8 @@ func TestPostgresMapsStoreList(t *testing.T) {
 	def := json.RawMessage(`{"board":{}}`)
 	q := &stubQuerier{
 		rows: &stubRows{values: [][]any{
-			{"m1", "u1", "Map One", def, now, now},
-			{"m2", "u1", "Map Two", def, now, now},
+			{"m1", "u1", "alice", "Map One", def, now, now},
+			{"m2", "u1", "alice", "Map Two", def, now, now},
 		}},
 	}
 	s := NewPostgresMapsStore()
@@ -95,7 +95,7 @@ func TestPostgresMapsStoreListByOwner(t *testing.T) {
 	if _, err := s.List(context.Background(), q, "u1"); err != nil {
 		t.Fatalf("list maps by owner: %v", err)
 	}
-	if !strings.Contains(q.lastSQL, "WHERE owner_user_id") {
+	if !strings.Contains(q.lastSQL, "WHERE m.owner_user_id") {
 		t.Fatalf("expected owner filter in SQL, got %q", q.lastSQL)
 	}
 }

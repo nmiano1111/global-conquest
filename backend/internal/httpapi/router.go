@@ -77,6 +77,20 @@ func NewRouter(h *Handler) *gin.Engine {
 			leaderboard.Use(h.RequireAuth())
 			leaderboard.GET("", h.GetLeaderboard)
 		}
+		// Any signed-in user can build maps; every map is readable and
+		// playable by everyone, but only its owner or an admin can update
+		// or delete it (checked in the handlers).
+		maps := api.Group("/maps")
+		{
+			maps.Use(h.RequireAuth())
+			maps.POST("", h.CreateMap)
+			maps.GET("", h.ListMaps)
+			maps.POST("/graph", h.CreateMapFromGraph)
+			maps.POST("/generate", h.GenerateMap)
+			maps.GET("/:id", h.GetMap)
+			maps.PUT("/:id", h.UpdateMap)
+			maps.DELETE("/:id", h.DeleteMap)
+		}
 		chat := api.Group("/chat")
 		{
 			chat.Use(h.RequireAuth())
@@ -92,13 +106,6 @@ func NewRouter(h *Handler) *gin.Engine {
 			admin.POST("/users/:id/revoke-sessions", h.RevokeUserSessions)
 			admin.GET("/bot-tuning", h.GetBotTuningConfig)
 			admin.PUT("/bot-tuning", h.UpdateBotTuningConfig)
-			admin.POST("/maps", h.CreateMap)
-			admin.GET("/maps", h.ListMaps)
-			admin.POST("/maps/graph", h.CreateMapFromGraph)
-			admin.POST("/maps/generate", h.GenerateMap)
-			admin.GET("/maps/:id", h.GetMap)
-			admin.PUT("/maps/:id", h.UpdateMap)
-			admin.DELETE("/maps/:id", h.DeleteMap)
 			admin.GET("/stats/overview", h.GetStatsOverview)
 			admin.GET("/stats/players", h.ListStatsPlayers)
 			admin.GET("/stats/players/:key", h.GetStatsPlayer)

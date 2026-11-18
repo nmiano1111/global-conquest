@@ -904,6 +904,33 @@ func TestCreateGameAllBotsRequiresAdmin(t *testing.T) {
 	}
 }
 
+func TestCreateGameWithMapAllowedForPlayer(t *testing.T) {
+	userSvc := &fakeUsersService{
+		authenticateSessionFn: func(context.Context, string) (store.User, error) {
+			return store.User{ID: "u1", UserName: "alice", Role: "player"}, nil
+		},
+	}
+	var gotMapID string
+	gamesSvc := &fakeGamesService{
+		createGameWithMapFn: func(_ context.Context, _ string, _ int, _ string, _ int, _, _ bool, mapID string) (store.Game, error) {
+			gotMapID = mapID
+			return store.Game{ID: "g1"}, nil
+		},
+	}
+	router := newTestRouterWithServices(userSvc, gamesSvc, newFakeChatService())
+
+	rr := doJSONWithAuth(t, router, http.MethodPost, "/api/games/", "valid-token", map[string]any{
+		"player_count": 3,
+		"map_id":       "m1",
+	})
+	if rr.code != http.StatusCreated {
+		t.Fatalf("expected 201 for a player creating a custom-map game, got %d body=%s", rr.code, rr.body.String())
+	}
+	if gotMapID != "m1" {
+		t.Fatalf("expected map id m1 to reach the service, got %q", gotMapID)
+	}
+}
+
 func TestCreateGameHiddenRequiresAdmin(t *testing.T) {
 	userSvc := &fakeUsersService{
 		createUserFn: func(context.Context, string, string) (store.User, error) { return store.User{}, nil },

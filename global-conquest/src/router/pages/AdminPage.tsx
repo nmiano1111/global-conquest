@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
 import { getBotTuningConfig, updateBotTuningConfig, type BotPacingConfig, type BotTuningConfig } from "../../api/botTuning";
-import { deleteMap, getMap, listMaps, type MapDetail, type MapSummary } from "../../api/maps";
 import {
   listAdminUsers,
   revokeUserSessions,
@@ -28,51 +27,6 @@ const PACING_ROWS: { label: string; minKey: keyof BotPacingConfig; maxKey: keyof
   { label: "End attack", minKey: "endAttackMinMs", maxKey: "endAttackMaxMs" },
   { label: "Dramatic (elimination/game over)", minKey: "dramaticMinMs", maxKey: "dramaticMaxMs" },
 ];
-import { MAP_PLAYER_COLORS } from "./gameShared";
-
-
-function continentColor(continents: string[], name: string): string {
-  const idx = continents.indexOf(name);
-  return MAP_PLAYER_COLORS[idx % MAP_PLAYER_COLORS.length];
-}
-
-function MapPreview({ detail }: { detail: MapDetail }) {
-  const continentNames = Object.keys(detail.continents);
-  const territoryColor = (territory: string): string => {
-    for (const name of continentNames) {
-      if (detail.continents[name]?.territories.includes(territory)) {
-        return continentColor(continentNames, name);
-      }
-    }
-    return "#888";
-  };
-  return (
-    <svg viewBox="0 0 100 100" className="h-32 w-32 shrink-0 rounded-lg border border-gc-border bg-gc-surface-2">
-      {detail.edges.map(([a, b]) => {
-        const pa = detail.territories[a];
-        const pb = detail.territories[b];
-        if (!pa || !pb) return null;
-        return (
-          <line
-            key={`${a}-${b}`}
-            x1={pa.x * 100}
-            y1={pa.y * 100}
-            x2={pb.x * 100}
-            y2={pb.y * 100}
-            stroke="currentColor"
-            strokeWidth={0.5}
-            className="text-gc-border"
-          />
-        );
-      })}
-      {detail.order.map((t) => {
-        const p = detail.territories[t];
-        if (!p) return null;
-        return <circle key={t} cx={p.x * 100} cy={p.y * 100} r={2.5} fill={territoryColor(t)} />;
-      })}
-    </svg>
-  );
-}
 
 export function AdminPage() {
   const auth = useAuth();
@@ -199,71 +153,6 @@ export function AdminPage() {
 
   const updatePacing = (key: keyof BotPacingConfig, value: number) => {
     setBotTuning((prev) => (prev ? { ...prev, pacing: { ...prev.pacing, [key]: value } } : prev));
-  };
-
-  const [maps, setMaps] = useState<MapSummary[]>([]);
-  const [mapDetails, setMapDetails] = useState<Record<string, MapDetail>>({});
-  const [mapsLoading, setMapsLoading] = useState(true);
-  const [mapsError, setMapsError] = useState("");
-  const [busyMapID, setBusyMapID] = useState("");
-
-  const loadMaps = useCallback(
-    async (cancelled = false) => {
-      setMapsError("");
-      try {
-        const out = await listMaps();
-        if (cancelled) return;
-        setMaps(out);
-        const details = await Promise.all(out.map((m) => getMap(m.id)));
-        if (cancelled) return;
-        const byID: Record<string, MapDetail> = {};
-        details.forEach((d) => {
-          byID[d.id] = d;
-        });
-        setMapDetails(byID);
-      } catch (err) {
-        if (cancelled) return;
-        const apiErr = err as ApiError;
-        if (apiErr.status === 401) {
-          auth.clearSession();
-          await navigate({ to: "/login" });
-          return;
-        }
-        if (apiErr.status === 403) {
-          await navigate({ to: "/app/lobby" });
-          return;
-        }
-        setMapsError(apiErr.message || "Failed to load maps");
-      }
-    },
-    [auth, navigate]
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      setMapsLoading(true);
-      await loadMaps(cancelled);
-      if (!cancelled) setMapsLoading(false);
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadMaps]);
-
-  const handleDeleteMap = async (m: MapSummary) => {
-    setBusyMapID(m.id);
-    setMapsError("");
-    try {
-      await deleteMap(m.id);
-      await loadMaps();
-    } catch (err) {
-      const apiErr = err as ApiError;
-      setMapsError(apiErr.message || "Failed to delete map");
-    } finally {
-      setBusyMapID("");
-    }
   };
 
   const patchAccess = async (u: AdminUserRecord, accessStatus: "active" | "blocked") => {
@@ -591,68 +480,6 @@ export function AdminPage() {
             </div>
           </>
         ) : null}
-      </section>
-
-      <div className="mb-5 mt-10 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold text-gc-text">Custom Maps</h2>
-          <p className="mt-0.5 text-sm text-gc-muted">
-            Draw a board by hand, or generate one from continents, territory counts, bonuses and how many crossings
-            join each bordering pair. Both open in the map editor, where you can adjust the board before saving.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            className={buttonGhostClass}
-            type="button"
-            onClick={() => void loadMaps()}
-            disabled={mapsLoading || !!busyMapID}
-          >
-            Refresh
-          </button>
-          <Link to="/app/admin/maps/new" search={{ generate: true }} className={buttonGhostClass}>
-            Generate a map
-          </Link>
-          <Link to="/app/admin/maps/new" className={buttonPrimaryClass}>
-            Draw a map
-          </Link>
-        </div>
-      </div>
-
-      {mapsLoading ? <p className="text-sm text-gc-muted">Loading maps…</p> : null}
-      {mapsError ? (
-        <p className="mb-4 rounded-lg border border-gc-danger/30 bg-gc-danger/10 px-3 py-2 text-sm text-gc-danger">
-          {mapsError}
-        </p>
-      ) : null}
-
-      <section className="flex flex-col gap-3">
-        {maps.map((m) => {
-          const detail = mapDetails[m.id];
-          const isBusy = busyMapID === m.id;
-          return (
-            <div
-              key={m.id}
-              className="flex flex-wrap items-center gap-4 rounded-xl border border-gc-border bg-gc-surface p-4"
-            >
-              {detail ? <MapPreview detail={detail} /> : <div className="h-32 w-32 shrink-0 rounded-lg bg-gc-surface-2" />}
-              <div className="flex-1">
-                <p className="font-medium text-gc-text">{m.name}</p>
-                <p className="text-sm text-gc-muted">
-                  {m.continentCount} continents, {m.territoryCount} territories
-                </p>
-                <p className="font-mono text-[11px] text-gc-muted">{m.id}</p>
-              </div>
-              <Link to="/app/admin/maps/$mapID" params={{ mapID: m.id }} className={buttonGhostClass}>
-                Open editor
-              </Link>
-              <button className={buttonGhostClass} type="button" disabled={isBusy} onClick={() => void handleDeleteMap(m)}>
-                {isBusy ? "Deleting…" : "Delete"}
-              </button>
-            </div>
-          );
-        })}
-        {!mapsLoading && maps.length === 0 ? <p className="text-sm text-gc-muted">No custom maps yet.</p> : null}
       </section>
     </div>
   );

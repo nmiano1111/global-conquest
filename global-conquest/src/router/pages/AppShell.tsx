@@ -60,6 +60,14 @@ export function AppShell() {
             >
               Leaderboard
             </Link>
+            <Link
+              className={navLinkClass}
+              activeProps={{ className: navLinkActiveClass }}
+              activeOptions={{ exact: false }}
+              to="/app/maps"
+            >
+              Maps
+            </Link>
             {auth.user?.role === "admin" ? (
               <Link
                 className={navLinkClass}
@@ -115,6 +123,14 @@ export function AppShell() {
             to="/app/leaderboard"
           >
             Leaderboard
+          </Link>
+          <Link
+            className={mobileNavLinkClass}
+            activeProps={{ className: mobileNavLinkActiveClass }}
+            activeOptions={{ exact: false }}
+            to="/app/maps"
+          >
+            Maps
           </Link>
           {auth.user?.role === "admin" ? (
             <Link

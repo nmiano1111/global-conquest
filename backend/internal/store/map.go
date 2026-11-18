@@ -8,13 +8,16 @@ import (
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
 )
 
-// Map is a row from the maps table: an admin-authored custom board
+// Map is a row from the maps table: a user-authored custom board
 // definition, JSONB-serialized as a mapgen.MapDefinition.
 type Map struct {
 	// ID is the map's UUID.
 	ID string `json:"id"`
-	// OwnerUserID is the UUID of the admin who created the map.
+	// OwnerUserID is the UUID of the user who created the map.
 	OwnerUserID string `json:"owner_user_id"`
+	// OwnerUserName is the owner's username. Populated by GetByID and List
+	// only (joined from users); empty on rows returned by Create/Update.
+	OwnerUserName string `json:"owner_user_name"`
 	// Name is the map's display name.
 	Name string `json:"name"`
 	// Definition is the JSONB-serialized mapgen.MapDefinition (board,
@@ -28,7 +31,7 @@ type Map struct {
 
 // NewMap is the input for creating a new map row via Create.
 type NewMap struct {
-	// OwnerUserID is the UUID of the admin creating the map.
+	// OwnerUserID is the UUID of the user creating the map.
 	OwnerUserID string
 	// Name is the map's display name.
 	Name string
@@ -78,32 +81,34 @@ func (s *PostgresMapsStore) Create(ctx context.Context, exec db.Querier, in NewM
 // GetByID fetches a map by ID.
 func (s *PostgresMapsStore) GetByID(ctx context.Context, exec db.Querier, mapID string) (Map, error) {
 	const stmt = `
-		SELECT id::text, owner_user_id::text, name, definition, created_at, updated_at
-		FROM maps
-		WHERE id = $1::uuid
+		SELECT m.id::text, m.owner_user_id::text, COALESCE(u.username, ''), m.name, m.definition, m.created_at, m.updated_at
+		FROM maps m
+		LEFT JOIN users u ON u.id = m.owner_user_id
+		WHERE m.id = $1::uuid
 	`
 	var m Map
 	err := exec.QueryRow(ctx, stmt, mapID).Scan(
-		&m.ID, &m.OwnerUserID, &m.Name, &m.Definition, &m.CreatedAt, &m.UpdatedAt,
+		&m.ID, &m.OwnerUserID, &m.OwnerUserName, &m.Name, &m.Definition, &m.CreatedAt, &m.UpdatedAt,
 	)
 	return m, err
 }
 
 // List returns every map, most recently created first, optionally
-// restricted to maps owned by ownerUserID (all maps if empty). There are no
-// non-admin readers of this store today, so no further filtering/pagination
-// is applied.
+// restricted to maps owned by ownerUserID (all maps if empty). Every map is
+// visible to every signed-in user, so no further filtering/pagination is
+// applied.
 func (s *PostgresMapsStore) List(ctx context.Context, exec db.Querier, ownerUserID string) ([]Map, error) {
 	stmt := `
-		SELECT id::text, owner_user_id::text, name, definition, created_at, updated_at
-		FROM maps
+		SELECT m.id::text, m.owner_user_id::text, COALESCE(u.username, ''), m.name, m.definition, m.created_at, m.updated_at
+		FROM maps m
+		LEFT JOIN users u ON u.id = m.owner_user_id
 	`
 	args := make([]any, 0, 1)
 	if ownerUserID != "" {
-		stmt += " WHERE owner_user_id = $1::uuid"
+		stmt += " WHERE m.owner_user_id = $1::uuid"
 		args = append(args, ownerUserID)
 	}
-	stmt += " ORDER BY created_at DESC"
+	stmt += " ORDER BY m.created_at DESC"
 
 	rows, err := exec.Query(ctx, stmt, args...)
 	if err != nil {
@@ -114,7 +119,7 @@ func (s *PostgresMapsStore) List(ctx context.Context, exec db.Querier, ownerUser
 	out := make([]Map, 0)
 	for rows.Next() {
 		var m Map
-		if err := rows.Scan(&m.ID, &m.OwnerUserID, &m.Name, &m.Definition, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.OwnerUserID, &m.OwnerUserName, &m.Name, &m.Definition, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

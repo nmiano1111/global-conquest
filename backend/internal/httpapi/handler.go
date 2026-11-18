@@ -77,7 +77,7 @@ func NewHandler(gameServer *game.Server, users userService, games gameService, c
 	return &Handler{gameServer: gameServer, users: users, games: games, chats: chats}
 }
 
-// SetMapsService wires in the service backing the admin-only custom map
+// SetMapsService wires in the service backing the custom map
 // endpoints (see maps_handler.go). It is nil-safe: until set, those routes
 // return 500 — production wiring in cmd/backend/main.go always sets it,
 // but most tests never exercise map endpoints and so never need to.
@@ -311,10 +311,6 @@ func (h *Handler) CreateGame(c *gin.Context) {
 
 	if (req.AllBots || req.Hidden) && !isAdmin {
 		c.JSON(http.StatusForbidden, gin.H{"error": "admin role required for all_bots/hidden games"})
-		return
-	}
-	if req.MapID != "" && !isAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "admin role required to set map_id"})
 		return
 	}
 

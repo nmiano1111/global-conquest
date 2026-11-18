@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nmiano1111/global-conquest/backend/internal/mapgen"
@@ -62,7 +63,7 @@ type mapGraphTerritoryReq struct {
 	Y         float64 `json:"y"`
 }
 
-// mapGraphReq is a fully hand-drawn board from the admin map editor; see
+// mapGraphReq is a fully hand-drawn board from the map editor; see
 // mapgen.MapGraph. Edges are unordered [a, b] territory-name pairs.
 type mapGraphReq struct {
 	Name        string                 `json:"name" binding:"required"`
@@ -89,7 +90,7 @@ func (r mapGraphReq) toGraph() mapgen.MapGraph {
 
 // CreateMap godoc
 // @Summary      Create a custom map
-// @Description  Generates and persists a new admin-authored map from a continent/border spec. Admin only.
+// @Description  Generates and persists a new user-authored map from a continent/border spec. Any signed-in user.
 // @Tags         maps
 // @Accept       json
 // @Produce      json
@@ -97,7 +98,7 @@ func (r mapGraphReq) toGraph() mapgen.MapGraph {
 // @Success      201 {object} service.MapDetail
 // @Failure      400 {object} map[string]string
 // @Failure      500 {object} map[string]string
-// @Router       /api/admin/maps [post]
+// @Router       /api/maps [post]
 func (h *Handler) CreateMap(c *gin.Context) {
 	var req createMapReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -125,14 +126,14 @@ func (h *Handler) CreateMap(c *gin.Context) {
 
 // GenerateMap godoc
 // @Summary      Generate a map without saving it
-// @Description  Runs the map generator on a continent/border spec and returns the result (no id) for the map editor to load as an editable draft. Nothing is persisted. Admin only.
+// @Description  Runs the map generator on a continent/border spec and returns the result (no id) for the map editor to load as an editable draft. Nothing is persisted. Any signed-in user.
 // @Tags         maps
 // @Accept       json
 // @Produce      json
 // @Param        request body generateMapReq true "Generate map request"
 // @Success      200 {object} service.MapDetail
 // @Failure      400 {object} map[string]string
-// @Router       /api/admin/maps/generate [post]
+// @Router       /api/maps/generate [post]
 func (h *Handler) GenerateMap(c *gin.Context) {
 	var req generateMapReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -153,7 +154,7 @@ func (h *Handler) GenerateMap(c *gin.Context) {
 
 // CreateMapFromGraph godoc
 // @Summary      Create a custom map from a drawn graph
-// @Description  Persists a new admin-authored map from an explicit territory/continent/edge graph drawn in the map editor. Admin only.
+// @Description  Persists a new user-authored map from an explicit territory/continent/edge graph drawn in the map editor. Any signed-in user.
 // @Tags         maps
 // @Accept       json
 // @Produce      json
@@ -161,7 +162,7 @@ func (h *Handler) GenerateMap(c *gin.Context) {
 // @Success      201 {object} service.MapDetail
 // @Failure      400 {object} map[string]string
 // @Failure      500 {object} map[string]string
-// @Router       /api/admin/maps/graph [post]
+// @Router       /api/maps/graph [post]
 func (h *Handler) CreateMapFromGraph(c *gin.Context) {
 	var req mapGraphReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -188,7 +189,7 @@ func (h *Handler) CreateMapFromGraph(c *gin.Context) {
 
 // UpdateMap godoc
 // @Summary      Update a custom map
-// @Description  Replaces a map's name and board with a drawn graph. Fails if any game references the map. Admin only.
+// @Description  Replaces a map's name and board with a drawn graph. Fails if any game references the map. Owner or admin only.
 // @Tags         maps
 // @Accept       json
 // @Produce      json
@@ -196,10 +197,11 @@ func (h *Handler) CreateMapFromGraph(c *gin.Context) {
 // @Param        request body mapGraphReq true "Map graph"
 // @Success      200 {object} service.MapDetail
 // @Failure      400 {object} map[string]string
+// @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
 // @Failure      409 {object} map[string]string
 // @Failure      500 {object} map[string]string
-// @Router       /api/admin/maps/{id} [put]
+// @Router       /api/maps/{id} [put]
 func (h *Handler) UpdateMap(c *gin.Context) {
 	mapID := c.Param("id")
 	if mapID == "" {
@@ -209,6 +211,9 @@ func (h *Handler) UpdateMap(c *gin.Context) {
 	var req mapGraphReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !h.authorizeMapChange(c, mapID) {
 		return
 	}
 
@@ -231,12 +236,12 @@ func (h *Handler) UpdateMap(c *gin.Context) {
 
 // ListMaps godoc
 // @Summary      List custom maps
-// @Description  Returns every stored custom map as a summary. Admin only.
+// @Description  Returns every stored custom map as a summary. Any signed-in user.
 // @Tags         maps
 // @Produce      json
 // @Success      200 {array} service.MapSummary
 // @Failure      500 {object} map[string]string
-// @Router       /api/admin/maps [get]
+// @Router       /api/maps [get]
 func (h *Handler) ListMaps(c *gin.Context) {
 	maps, err := h.maps.ListMaps(c.Request.Context())
 	if err != nil {
@@ -248,14 +253,14 @@ func (h *Handler) ListMaps(c *gin.Context) {
 
 // GetMap godoc
 // @Summary      Get a custom map
-// @Description  Returns a single custom map's full board and layout. Admin only.
+// @Description  Returns a single custom map's full board and layout. Any signed-in user.
 // @Tags         maps
 // @Produce      json
 // @Param        id path string true "Map ID"
 // @Success      200 {object} service.MapDetail
 // @Failure      404 {object} map[string]string
 // @Failure      500 {object} map[string]string
-// @Router       /api/admin/maps/{id} [get]
+// @Router       /api/maps/{id} [get]
 func (h *Handler) GetMap(c *gin.Context) {
 	mapID := c.Param("id")
 	if mapID == "" {
@@ -276,18 +281,22 @@ func (h *Handler) GetMap(c *gin.Context) {
 
 // DeleteMap godoc
 // @Summary      Delete a custom map
-// @Description  Permanently deletes a custom map. Fails if any game still references it. Admin only.
+// @Description  Permanently deletes a custom map. Fails if any game still references it. Owner or admin only.
 // @Tags         maps
 // @Param        id path string true "Map ID"
 // @Success      204
+// @Failure      403 {object} map[string]string
 // @Failure      404 {object} map[string]string
 // @Failure      409 {object} map[string]string
 // @Failure      500 {object} map[string]string
-// @Router       /api/admin/maps/{id} [delete]
+// @Router       /api/maps/{id} [delete]
 func (h *Handler) DeleteMap(c *gin.Context) {
 	mapID := c.Param("id")
 	if mapID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "map id is required"})
+		return
+	}
+	if !h.authorizeMapChange(c, mapID) {
 		return
 	}
 	if err := h.maps.DeleteMap(c.Request.Context(), mapID); err != nil {
@@ -302,4 +311,29 @@ func (h *Handler) DeleteMap(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// authorizeMapChange checks that the caller may update or delete mapID (its
+// owner, or an admin), writing the error response and returning false if
+// not. A missing map is reported as 404 here rather than by the caller.
+func (h *Handler) authorizeMapChange(c *gin.Context, mapID string) bool {
+	authUser, ok := getAuthUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return false
+	}
+	m, err := h.maps.GetMap(c.Request.Context(), mapID)
+	if err != nil {
+		if errors.Is(err, service.ErrMapNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "map not found"})
+			return false
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch map"})
+		return false
+	}
+	if !service.CanModifyMap(m, authUser.ID, strings.EqualFold(authUser.Role, "admin")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only the map's owner or an admin can change it"})
+		return false
+	}
+	return true
 }

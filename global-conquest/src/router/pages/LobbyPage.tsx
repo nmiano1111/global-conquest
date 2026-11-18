@@ -150,12 +150,9 @@ export function LobbyPage() {
     };
   }, [loadGames, loadMessages]);
 
-  const isAdmin = auth.user?.role === "admin";
+  const myMaps = maps.filter((m) => m.ownerUserId === auth.user?.id);
+  const otherMaps = maps.filter((m) => m.ownerUserId !== auth.user?.id);
   useEffect(() => {
-    if (!isAdmin) {
-      setMaps([]);
-      return;
-    }
     let cancelled = false;
     listMaps()
       .then((out) => {
@@ -167,7 +164,7 @@ export function LobbyPage() {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin]);
+  }, []);
 
   useEffect(() => {
     const off = on("lobby_typing_state", (msg) => {
@@ -263,7 +260,7 @@ export function LobbyPage() {
         setupMode: isAdmin ? setupMode : undefined,
         allBots: isAdmin ? allBots : undefined,
         hidden: isAdmin ? hidden : undefined,
-        mapId: isAdmin ? mapId || undefined : undefined,
+        mapId: mapId || undefined,
       });
       await loadGames();
     } catch (err) {
@@ -457,19 +454,30 @@ export function LobbyPage() {
                 </label>
               </>
             )}
-            {isAdmin && (
-              <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
-                Map
-                <select className={`${inputClass} w-40`} value={mapId} onChange={(e) => setMapId(e.target.value)}>
-                  <option value="">Classic</option>
-                  {maps.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <label className="grid gap-1.5 text-xs font-medium text-gc-muted">
+              Map
+              <select className={`${inputClass} w-40`} value={mapId} onChange={(e) => setMapId(e.target.value)}>
+                <option value="">Classic</option>
+                {myMaps.length > 0 ? (
+                  <optgroup label="Your maps">
+                    {myMaps.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {otherMaps.length > 0 ? (
+                  <optgroup label="Other players' maps">
+                    {otherMaps.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.ownerUserName ? `${m.name} (${m.ownerUserName})` : m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+              </select>
+            </label>
             <button className={buttonPrimaryClass} type="submit" disabled={creatingGame}>
               {creatingGame ? "Creating…" : "Create Game"}
             </button>

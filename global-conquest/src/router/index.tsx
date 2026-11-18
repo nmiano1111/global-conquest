@@ -16,6 +16,7 @@ import {
   LobbyPage,
   LoginPage,
   MapEditorPage,
+  MapsPage,
   ProfilePage,
   RootLayout,
   SignupPage,
@@ -136,22 +137,28 @@ const requireAdmin = ({ context }: { context: RouterContext }) => {
   }
 };
 
+// Map building is open to every signed-in user (the /app guard covers
+// auth); the editor itself goes read-only on maps the viewer doesn't own.
+const mapsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/maps",
+  component: MapsPage,
+});
+
 // The map editor is one page for both drawing a new map and editing an
 // existing one; "new" is a static segment, so it wins over $mapID.
 const newMapRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: "/admin/maps/new",
+  path: "/maps/new",
   // ?generate=true opens the editor on its Generate tab.
   validateSearch: (search: Record<string, unknown>): { generate?: boolean } =>
     search.generate === true || search.generate === "true" ? { generate: true } : {},
-  beforeLoad: requireAdmin,
   component: MapEditorPage,
 });
 
 const editMapRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: "/admin/maps/$mapID",
-  beforeLoad: requireAdmin,
+  path: "/maps/$mapID",
   component: MapEditorPage,
 });
 
@@ -177,7 +184,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   signupRoute,
-  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, gameReplayRoute, adminRoute, newMapRoute, editMapRoute, adminStatsRoute, adminPlayerStatsRoute]),
+  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, gameReplayRoute, adminRoute, mapsRoute, newMapRoute, editMapRoute, adminStatsRoute, adminPlayerStatsRoute]),
 ]);
 
 export const router = createRouter({

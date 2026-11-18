@@ -609,12 +609,9 @@ func (s *GamesService) CreateClassicGame(ctx context.Context, ownerUserID string
 }
 
 // CreateGameWithMap is CreateClassicGame generalized to start the game on a
-// custom map instead of the classic board. mapID, if non-empty, must
-// already have been resolved to an existing store.Map by the caller (see
-// httpapi's CreateGame handler, which is also solely responsible for
-// verifying the caller is an admin before ever passing a non-empty mapID
-// here — this method does not re-check that). An empty mapID behaves
-// exactly like CreateClassicGame.
+// custom map instead of the classic board. mapID, if non-empty, must name
+// an existing map (any user may start a game on any map, not just their
+// own). An empty mapID behaves exactly like CreateClassicGame.
 func (s *GamesService) CreateGameWithMap(ctx context.Context, ownerUserID string, playerCount int, setupMode string, botCount int, allBots, hidden bool, mapID string) (store.Game, error) {
 	if ownerUserID == "" {
 		return store.Game{}, ErrInvalidGameInput

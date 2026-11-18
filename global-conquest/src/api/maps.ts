@@ -6,6 +6,8 @@ export type MapSummary = {
   id: string;
   name: string;
   ownerUserId: string;
+  /** Owner's username; empty on maps returned straight from create/update. */
+  ownerUserName: string;
   continentCount: number;
   territoryCount: number;
   createdAt: string;
@@ -74,12 +76,13 @@ function readNumber(value: unknown, fallback = 0): number {
 function normalizeMapSummary(value: unknown): MapSummary {
   const record = asRecord(value);
   if (!record) {
-    return { id: "", name: "", ownerUserId: "", continentCount: 0, territoryCount: 0, createdAt: "" };
+    return { id: "", name: "", ownerUserId: "", ownerUserName: "", continentCount: 0, territoryCount: 0, createdAt: "" };
   }
   return {
     id: readString(record.id),
     name: readString(record.name),
     ownerUserId: readString(record.owner_user_id),
+    ownerUserName: readString(record.owner_user_name),
     continentCount: readNumber(record.continent_count),
     territoryCount: readNumber(record.territory_count),
     createdAt: readString(record.created_at),
@@ -148,13 +151,13 @@ function normalizeMapDetail(value: unknown): MapDetail {
 }
 
 export async function listMaps(): Promise<MapSummary[]> {
-  const res = await request<unknown>({ method: "GET", url: "/admin/maps" });
+  const res = await request<unknown>({ method: "GET", url: "/maps" });
   if (!Array.isArray(res)) return [];
   return res.map((item) => normalizeMapSummary(item));
 }
 
 export async function getMap(mapID: string): Promise<MapDetail> {
-  const res = await request<unknown>({ method: "GET", url: `/admin/maps/${encodeURIComponent(mapID)}` });
+  const res = await request<unknown>({ method: "GET", url: `/maps/${encodeURIComponent(mapID)}` });
   return normalizeMapDetail(res);
 }
 
@@ -164,7 +167,7 @@ export async function createMap(input: CreateMapRequest): Promise<MapDetail> {
     continents: input.continents.map((c) => ({ name: c.name, bonus: c.bonus, territory_count: c.territoryCount })),
     borders: input.borders.map((b) => ({ a: b.a, b: b.b, crossings: b.crossings })),
   };
-  const res = await request<unknown>({ method: "POST", url: "/admin/maps", data });
+  const res = await request<unknown>({ method: "POST", url: "/maps", data });
   return normalizeMapDetail(res);
 }
 
@@ -178,20 +181,26 @@ export async function generateMap(input: Omit<CreateMapRequest, "name"> & { name
     continents: input.continents.map((c) => ({ name: c.name, bonus: c.bonus, territory_count: c.territoryCount })),
     borders: input.borders.map((b) => ({ a: b.a, b: b.b, crossings: b.crossings })),
   };
-  const res = await request<unknown>({ method: "POST", url: "/admin/maps/generate", data });
+  const res = await request<unknown>({ method: "POST", url: "/maps/generate", data });
   return normalizeMapDetail(res);
 }
 
 export async function createMapFromGraph(input: MapGraphRequest): Promise<MapDetail> {
-  const res = await request<unknown>({ method: "POST", url: "/admin/maps/graph", data: input });
+  const res = await request<unknown>({ method: "POST", url: "/maps/graph", data: input });
   return normalizeMapDetail(res);
 }
 
 export async function updateMap(mapID: string, input: MapGraphRequest): Promise<MapDetail> {
-  const res = await request<unknown>({ method: "PUT", url: `/admin/maps/${encodeURIComponent(mapID)}`, data: input });
+  const res = await request<unknown>({ method: "PUT", url: `/maps/${encodeURIComponent(mapID)}`, data: input });
   return normalizeMapDetail(res);
 }
 
 export async function deleteMap(mapID: string): Promise<void> {
-  await request<unknown>({ method: "DELETE", url: `/admin/maps/${encodeURIComponent(mapID)}` });
+  await request<unknown>({ method: "DELETE", url: `/maps/${encodeURIComponent(mapID)}` });
+}
+
+/** Only a map's owner or an admin may update or delete it; anyone can view it, play on it, or save a copy. */
+export function canModifyMap(m: Pick<MapSummary, "ownerUserId">, user: { id: string; role?: string } | null | undefined): boolean {
+  if (!user) return false;
+  return user.role === "admin" || (m.ownerUserId !== "" && m.ownerUserId === user.id);
 }

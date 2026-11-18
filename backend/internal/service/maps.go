@@ -32,12 +32,13 @@ type mapsDB interface {
 	Queryer() db.Querier
 }
 
-// MapsService is the business-logic layer for admin-authored custom maps:
+// MapsService is the business-logic layer for user-authored custom maps:
 // generating a playable risk.Board from a small MapSpec (see
-// internal/mapgen) and persisting/listing/deleting the result. Every
-// exported method here is only ever reachable through admin-gated HTTP
-// routes (see httpapi's admin.Group("/maps")); this service itself does
-// not re-check the caller's role.
+// internal/mapgen) and persisting/listing/deleting the result. Any
+// signed-in user may create maps, and every map is readable (and playable)
+// by everyone; only its owner or an admin may update or delete it. That
+// ownership check lives in httpapi (via CanModifyMap) -- UpdateMap and
+// DeleteMap themselves do not re-check the caller.
 type MapsService struct {
 	db   mapsDB
 	maps store.MapsStore
@@ -50,12 +51,13 @@ func NewMapsService(db mapsDB, maps store.MapsStore) *MapsService {
 }
 
 // MapSummary is a lightweight projection of a stored map, omitting the full
-// board/layout — used for list views (the admin maps table, the
-// create-game map picker).
+// board/layout — used for list views (the maps page, the create-game map
+// picker).
 type MapSummary struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
 	OwnerUserID    string    `json:"owner_user_id"`
+	OwnerUserName  string    `json:"owner_user_name"`
 	ContinentCount int       `json:"continent_count"`
 	TerritoryCount int       `json:"territory_count"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -64,10 +66,12 @@ type MapSummary struct {
 // MapDetail is the full projection of a stored map, including its playable
 // board and visual layout.
 type MapDetail struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	OwnerUserID string               `json:"owner_user_id"`
-	Definition  mapgen.MapDefinition `json:"definition"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	OwnerUserID string `json:"owner_user_id"`
+	// OwnerUserName is set by GetMap only.
+	OwnerUserName string               `json:"owner_user_name"`
+	Definition    mapgen.MapDefinition `json:"definition"`
 	// GameCount is how many games reference this map. A map with any games
 	// is read-only (see UpdateMap); populated by GetMap only, always zero
 	// on a freshly created or updated map.
@@ -197,6 +201,7 @@ func (s *MapsService) ListMaps(ctx context.Context) ([]MapSummary, error) {
 			ID:             row.ID,
 			Name:           row.Name,
 			OwnerUserID:    row.OwnerUserID,
+			OwnerUserName:  row.OwnerUserName,
 			ContinentCount: len(def.Board.Continents),
 			TerritoryCount: len(def.Board.Order),
 			CreatedAt:      row.CreatedAt,
@@ -250,12 +255,19 @@ func toMapDetail(row store.Map) (MapDetail, error) {
 		return MapDetail{}, err
 	}
 	return MapDetail{
-		ID:          row.ID,
-		Name:        row.Name,
-		OwnerUserID: row.OwnerUserID,
-		Definition:  def,
-		CreatedAt:   row.CreatedAt,
+		ID:            row.ID,
+		Name:          row.Name,
+		OwnerUserID:   row.OwnerUserID,
+		OwnerUserName: row.OwnerUserName,
+		Definition:    def,
+		CreatedAt:     row.CreatedAt,
 	}, nil
+}
+
+// CanModifyMap reports whether a user may update or delete the map: its
+// owner always can, and admins can modify anyone's.
+func CanModifyMap(m MapDetail, userID string, isAdmin bool) bool {
+	return isAdmin || (userID != "" && m.OwnerUserID == userID)
 }
 
 func isForeignKeyViolation(err error) bool {

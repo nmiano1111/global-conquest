@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNod
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ReactFlowProvider, useEdgesState, useNodesState } from "@xyflow/react";
 import type { ApiError } from "../../api/client";
-import { createMapFromGraph, getMap, updateMap, type MapDetail } from "../../api/maps";
+import { canModifyMap, createMapFromGraph, getMap, updateMap, type MapDetail } from "../../api/maps";
 import { useAuth } from "../../auth";
 import { GeneratePanel } from "../../map-editor/GeneratePanel";
 import { MapEditorCanvas } from "../../map-editor/MapEditorCanvas";
@@ -27,7 +27,7 @@ import { buttonDangerClass, buttonGhostClass, buttonPrimaryClass, inputClass } f
 
 type Tab = "canvas" | "territories" | "generate";
 
-// Shared by /app/admin/maps/new (no mapID) and /app/admin/maps/$mapID.
+// Shared by /app/maps/new (no mapID) and /app/maps/$mapID.
 export function MapEditorPage() {
   const { mapID } = useParams({ strict: false }) as { mapID?: string };
   const { generate } = useSearch({ strict: false }) as { generate?: boolean };
@@ -56,10 +56,6 @@ export function MapEditorPage() {
           await navigate({ to: "/login" });
           return;
         }
-        if (apiErr.status === 403) {
-          await navigate({ to: "/app/lobby" });
-          return;
-        }
         setLoadError({ id: mapID, message: apiErr.status === 404 ? "Map not found." : apiErr.message || "Failed to load map" });
       }
     })();
@@ -73,8 +69,8 @@ export function MapEditorPage() {
       <div className="mx-auto max-w-md py-16 text-center">
         <p className="text-3xl text-gc-muted">⊘</p>
         <h2 className="mt-2 text-lg font-semibold text-gc-text">{loadError.message}</h2>
-        <Link to="/app/admin" className={`${buttonGhostClass} mt-4`}>
-          Back to admin
+        <Link to="/app/maps" className={`${buttonGhostClass} mt-4`}>
+          Back to maps
         </Link>
       </div>
     );
@@ -90,6 +86,7 @@ export function MapEditorPage() {
         detail={mapID ? loaded!.detail : null}
         initial={mapID ? loaded!.state : draft}
         initialTab={!mapID && generate ? "generate" : "canvas"}
+        readOnly={mapID ? !canModifyMap(loaded!.detail, auth.user) : false}
         onSaved={(detail) => setLoaded((prev) => (prev ? { ...prev, detail } : prev))}
       />
     </ReactFlowProvider>
@@ -101,10 +98,12 @@ type MapEditorProps = {
   detail: MapDetail | null;
   initial: EditorState;
   initialTab: Tab;
+  /** Someone else's map: it can be edited here but only saved as a copy. */
+  readOnly: boolean;
   onSaved: (detail: MapDetail) => void;
 };
 
-function MapEditor({ mapID, detail, initial, initialTab, onSaved }: MapEditorProps) {
+function MapEditor({ mapID, detail, initial, initialTab, readOnly, onSaved }: MapEditorProps) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>(initialTab);
   const [name, setName] = useState(detail?.name ?? "");
@@ -116,7 +115,8 @@ function MapEditor({ mapID, detail, initial, initialTab, onSaved }: MapEditorPro
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
-  const locked = (detail?.gameCount ?? 0) > 0;
+  const inUse = (detail?.gameCount ?? 0) > 0;
+  const locked = inUse || readOnly;
   const state = useMemo<EditorState>(() => ({ continents, nodes, edges }), [continents, nodes, edges]);
   const issues = useMemo(() => validateEditorState(name, state), [name, state]);
   const errors = issues.filter((i) => i.level === "error");
@@ -188,12 +188,12 @@ function MapEditor({ mapID, detail, initial, initialTab, onSaved }: MapEditorPro
       const req = toGraphRequest(asNew && mapID ? `${name.trim()} (copy)` : name, state);
       if (mapID && !asNew) {
         const out = await updateMap(mapID, req);
-        onSaved({ ...out, gameCount: 0 });
+        onSaved({ ...out, ownerUserName: detail?.ownerUserName ?? "", gameCount: 0 });
         setDirty(false);
       } else {
         const out = await createMapFromGraph(req);
         setDirty(false);
-        await navigate({ to: "/app/admin/maps/$mapID", params: { mapID: out.id } });
+        await navigate({ to: "/app/maps/$mapID", params: { mapID: out.id } });
       }
     } catch (err) {
       const apiErr = err as ApiError;
@@ -207,7 +207,9 @@ function MapEditor({ mapID, detail, initial, initialTab, onSaved }: MapEditorPro
     }
   };
 
-  const status = locked
+  const status = readOnly
+    ? { label: detail?.ownerUserName ? `View only · by ${detail.ownerUserName}` : "View only", cls: "border-gc-warning/40 bg-gc-warning/10 text-gc-warning" }
+    : inUse
     ? { label: `Locked · ${detail?.gameCount} game${detail?.gameCount === 1 ? "" : "s"}`, cls: "border-gc-warning/40 bg-gc-warning/10 text-gc-warning" }
     : dirty
       ? { label: mapID ? "Unsaved changes" : "Draft", cls: "border-gc-accent/40 bg-gc-accent/10 text-gc-accent" }
@@ -218,7 +220,7 @@ function MapEditor({ mapID, detail, initial, initialTab, onSaved }: MapEditorPro
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gc-border pb-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <Link to="/app/admin" className="text-lg text-gc-muted transition-colors hover:text-gc-text" title="Back to admin">
+          <Link to="/app/maps" className="text-lg text-gc-muted transition-colors hover:text-gc-text" title="Back to maps">
             ←
           </Link>
           <label className="flex min-w-0 flex-1 flex-col gap-1 sm:max-w-md">
@@ -263,7 +265,14 @@ function MapEditor({ mapID, detail, initial, initialTab, onSaved }: MapEditorPro
       </div>
 
       {/* Locked / issues / save error */}
-      {locked ? (
+      {readOnly ? (
+        <Section>
+          <p className="text-sm text-gc-warning">
+            This map belongs to {detail?.ownerUserName || "another player"}, so you can't change it. You can still edit
+            here and use <span className="font-semibold">Save as new</span> to keep your own copy.
+          </p>
+        </Section>
+      ) : inUse ? (
         <Section>
           <p className="text-sm text-gc-warning">
             {detail?.gameCount} game{detail?.gameCount === 1 ? " uses" : "s use"} this map, so it can't be changed. You
