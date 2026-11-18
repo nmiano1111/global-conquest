@@ -298,10 +298,12 @@ export function AdminPage() {
                   </td>
                   <td className="px-4 py-3 text-gc-muted">{u.activeSessions}</td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
+                    {/* Fixed-width toggles so every row's buttons line up,
+                        whichever label (Block/Unblock, Sandbox/Unsandbox) shows. */}
+                    <div className="flex gap-2">
                       {isBlocked ? (
                         <button
-                          className={buttonGhostClass}
+                          className={`${buttonGhostClass} min-w-[5.5rem]`}
                           type="button"
                           disabled={isBusy}
                           onClick={() => void patchAccess(u, "active")}
@@ -310,7 +312,7 @@ export function AdminPage() {
                         </button>
                       ) : (
                         <button
-                          className={buttonGhostClass}
+                          className={`${buttonGhostClass} min-w-[5.5rem]`}
                           type="button"
                           disabled={isBusy}
                           onClick={() => void patchAccess(u, "blocked")}
@@ -319,7 +321,7 @@ export function AdminPage() {
                         </button>
                       )}
                       <button
-                        className={buttonGhostClass}
+                        className={`${buttonGhostClass} min-w-[6.75rem]`}
                         type="button"
                         disabled={isBusy}
                         onClick={() => void onToggleSandbox(u)}
@@ -327,7 +329,7 @@ export function AdminPage() {
                         {u.isSandboxed ? "Unsandbox" : "Sandbox"}
                       </button>
                       <button
-                        className={buttonPrimaryClass}
+                        className={`${buttonPrimaryClass} whitespace-nowrap`}
                         type="button"
                         disabled={isBusy}
                         onClick={() => void onRevokeSessions(u)}
