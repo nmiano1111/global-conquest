@@ -31,8 +31,9 @@ type gameResultsReader interface {
 // All aggregation happens in Go over the filtered rows; it is only reachable
 // through admin-gated routes and does not itself re-check the caller's role.
 type StatsService struct {
-	db      statsDB
-	results gameResultsReader
+	db        statsDB
+	results   gameResultsReader
+	decisions decisionReader
 }
 
 // NewStatsService constructs a StatsService.
@@ -374,13 +375,6 @@ func (a *summaryAcc) finish() PlayerSummary {
 	start := max(len(a.results)-rollingWindow, 0)
 	sm.Recent = append([]bool{}, a.results[start:]...)
 	return sm
-}
-
-func deref(p *int) int {
-	if p == nil {
-		return 0
-	}
-	return *p
 }
 
 func summarizePlayers(games []gameGroup) []PlayerSummary {

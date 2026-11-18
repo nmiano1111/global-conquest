@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/nmiano1111/global-conquest/backend/internal/bot"
@@ -81,6 +82,11 @@ func main() {
 	gamesSvc.SetGameDomainEventStore(gameDomainEventStore)
 	gameReplayEventStore := store.NewPostgresGameReplayEventStore()
 	gamesSvc.SetGameReplayEventStore(gameReplayEventStore)
+	// Attack-decision analytics: extracted in the background from each
+	// completed game's replay history (see service.DecisionExtractor).
+	attackDecisionsStore := store.NewPostgresAttackDecisionsStore()
+	statsSvc.SetDecisionReader(attackDecisionsStore)
+	go service.NewDecisionExtractor(d, attackDecisionsStore, gameReplayEventStore).Run(ctx, 2*time.Minute)
 	discordOutboxStore := store.NewPostgresDiscordOutboxStore()
 	gamesSvc.SetDiscordOutboxStore(discordOutboxStore)
 	botTuningConfigStore := store.NewPostgresBotTuningConfigStore()

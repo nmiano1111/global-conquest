@@ -17,6 +17,7 @@ type statsService interface {
 	Overview(ctx context.Context, f store.GameResultsFilter) (service.StatsOverview, error)
 	Players(ctx context.Context, f store.GameResultsFilter) ([]service.PlayerSummary, error)
 	PlayerDetail(ctx context.Context, key string, f store.GameResultsFilter) (service.PlayerDetail, error)
+	PlayerDecisions(ctx context.Context, key string, f store.GameResultsFilter) (*service.PlayerDecisionStats, error)
 }
 
 // SetStatsService wires in the service backing the admin player-statistics
@@ -164,6 +165,27 @@ func (h *Handler) GetStatsPlayer(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load stats"})
+		return
+	}
+	c.JSON(http.StatusOK, d)
+}
+
+// GetStatsPlayerDecisions godoc
+// @Summary      One player's attack-decision statistics
+// @Description  How a player chooses attacks compared with the attacks available at the time (odds, target properties, when they stop, dice luck). Players without decision data get zero counts. Admin only.
+// @Tags         admin
+// @Produce      json
+// @Param        key path string true "Player key"
+// @Success      200 {object} service.PlayerDecisionStats
+// @Router       /api/admin/stats/players/{key}/decisions [get]
+func (h *Handler) GetStatsPlayerDecisions(c *gin.Context) {
+	f, ok := h.statsRequest(c)
+	if !ok {
+		return
+	}
+	d, err := h.stats.PlayerDecisions(c.Request.Context(), c.Param("key"), f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load decision stats"})
 		return
 	}
 	c.JSON(http.StatusOK, d)

@@ -276,7 +276,14 @@ const listPlayerResultsSQL = `
 	FROM game_results gr
 	JOIN game_result_players p ON p.game_id = gr.game_id
 	LEFT JOIN users u ON u.id = p.user_id
-	WHERE ($1 = 'all'
+	WHERE ` + gameResultsFilterSQL + `
+	ORDER BY gr.completed_at, gr.game_id, p.seat
+`
+
+// gameResultsFilterSQL applies a GameResultsFilter to game_results alias gr,
+// with params $1 composition, $2 map, $3 player count, $4 include
+// sandboxed, $5 from, $6 to (see ListPlayerResults).
+const gameResultsFilterSQL = `($1 = 'all'
 	       OR ($1 = 'human_only' AND gr.bot_count = 0)
 	       OR ($1 = 'mixed'      AND gr.bot_count > 0 AND gr.human_count > 0)
 	       OR ($1 = 'bot_only'   AND gr.human_count = 0))
@@ -286,9 +293,7 @@ const listPlayerResultsSQL = `
 	  AND ($3::int = 0 OR gr.player_count = $3::int)
 	  AND ($4::boolean OR NOT gr.is_sandboxed)
 	  AND ($5::timestamptz IS NULL OR gr.completed_at >= $5::timestamptz)
-	  AND ($6::timestamptz IS NULL OR gr.completed_at <  $6::timestamptz)
-	ORDER BY gr.completed_at, gr.game_id, p.seat
-`
+	  AND ($6::timestamptz IS NULL OR gr.completed_at <  $6::timestamptz)`
 
 // ListPlayerResults returns every (game, seat) row matching filter, oldest
 // game first.

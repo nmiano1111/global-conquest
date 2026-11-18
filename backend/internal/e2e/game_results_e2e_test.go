@@ -51,12 +51,46 @@ func TestGameResultsRecordedOnCompletionAndSurviveDeletion(t *testing.T) {
 		t.Fatalf("counts = %d/%d/%d, want 3/2/1", playerCount, humanCount, botCount)
 	}
 
+	// Attack decisions: extracted from the replay log, one row per attack
+	// roll that had a prior attack-phase board (the very first action has none).
+	decisionsStore := store.NewPostgresAttackDecisionsStore()
+	extractor := service.NewDecisionExtractor(appDB, decisionsStore, store.NewPostgresGameReplayEventStore())
+	if n, err := extractor.ProcessPending(ctx); err != nil || n != 1 {
+		t.Fatalf("ProcessPending: n=%d err=%v, want 1", n, err)
+	}
+	var decisionAttacks, replayAttacks int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM attack_decisions WHERE game_id = $1::uuid AND kind = 'attack' AND player_key = $2`,
+		gameID, "bot:"+bot.StrategyBasicV1).Scan(&decisionAttacks); err != nil {
+		t.Fatalf("count decisions: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM game_replay_events WHERE game_id = $1::uuid AND action_type = 'attack'`, gameID).Scan(&replayAttacks); err != nil {
+		t.Fatalf("count replay attacks: %v", err)
+	}
+	if decisionAttacks == 0 || decisionAttacks < replayAttacks-1 || decisionAttacks > replayAttacks {
+		t.Fatalf("decision attacks = %d, replay attacks = %d", decisionAttacks, replayAttacks)
+	}
+	if n, err := extractor.ProcessPending(ctx); err != nil || n != 0 {
+		t.Fatalf("second ProcessPending: n=%d err=%v, want 0", n, err)
+	}
+
 	// Deleting the game must not erase its stats (no FK to games).
 	if _, err := pool.Exec(ctx, `DELETE FROM games WHERE id = $1::uuid`, gameID); err != nil {
 		t.Fatalf("delete game: %v", err)
 	}
+	// Re-extracting after deletion finds no history but keeps the old rows.
+	if err := extractor.ProcessGame(ctx, gameID); err != nil {
+		t.Fatalf("re-extract deleted game: %v", err)
+	}
 
 	stats := service.NewStatsService(appDB, resultsStore)
+	stats.SetDecisionReader(decisionsStore)
+	dec, err := stats.PlayerDecisions(ctx, "bot:"+bot.StrategyBasicV1, store.GameResultsFilter{})
+	if err != nil {
+		t.Fatalf("bot decisions: %v", err)
+	}
+	if dec.Games != 1 || dec.Rolls != decisionAttacks {
+		t.Fatalf("bot decisions after deletion: games=%d rolls=%d, want 1/%d", dec.Games, dec.Rolls, decisionAttacks)
+	}
 	botDetail, err := stats.PlayerDetail(ctx, "bot:"+bot.StrategyBasicV1, store.GameResultsFilter{})
 	if err != nil {
 		t.Fatalf("bot detail: %v", err)

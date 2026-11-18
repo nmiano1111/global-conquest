@@ -109,6 +109,7 @@ func NewRouter(h *Handler) *gin.Engine {
 			admin.GET("/stats/overview", h.GetStatsOverview)
 			admin.GET("/stats/players", h.ListStatsPlayers)
 			admin.GET("/stats/players/:key", h.GetStatsPlayer)
+			admin.GET("/stats/players/:key/decisions", h.GetStatsPlayerDecisions)
 		}
 
 	}

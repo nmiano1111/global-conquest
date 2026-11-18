@@ -32,6 +32,11 @@ func (f *fakeStatsService) PlayerDetail(_ context.Context, key string, fl store.
 	return service.PlayerDetail{}, f.detailErr
 }
 
+func (f *fakeStatsService) PlayerDecisions(_ context.Context, key string, fl store.GameResultsFilter) (*service.PlayerDecisionStats, error) {
+	f.lastKey, f.lastFilter = key, fl
+	return &service.PlayerDecisionStats{Games: 3}, nil
+}
+
 func newStatsTestRouter(role string, stats *fakeStatsService) http.Handler {
 	userSvc := &fakeUsersService{
 		authenticateSessionFn: func(context.Context, string) (store.User, error) {

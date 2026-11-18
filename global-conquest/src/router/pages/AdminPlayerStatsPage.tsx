@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router"
 import type { ApiError } from "../../api/client";
 import { getStatsPlayer, listStatsPlayers, type PlayerDetail, type PlayerSummary, type StatsFilters } from "../../api/stats";
 import { useAuth } from "../../auth";
+import { PlayerDecisionsSection } from "./PlayerDecisionsSection";
 import { BarChart, FilterBar, LineChart, Panel, StatTile } from "./statsShared";
 import {
   MAX_COMPARE,
@@ -463,6 +464,8 @@ export function AdminPlayerStatsPage() {
             </Panel>
           </div>
           )}
+
+          <PlayerDecisionsSection playerKey={playerKey} playerName={s.name} filters={filters} xMode={xMode} />
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="Finishing positions">

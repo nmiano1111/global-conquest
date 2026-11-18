@@ -149,3 +149,54 @@ export function getStatsPlayer(key: string, f: StatsFilters): Promise<PlayerDeta
     params: params(f),
   });
 }
+
+export type DecisionOddsBucket = {
+  label: string;
+  attacks: number;
+  chosen_pct: number;
+  available_pct: number;
+  preference: number | null;
+  capture_pct: number | null;
+  expected_capture_pct: number | null;
+};
+
+export type DecisionFeature = {
+  key: string;
+  label: string;
+  chosen: number;
+  chosen_pct: number;
+  available_pct: number;
+  preference: number | null;
+};
+
+export type PlayerDecisionStats = {
+  games: number;
+  rolls: number;
+  attacks: number;
+  stops: number;
+  avg_win_prob: number | null;
+  avg_rolls_per_attack: number | null;
+  abandoned_pct: number | null;
+  max_dice_pct: number | null;
+  stops_with_good_odds_pct: number | null;
+  kill_luck_pct: number | null;
+  loss_luck_pct: number | null;
+  odds_buckets: DecisionOddsBucket[];
+  features: DecisionFeature[];
+  stop_buckets: { label: string; stops: number; pct: number }[];
+  series: {
+    game_id: string;
+    completed_at: string;
+    attacks: number;
+    avg_win_prob: number | null;
+    cum_kill_luck_pct: number | null;
+  }[];
+};
+
+export function getStatsPlayerDecisions(key: string, f: StatsFilters): Promise<PlayerDecisionStats> {
+  return request<PlayerDecisionStats>({
+    method: "GET",
+    url: `/admin/stats/players/${encodeURIComponent(key)}/decisions`,
+    params: params(f),
+  });
+}
