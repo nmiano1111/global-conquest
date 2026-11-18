@@ -44,6 +44,12 @@ type AttackDecision struct {
 	OptionsBreaksContinent    int      `json:"options_breaks_continent"`
 	OptionsVsLeader           int      `json:"options_vs_leader"`
 	OptionsVsWeakest          int      `json:"options_vs_weakest"`
+
+	// Per distinct attackable territory (V24); nil on version-1 rows.
+	ToContinent             *string   `json:"to_continent"`
+	OptionsTargets          []string  `json:"options_targets"`
+	OptionsTargetContinents []string  `json:"options_target_continents"`
+	OptionsWinProbs         []float64 `json:"options_win_probs"`
 }
 
 // AttackDecisionRow is an AttackDecision plus its game's id and completion
@@ -52,6 +58,10 @@ type AttackDecisionRow struct {
 	AttackDecision
 	GameID      string
 	CompletedAt time.Time
+	// MapID and MapName identify the game's custom map; both "" for the
+	// classic map.
+	MapID   string
+	MapName string
 }
 
 // DecisionSource is what the extractor needs to process one game.
@@ -168,7 +178,8 @@ const attackDecisionColumns = `game_sequence, seat, player_key, turn_index, kind
 	attacker_dice, defender_dice, attacker_loss, defender_loss, expected_attacker_loss, expected_defender_loss,
 	captured, completes_continent, breaks_continent, targets_leader, targets_weakest,
 	options, best_win_prob, options_by_bucket, options_completes_continent, options_breaks_continent,
-	options_vs_leader, options_vs_weakest`
+	options_vs_leader, options_vs_weakest,
+	to_continent, options_targets, options_target_continents, options_win_probs`
 
 const insertAttackDecisionsSQL = `
 	INSERT INTO attack_decisions (game_id, ` + attackDecisionColumns + `)
@@ -181,7 +192,8 @@ const insertAttackDecisionsSQL = `
 		expected_attacker_loss real, expected_defender_loss real,
 		captured boolean, completes_continent boolean, breaks_continent boolean, targets_leader boolean, targets_weakest boolean,
 		options int, best_win_prob real, options_by_bucket int[], options_completes_continent int, options_breaks_continent int,
-		options_vs_leader int, options_vs_weakest int)
+		options_vs_leader int, options_vs_weakest int,
+		to_continent text, options_targets text[], options_target_continents text[], options_win_probs real[])
 `
 
 // ListForPlayer returns a player's decisions in games matching f, in game
@@ -196,7 +208,7 @@ func (s *PostgresAttackDecisionsStore) ListForPlayer(ctx context.Context, q db.Q
 		mapFilter = MapFilterAll
 	}
 	rows, err := q.Query(ctx, `
-		SELECT gr.game_id::text, gr.completed_at, `+attackDecisionColumns+`
+		SELECT gr.game_id::text, gr.completed_at, COALESCE(gr.map_id::text, ''), COALESCE(gr.map_name, ''), `+attackDecisionColumns+`
 		FROM attack_decisions d
 		JOIN game_results gr ON gr.game_id = d.game_id
 		WHERE d.player_key = $7
@@ -216,13 +228,15 @@ func (s *PostgresAttackDecisionsStore) ListForPlayer(ctx context.Context, q db.Q
 			winProb, expA, expD, best           *float32
 		)
 		var buckets []int32
-		if err := rows.Scan(&r.GameID, &r.CompletedAt,
+		var targetProbs []float32
+		if err := rows.Scan(&r.GameID, &r.CompletedAt, &r.MapID, &r.MapName,
 			&r.GameSequence, &seat, &r.PlayerKey, &r.TurnIndex, &r.Kind,
 			&r.FromTerritory, &r.ToTerritory, &defSeat, &r.AttackerArmies, &r.DefenderArmies, &winProb, &r.Continued,
 			&aDice, &dDice, &aLoss, &dLoss, &expA, &expD,
 			&r.Captured, &r.CompletesContinent, &r.BreaksContinent, &r.TargetsLeader, &r.TargetsWeakest,
 			&r.Options, &best, &buckets, &r.OptionsCompletesContinent, &r.OptionsBreaksContinent,
 			&r.OptionsVsLeader, &r.OptionsVsWeakest,
+			&r.ToContinent, &r.OptionsTargets, &r.OptionsTargetContinents, &targetProbs,
 		); err != nil {
 			return nil, err
 		}
@@ -230,6 +244,12 @@ func (s *PostgresAttackDecisionsStore) ListForPlayer(ctx context.Context, q db.Q
 		r.DefenderSeat, r.AttackerDice, r.DefenderDice = intPtr16(defSeat), intPtr16(aDice), intPtr16(dDice)
 		r.AttackerLoss, r.DefenderLoss = intPtr16(aLoss), intPtr16(dLoss)
 		r.WinProb, r.ExpectedAttackerLoss, r.ExpectedDefenderLoss, r.BestWinProb = f64Ptr(winProb), f64Ptr(expA), f64Ptr(expD), f64Ptr(best)
+		if targetProbs != nil {
+			r.OptionsWinProbs = make([]float64, len(targetProbs))
+			for i, p := range targetProbs {
+				r.OptionsWinProbs[i] = float64(p)
+			}
+		}
 		r.OptionsByBucket = make([]int, len(buckets))
 		for i, b := range buckets {
 			r.OptionsByBucket[i] = int(b)

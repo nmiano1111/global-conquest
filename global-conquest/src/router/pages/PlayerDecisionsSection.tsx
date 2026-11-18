@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import type { ApiError } from "../../api/client";
 import { getStatsPlayerDecisions, type PlayerDecisionStats, type StatsFilters } from "../../api/stats";
+import { DecisionPlacesPanels } from "./DecisionPlacesPanels";
 import { BarChart, LineChart, Panel, StatTile } from "./statsShared";
 import { SERIES, fmtDate, fmtNum, fmtPct, type XMode } from "./statsFormat";
 
@@ -224,6 +225,8 @@ export function PlayerDecisionsSection({
             </Panel>
           </div>
         </div>
+
+        <DecisionPlacesPanels data={data} />
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Panel title="Attack odds per game" subtitle="Average odds of the attacks started in each game">

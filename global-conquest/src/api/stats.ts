@@ -169,6 +169,20 @@ export type DecisionFeature = {
   preference: number | null;
 };
 
+export type DecisionPlaceStat = {
+  name: string;
+  continent?: string;
+  attacks: number;
+  available: number;
+  take_pct: number;
+  chosen_pct: number;
+  available_pct: number;
+  preference: number | null;
+  avg_win_prob_chosen: number | null;
+  avg_win_prob_available: number | null;
+  capture_pct: number | null;
+};
+
 export type PlayerDecisionStats = {
   games: number;
   rolls: number;
@@ -191,6 +205,18 @@ export type PlayerDecisionStats = {
     avg_win_prob: number | null;
     cum_kill_luck_pct: number | null;
   }[];
+  place_attacks: number;
+  /** Per-map target stats, most attacks first; shares are within each map. */
+  maps: DecisionMapStats[];
+};
+
+export type DecisionMapStats = {
+  /** "" for the classic map */
+  map_id: string;
+  map_name: string;
+  attacks: number;
+  continents: DecisionPlaceStat[];
+  territories: DecisionPlaceStat[];
 };
 
 export function getStatsPlayerDecisions(key: string, f: StatsFilters): Promise<PlayerDecisionStats> {

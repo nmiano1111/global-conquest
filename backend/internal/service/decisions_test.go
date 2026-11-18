@@ -96,6 +96,11 @@ func TestExtractAttackDecisions(t *testing.T) {
 		t.Errorf("dice = %d v %d, expected def loss %v", *first.AttackerDice, *first.DefenderDice, *first.ExpectedDefenderLoss)
 	}
 
+	if *first.ToContinent != "x" || len(first.OptionsTargets) != 1 || first.OptionsTargets[0] != "B" ||
+		first.OptionsTargetContinents[0] != "x" || first.OptionsWinProbs[0] != *first.WinProb {
+		t.Errorf("target arrays = %v %v %v (to continent %q)", first.OptionsTargets, first.OptionsTargetContinents, first.OptionsWinProbs, *first.ToContinent)
+	}
+
 	second := rows[1]
 	if second.Kind != "attack" || !*second.Continued || !*second.Captured || *second.DefenderArmies != 1 {
 		t.Errorf("second decision = %+v", second)
@@ -153,11 +158,66 @@ func TestBuildDecisionStats(t *testing.T) {
 	if len(s.Series) != 1 || s.Series[0].Attacks != 1 || s.Series[0].CumKillLuckPct == nil {
 		t.Errorf("series = %+v", s.Series)
 	}
+	if s.PlaceAttacks != 1 || len(s.Maps) != 1 || s.Maps[0].MapName != "Classic" || s.Maps[0].Attacks != 1 {
+		t.Fatalf("places: attacks %d maps %+v", s.PlaceAttacks, s.Maps)
+	}
+	m := s.Maps[0]
+	if len(m.Territories) != 1 || len(m.Continents) != 1 {
+		t.Fatalf("territories %+v continents %+v", m.Territories, m.Continents)
+	}
+	tb := m.Territories[0]
+	if tb.Name != "B" || tb.Continent != "x" || tb.Attacks != 1 || tb.Available != 1 || tb.TakePct != 100 || *tb.CapturePct != 100 {
+		t.Errorf("territory B = %+v", tb)
+	}
+	if c := m.Continents[0]; c.Name != "x" || c.Attacks != 1 || *c.Preference != 1 {
+		t.Errorf("continent x = %+v", c)
+	}
+}
+
+func TestDecisionStatsSkipsRowsWithoutTargets(t *testing.T) {
+	decisions := extractAttackDecisions(testBoard(), map[int]string{0: "alice"}, testDecisionEvents(t))
+	var rows []store.AttackDecisionRow
+	for _, d := range decisions {
+		d.OptionsTargets, d.OptionsTargetContinents, d.OptionsWinProbs, d.ToContinent = nil, nil, nil, nil // a version-1 row
+		rows = append(rows, store.AttackDecisionRow{AttackDecision: d, GameID: "g1"})
+	}
+	s := buildDecisionStats(rows)
+	if s.Attacks != 1 || s.PlaceAttacks != 0 || len(s.Maps) != 0 || s.Maps == nil {
+		t.Errorf("attacks %d place attacks %d maps %+v", s.Attacks, s.PlaceAttacks, s.Maps)
+	}
 }
 
 func TestBuildDecisionStatsEmpty(t *testing.T) {
 	s := buildDecisionStats(nil)
 	if s.Games != 0 || s.AvgWinProb != nil || len(s.OddsBuckets) != numWinProbBuckets || s.Series == nil {
 		t.Errorf("empty stats = %+v", s)
+	}
+}
+
+func TestDecisionStatsSplitsMaps(t *testing.T) {
+	decisions := extractAttackDecisions(testBoard(), map[int]string{0: "alice"}, testDecisionEvents(t))
+	var rows []store.AttackDecisionRow
+	for i, game := range []struct{ id, mapID, mapName string }{
+		{"g1", "m1", "Old name"}, {"g2", "m2", "Other"}, {"g3", "m1", "New name"},
+	} {
+		for _, d := range decisions {
+			rows = append(rows, store.AttackDecisionRow{AttackDecision: d, GameID: game.id, MapID: game.mapID, MapName: game.mapName,
+				CompletedAt: time.Date(2026, 1, 1+i, 0, 0, 0, 0, time.UTC)})
+		}
+	}
+	s := buildDecisionStats(rows)
+	if len(s.Maps) != 2 {
+		t.Fatalf("maps = %+v", s.Maps)
+	}
+	m1 := s.Maps[0]
+	if m1.MapID != "m1" || m1.MapName != "New name" || m1.Attacks != 2 || m1.Territories[0].Attacks != 2 {
+		t.Errorf("map m1 = %+v", m1)
+	}
+	// Shares are within the map: B is m1's only option, so 100% chosen and available.
+	if tb := m1.Territories[0]; tb.ChosenPct != 100 || tb.AvailablePct != 100 {
+		t.Errorf("m1 territory B = %+v", tb)
+	}
+	if s.Maps[1].MapID != "m2" || s.Maps[1].Attacks != 1 {
+		t.Errorf("map m2 = %+v", s.Maps[1])
 	}
 }

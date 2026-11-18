@@ -52,7 +52,9 @@ func TestGameResultsRecordedOnCompletionAndSurviveDeletion(t *testing.T) {
 	}
 
 	// Attack decisions: extracted from the replay log, one row per attack
-	// roll that had a prior attack-phase board (the very first action has none).
+	// roll that had a prior attack-phase board. The game starts mid-attack,
+	// so the first roll has none; the dice decide how many rolls follow
+	// (possibly none, if the first roll wins).
 	decisionsStore := store.NewPostgresAttackDecisionsStore()
 	extractor := service.NewDecisionExtractor(appDB, decisionsStore, store.NewPostgresGameReplayEventStore())
 	if n, err := extractor.ProcessPending(ctx); err != nil || n != 1 {
@@ -66,7 +68,11 @@ func TestGameResultsRecordedOnCompletionAndSurviveDeletion(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM game_replay_events WHERE game_id = $1::uuid AND action_type = 'attack'`, gameID).Scan(&replayAttacks); err != nil {
 		t.Fatalf("count replay attacks: %v", err)
 	}
-	if decisionAttacks == 0 || decisionAttacks < replayAttacks-1 || decisionAttacks > replayAttacks {
+	var processed int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM attack_decision_games WHERE game_id = $1::uuid AND available`, gameID).Scan(&processed); err != nil || processed != 1 {
+		t.Fatalf("attack_decision_games marker: n=%d err=%v", processed, err)
+	}
+	if replayAttacks < 1 || decisionAttacks != replayAttacks-1 {
 		t.Fatalf("decision attacks = %d, replay attacks = %d", decisionAttacks, replayAttacks)
 	}
 	if n, err := extractor.ProcessPending(ctx); err != nil || n != 0 {
@@ -88,8 +94,8 @@ func TestGameResultsRecordedOnCompletionAndSurviveDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bot decisions: %v", err)
 	}
-	if dec.Games != 1 || dec.Rolls != decisionAttacks {
-		t.Fatalf("bot decisions after deletion: games=%d rolls=%d, want 1/%d", dec.Games, dec.Rolls, decisionAttacks)
+	if wantGames := min(1, decisionAttacks); dec.Games != wantGames || dec.Rolls != decisionAttacks {
+		t.Fatalf("bot decisions after deletion: games=%d rolls=%d, want %d/%d", dec.Games, dec.Rolls, wantGames, decisionAttacks)
 	}
 	botDetail, err := stats.PlayerDetail(ctx, "bot:"+bot.StrategyBasicV1, store.GameResultsFilter{})
 	if err != nil {

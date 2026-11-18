@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/nmiano1111/global-conquest/backend/internal/db"
@@ -66,6 +67,29 @@ type DecisionGamePoint struct {
 	CumKillLuckPct *float64 `json:"cum_kill_luck_pct"`
 }
 
+// DecisionPlaceStat is how a player treats one territory (or continent)
+// as an attack target, compared with how often it was attackable.
+type DecisionPlaceStat struct {
+	Name string `json:"name"`
+	// Continent is set for territories ("" if the territory has none).
+	Continent string `json:"continent,omitempty"`
+	// Attacks is how many attacks they started against it.
+	Attacks int `json:"attacks"`
+	// Available is how many of their attack decisions it could be attacked at.
+	Available int `json:"available"`
+	// TakePct is Attacks ÷ Available: how often they went for it when they could.
+	TakePct      float64  `json:"take_pct"`
+	ChosenPct    float64  `json:"chosen_pct"`
+	AvailablePct float64  `json:"available_pct"`
+	Preference   *float64 `json:"preference"`
+	// AvgWinProbChosen / AvgWinProbAvailable are mean odds (%) when they
+	// attacked it vs. whenever it was attackable: a big gap means they wait
+	// for good odds here (or accept bad ones).
+	AvgWinProbChosen    *float64 `json:"avg_win_prob_chosen"`
+	AvgWinProbAvailable *float64 `json:"avg_win_prob_available"`
+	CapturePct          *float64 `json:"capture_pct"`
+}
+
 // PlayerDecisionStats summarizes a player's attack-phase decisions.
 type PlayerDecisionStats struct {
 	// Games is how many of the player's games have decision data.
@@ -92,6 +116,130 @@ type PlayerDecisionStats struct {
 	Features    []DecisionFeature    `json:"features"`
 	StopBuckets []DecisionStopBucket `json:"stop_buckets"`
 	Series      []DecisionGamePoint  `json:"series"`
+	// PlaceAttacks is how many attacks have per-territory data (games
+	// extracted before it existed and since deleted lack it).
+	PlaceAttacks int `json:"place_attacks"`
+	// Maps holds per-territory stats separately for each map the player
+	// has attacked on, most attacks first. Shares are within that map.
+	Maps []DecisionMapStats `json:"maps"`
+}
+
+// DecisionMapStats is a player's attack targets on one map.
+type DecisionMapStats struct {
+	// MapID is "" for the classic map.
+	MapID string `json:"map_id"`
+	// MapName is the map's name as of its most recent game ("Classic" for the classic map).
+	MapName     string              `json:"map_name"`
+	Attacks     int                 `json:"attacks"`
+	Continents  []DecisionPlaceStat `json:"continents"`
+	Territories []DecisionPlaceStat `json:"territories"`
+}
+
+// mapTally accumulates one map's per-territory and per-continent stats.
+type mapTally struct {
+	id, name                   string
+	attacks                    int
+	territories, continents    placeTally
+	placeSlots, continentSlots int
+}
+
+type mapTallies struct {
+	byID  map[string]*mapTally
+	order []string
+}
+
+func (m *mapTallies) get(r store.AttackDecisionRow) *mapTally {
+	if m.byID == nil {
+		m.byID = map[string]*mapTally{}
+	}
+	t, ok := m.byID[r.MapID]
+	if !ok {
+		t = &mapTally{id: r.MapID}
+		m.byID[r.MapID] = t
+		m.order = append(m.order, r.MapID)
+	}
+	// Rows arrive oldest game first, so this ends on the latest name.
+	t.name = r.MapName
+	if r.MapID == "" {
+		t.name = "Classic"
+	}
+	return t
+}
+
+func (m *mapTallies) finish() []DecisionMapStats {
+	out := make([]DecisionMapStats, 0, len(m.order))
+	for _, id := range m.order {
+		t := m.byID[id]
+		out = append(out, DecisionMapStats{
+			MapID:       t.id,
+			MapName:     t.name,
+			Attacks:     t.attacks,
+			Territories: t.territories.finish(t.attacks, t.placeSlots),
+			Continents:  t.continents.finish(t.attacks, t.continentSlots),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Attacks > out[j].Attacks })
+	return out
+}
+
+type placeAcc struct {
+	stat                        DecisionPlaceStat
+	chosenProbSum, availProbSum float64
+	captured                    int
+}
+
+// placeTally accumulates territories (or continents) within one map.
+type placeTally struct {
+	byName map[string]*placeAcc
+	order  []string
+}
+
+func (t *placeTally) get(name, continent string) *placeAcc {
+	if t.byName == nil {
+		t.byName = map[string]*placeAcc{}
+	}
+	a, ok := t.byName[name]
+	if !ok {
+		a = &placeAcc{stat: DecisionPlaceStat{Name: name, Continent: continent}}
+		t.byName[name] = a
+		t.order = append(t.order, name)
+	}
+	return a
+}
+
+// finish computes shares against the totals and returns places sorted by
+// attacks started, then availability.
+func (t *placeTally) finish(attacks, slots int) []DecisionPlaceStat {
+	out := make([]DecisionPlaceStat, 0, len(t.order))
+	for _, k := range t.order {
+		a := t.byName[k]
+		st := a.stat
+		if st.Available > 0 {
+			st.TakePct = 100 * float64(st.Attacks) / float64(st.Available)
+			st.AvgWinProbAvailable = ptr(100 * a.availProbSum / float64(st.Available))
+		}
+		if attacks > 0 {
+			st.ChosenPct = 100 * float64(st.Attacks) / float64(attacks)
+		}
+		if slots > 0 {
+			st.AvailablePct = 100 * float64(st.Available) / float64(slots)
+		}
+		if st.AvailablePct > 0 {
+			st.Preference = ptr(st.ChosenPct / st.AvailablePct)
+		}
+		if st.Attacks > 0 {
+			st.AvgWinProbChosen = ptr(100 * a.chosenProbSum / float64(st.Attacks))
+			st.CapturePct = ptr(100 * float64(a.captured) / float64(st.Attacks))
+		}
+		out = append(out, st)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Attacks != out[j].Attacks {
+			return out[i].Attacks > out[j].Attacks
+		}
+		return out[i].Available > out[j].Available
+	})
+	return out
 }
 
 var oddsBucketLabels = []string{"<25%", "25–50%", "50–75%", "75–90%", "≥90%"}
@@ -150,15 +298,22 @@ func buildDecisionStats(rows []store.AttackDecisionRow) *PlayerDecisionStats {
 			chosen: func(r store.AttackDecisionRow) bool { return deref(r.TargetsWeakest) }, available: func(r store.AttackDecisionRow) int { return r.OptionsVsWeakest }},
 	}
 
-	// The open attack (engagement) and its odds bucket; closed when the
-	// next non-continued decision arrives or a roll captures.
+	var maps mapTallies
+
+	// The open attack (engagement), its odds bucket, and its target's
+	// tallies (nil without per-territory data); closed when the next
+	// non-continued decision arrives or a roll captures.
 	engaged, engagedBucket := false, 0
+	var engagedPlaces []*placeAcc
 	closeEngagement := func(captured bool) {
 		if !engaged {
 			return
 		}
 		if captured {
 			capturedByBucket[engagedBucket]++
+			for _, p := range engagedPlaces {
+				p.captured++
+			}
 		} else {
 			abandoned++
 		}
@@ -236,6 +391,10 @@ func buildDecisionStats(rows []store.AttackDecisionRow) *PlayerDecisionStats {
 				f.nAv += f.available(r)
 			}
 			engaged, engagedBucket = true, b
+			engagedPlaces = tallyPlaces(r, &maps)
+			if engagedPlaces != nil {
+				out.PlaceAttacks++
+			}
 		}
 		if deref(r.Captured) {
 			closeEngagement(true)
@@ -281,6 +440,7 @@ func buildDecisionStats(rows []store.AttackDecisionRow) *PlayerDecisionStats {
 			b.ExpectedCapturePct = ptr(100 * winProbSumByBucket[i] / float64(b.Attacks))
 		}
 	}
+	out.Maps = maps.finish()
 	for _, f := range feats {
 		df := DecisionFeature{Key: f.key, Label: f.label, Chosen: f.nChosen}
 		if out.Attacks > 0 {
@@ -303,4 +463,53 @@ func deref[T any](p *T) T {
 		return zero
 	}
 	return *p
+}
+
+// tallyPlaces records, under the row's map, one new attack's chosen target and every attackable
+// territory (and their continents, counted once per decision) and returns
+// the chosen target's territory and continent tallies, or nil when the row
+// predates per-territory data.
+func tallyPlaces(r store.AttackDecisionRow, maps *mapTallies) []*placeAcc {
+	if r.OptionsTargets == nil || r.ToTerritory == nil || len(r.OptionsWinProbs) != len(r.OptionsTargets) || len(r.OptionsTargetContinents) != len(r.OptionsTargets) {
+		return nil
+	}
+	m := maps.get(r)
+	m.attacks++
+	territories, continents := &m.territories, &m.continents
+	contName := func(c string) string {
+		if c == "" {
+			return "(no continent)"
+		}
+		return c
+	}
+	// Continents are available at most once per decision, at their best odds.
+	contBest := map[string]float64{}
+	var contOrder []string
+	for i, t := range r.OptionsTargets {
+		c := contName(r.OptionsTargetContinents[i])
+		p := territories.get(t, r.OptionsTargetContinents[i])
+		p.stat.Available++
+		p.availProbSum += r.OptionsWinProbs[i]
+		m.placeSlots++
+		if best, ok := contBest[c]; !ok || r.OptionsWinProbs[i] > best {
+			if !ok {
+				contOrder = append(contOrder, c)
+			}
+			contBest[c] = r.OptionsWinProbs[i]
+		}
+	}
+	for _, c := range contOrder {
+		p := continents.get(c, "")
+		p.stat.Available++
+		p.availProbSum += contBest[c]
+		m.continentSlots++
+	}
+	wp := deref(r.WinProb)
+	t := territories.get(*r.ToTerritory, deref(r.ToContinent))
+	t.stat.Attacks++
+	t.chosenProbSum += wp
+	c := continents.get(contName(deref(r.ToContinent)), "")
+	c.stat.Attacks++
+	c.chosenProbSum += wp
+	return []*placeAcc{t, c}
 }

@@ -22,7 +22,7 @@ import (
 // decisionExtractorVersion is stored per processed game; bump it when the
 // extracted features change and every game is re-extracted (while its
 // replay history still exists).
-const decisionExtractorVersion = 1
+const decisionExtractorVersion = 2 // 2: per-target option arrays (V24)
 
 // winProbBuckets are the upper bounds of the option win-probability
 // buckets: <25%, 25-50%, 50-75%, 75-90%, >=90%.
@@ -402,10 +402,25 @@ func buildDecision(
 		TurnIndex:       turn,
 		Kind:            "stop",
 		OptionsByBucket: make([]int, numWinProbBuckets),
+		// Non-nil so a decision with no legal attacks stores {} rather than NULL
+		// (NULL marks rows extracted before these columns existed).
+		OptionsTargets:          []string{},
+		OptionsTargetContinents: []string{},
+		OptionsWinProbs:         []float64{},
 	}
 	best := -1.0
+	// Best odds per distinct target, in first-seen (board) order.
+	targetOdds := map[risk.Territory]int{}
 	for _, a := range risk.LegalAttacks(g, ev.ActorPlayerID) {
 		f := ctx.features(actor, a, odds)
+		if i, seen := targetOdds[a.To]; seen {
+			row.OptionsWinProbs[i] = max(row.OptionsWinProbs[i], f.winProb)
+		} else {
+			targetOdds[a.To] = len(row.OptionsTargets)
+			row.OptionsTargets = append(row.OptionsTargets, string(a.To))
+			row.OptionsTargetContinents = append(row.OptionsTargetContinents, string(continentOf[a.To]))
+			row.OptionsWinProbs = append(row.OptionsWinProbs, f.winProb)
+		}
 		row.Options++
 		row.OptionsByBucket[winProbBucket(f.winProb)]++
 		best = max(best, f.winProb)
@@ -450,6 +465,7 @@ func buildDecision(
 	}
 	row.Captured = ptr(roll.Conquered)
 	row.CompletesContinent, row.BreaksContinent = ptr(f.completes), ptr(f.breaks)
+	row.ToContinent = ptr(string(continentOf[to]))
 	row.TargetsLeader, row.TargetsWeakest = ptr(f.vsLeader), ptr(f.vsWeakest)
 	return row, true
 }
