@@ -1,12 +1,26 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import type { ApiError } from "../../api/client";
-import { getStatsPlayer, type PlayerDetail, type PlayerSeriesPoint, type StatsFilters } from "../../api/stats";
+import { getStatsPlayer, listStatsPlayers, type PlayerDetail, type PlayerSummary, type StatsFilters } from "../../api/stats";
 import { useAuth } from "../../auth";
 import { BarChart, FilterBar, LineChart, Panel, StatTile } from "./statsShared";
-import { SERIES, fmtDate, fmtDuration, fmtNum, fmtPct, fmtStreak } from "./statsFormat";
-
-type XMode = "date" | "game";
+import {
+  MAX_COMPARE,
+  PLAYER_COLORS,
+  SERIES,
+  fmtDate,
+  fmtDuration,
+  fmtNum,
+  fmtPct,
+  fmtStreak,
+  mergeLines,
+  parseCompare,
+  withCumulativeKD,
+  type Line,
+  type MergedRow,
+  type Pt,
+  type XMode,
+} from "./statsFormat";
 
 const th = "py-1.5 pr-4 text-xs font-semibold uppercase tracking-wide text-gc-muted";
 const td = "py-1.5 pr-4 tabular-nums";
@@ -15,11 +29,22 @@ export function AdminPlayerStatsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const { playerKey } = useParams({ from: "/app/admin/stats/$playerKey" });
-  const filters = useSearch({ from: "/app/admin/stats/$playerKey" });
+  const search = useSearch({ from: "/app/admin/stats/$playerKey" });
+  const filters = useMemo<StatsFilters>(() => {
+    const f = { ...search };
+    delete f.compare;
+    return f;
+  }, [search]);
+  const compareKeys = useMemo(() => parseCompare(search.compare).filter((k) => k !== playerKey), [search.compare, playerKey]);
   const [detail, setDetail] = useState<PlayerDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [xMode, setXMode] = useState<XMode>("date");
+  const [rateMode, setRateMode] = useState<"cumulative" | "rolling">("cumulative");
+  // Compared players' details by key; null = no games under these filters.
+  const [others, setOthers] = useState<Record<string, PlayerDetail | null>>({});
+  const [othersLoading, setOthersLoading] = useState(false);
+  const [allPlayers, setAllPlayers] = useState<PlayerSummary[]>([]);
 
   const load = useCallback(
     async (key: string, f: StatsFilters, isCancelled: () => boolean) => {
@@ -53,16 +78,159 @@ export function AdminPlayerStatsPage() {
     };
   }, [load, playerKey, filters]);
 
-  const setFilters = (f: StatsFilters) =>
-    void navigate({ to: "/app/admin/stats/$playerKey", params: { playerKey }, search: f, replace: true });
+  // Compared players: fetched with the same filters, independently of the main load.
+  const compareSig = compareKeys.join(",");
+  useEffect(() => {
+    let cancelled = false;
+    const keys = compareSig ? compareSig.split(",") : [];
+    if (keys.length === 0) {
+      setOthers({});
+      return;
+    }
+    setOthersLoading(true);
+    void Promise.all(
+      keys.map((k) =>
+        getStatsPlayer(k, filters).then(
+          (d) => [k, d] as const,
+          (err: ApiError) => {
+            if (err.status === 404) return [k, null] as const;
+            throw err;
+          },
+        ),
+      ),
+    )
+      .then((pairs) => {
+        if (!cancelled) setOthers(Object.fromEntries(pairs));
+      })
+      .catch(() => {
+        if (!cancelled) setOthers({});
+      })
+      .finally(() => {
+        if (!cancelled) setOthersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [compareSig, filters]);
+
+  // Candidates for the compare picker.
+  useEffect(() => {
+    let cancelled = false;
+    listStatsPlayers(filters).then(
+      (ps) => {
+        if (!cancelled) setAllPlayers(ps);
+      },
+      () => {
+        if (!cancelled) setAllPlayers([]);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [filters]);
+
+  const go = (f: StatsFilters, compare: string[]) =>
+    void navigate({
+      to: "/app/admin/stats/$playerKey",
+      params: { playerKey },
+      search: { ...f, ...(compare.length > 0 ? { compare: compare.join(",") } : {}) },
+      replace: true,
+    });
+  const setFilters = (f: StatsFilters) => go(f, compareKeys);
+  const setCompare = (keys: string[]) => go(filters, keys);
 
   const s = detail?.summary;
   const series = detail?.series ?? [];
-  const indexed = series.map((p, i) => ({ ...p, n: i + 1 }));
-  type Row = PlayerSeriesPoint & { n: number };
+  const indexed: Pt[] = series.map((p, i) => ({ ...p, n: i + 1 }));
+  type Row = Pt;
   const x = (r: Row) => (xMode === "date" ? new Date(r.completed_at).getTime() : r.n);
   const xFormat = xMode === "date" ? fmtDate : (v: number) => `#${Math.round(v)}`;
   const title = (r: Row) => `Game ${r.n} · ${fmtDate(r.completed_at)} · ${r.won ? "Won" : "Lost"}${r.placement ? ` (#${r.placement} of ${r.player_count})` : ""}`;
+  // Compare mode: the page's player in slot 1, then compared players in URL order.
+  const lines: Line[] = [];
+  if (detail && s) {
+    const pointsOf = (d: PlayerDetail, pts: Pt[]) =>
+      withCumulativeKD(pts, new Map(d.games.map((g) => [g.game_id, { destroyed: g.armies_destroyed, lost: g.armies_lost }])));
+    lines.push({ key: playerKey, name: s.name, color: PLAYER_COLORS[0], summary: s, points: pointsOf(detail, indexed) });
+    compareKeys.forEach((k, i) => {
+      const d = others[k];
+      if (d) {
+        lines.push({
+          key: k,
+          name: d.summary.name,
+          color: PLAYER_COLORS[i + 1],
+          summary: d.summary,
+          points: pointsOf(
+            d,
+            d.series.map((p, j) => ({ ...p, n: j + 1 })),
+          ),
+        });
+      }
+    });
+  }
+  const comparing = lines.length > 1;
+  const merged = comparing ? mergeLines(lines, xMode) : [];
+  const mx = (r: MergedRow) => r.x;
+  const mTitle = (r: MergedRow) => (xMode === "date" ? fmtDate(r.x) : `Game #${r.x}`);
+  const lineSeries = (value: (p: Pt) => number | null) =>
+    lines.map((l) => ({
+      label: l.name,
+      color: l.color,
+      value: (r: MergedRow) => {
+        const p = r.at[l.key];
+        return p ? value(p) : null;
+      },
+    }));
+  const playerName = (k: string) => others[k]?.summary.name ?? allPlayers.find((p) => p.key === k)?.name ?? k;
+  const candidates = allPlayers.filter((p) => p.key !== playerKey && !compareKeys.includes(p.key));
+  const pickerGroup = (label: string, bots: boolean) => (
+    <optgroup label={label}>
+      {candidates
+        .filter((p) => p.is_bot === bots)
+        .map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.name} ({p.games})
+          </option>
+        ))}
+    </optgroup>
+  );
+  const compareBar = (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-gc-muted">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-gc-border px-2.5 py-1 text-gc-text">
+        <span className="inline-block h-2 w-2 rounded-full" style={{ background: PLAYER_COLORS[0] }} />
+        {s?.name ?? playerKey}
+      </span>
+      {compareKeys.map((k, i) => (
+        <span key={k} className="inline-flex items-center gap-1.5 rounded-full border border-gc-border py-1 pl-2.5 pr-1.5 text-gc-text">
+          <span className="inline-block h-2 w-2 rounded-full" style={{ background: PLAYER_COLORS[i + 1] }} />
+          {playerName(k)}
+          {others[k] === null ? <span className="text-gc-muted">(no games with these filters)</span> : null}
+          <button
+            type="button"
+            aria-label={`Stop comparing ${playerName(k)}`}
+            className="rounded px-1 text-gc-muted hover:text-gc-text"
+            onClick={() => setCompare(compareKeys.filter((c) => c !== k))}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      {compareKeys.length < MAX_COMPARE ? (
+        <select
+          className="rounded-lg border border-gc-border bg-gc-surface px-2 py-1 text-xs text-gc-text"
+          value=""
+          onChange={(e) => e.target.value && setCompare([...compareKeys, e.target.value])}
+        >
+          <option value="">+ Compare with…</option>
+          {pickerGroup("Players", false)}
+          {pickerGroup("Bot strategies", true)}
+        </select>
+      ) : (
+        <span>Up to {MAX_COMPARE} comparisons</span>
+      )}
+      {othersLoading ? <span>Loading…</span> : null}
+    </div>
+  );
   const xToggle = (
     <div className="inline-flex overflow-hidden rounded-lg border border-gc-border text-xs">
       {(["date", "game"] as XMode[]).map((m) => (
@@ -118,13 +286,126 @@ export function AdminPlayerStatsPage() {
             </p>
           ) : null}
 
-          <div className="flex items-center justify-between gap-3 pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-gc-muted">Trends</h3>
             <div className="flex items-center gap-2 text-xs text-gc-muted">
               X axis {xToggle}
             </div>
           </div>
-          <div className="grid gap-4 lg:grid-cols-2">
+          {compareBar}
+
+          {comparing ? (
+            <>
+              <Panel title="Comparison" subtitle="Same filters for every player. Even odds = average of 1 ÷ players across their games.">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="text-left">
+                        <th className={th}>Player</th>
+                        <th className={`${th} text-right`}>Games</th>
+                        <th className={`${th} text-right`}>Record</th>
+                        <th className={`${th} text-right`}>Win %</th>
+                        <th className={`${th} text-right`}>Even odds</th>
+                        <th className={`${th} text-right`}>W/L</th>
+                        <th className={`${th} text-right`}>Avg place</th>
+                        <th className={`${th} text-right`}>K/D</th>
+                        <th className={`${th} text-right`}>Conq/game</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lines.map((l) => (
+                        <tr key={l.key} className="border-t border-gc-border/60">
+                          <td className="py-1.5 pr-4 text-gc-text">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="inline-block h-2 w-2 rounded-full" style={{ background: l.color }} />
+                              {l.name}
+                            </span>
+                          </td>
+                          <td className={`${td} text-right text-gc-muted`}>{l.summary.games}</td>
+                          <td className={`${td} text-right text-gc-muted`}>
+                            {l.summary.wins}–{l.summary.losses}
+                          </td>
+                          <td className={`${td} text-right text-gc-text`}>{fmtPct(l.summary.win_pct, 1)}</td>
+                          <td className={`${td} text-right text-gc-muted`}>{fmtPct(l.summary.expected_win_pct, 1)}</td>
+                          <td className={`${td} text-right text-gc-muted`}>{fmtNum(l.summary.wl_ratio)}</td>
+                          <td className={`${td} text-right text-gc-muted`}>{fmtNum(l.summary.avg_placement)}</td>
+                          <td className={`${td} text-right text-gc-muted`}>{fmtNum(l.summary.kd_ratio)}</td>
+                          <td className={`${td} text-right text-gc-muted`}>{fmtNum(l.summary.conquests_per_game, 1)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+              <div className={`grid gap-4 transition-opacity lg:grid-cols-2 ${othersLoading ? "opacity-60" : ""}`}>
+                <Panel
+                  title="Win rate over time"
+                  subtitle={rateMode === "cumulative" ? "Cumulative, after each game" : "Over each player's last 10 games"}
+                  right={
+                    <div className="inline-flex overflow-hidden rounded-lg border border-gc-border text-xs">
+                      {(["cumulative", "rolling"] as const).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setRateMode(m)}
+                          className={`px-2.5 py-1 ${rateMode === m ? "bg-gc-surface-2 text-gc-text" : "text-gc-muted hover:text-gc-text"}`}
+                        >
+                          {m === "cumulative" ? "Cumulative" : "Last 10"}
+                        </button>
+                      ))}
+                    </div>
+                  }
+                >
+                  <LineChart
+                    rows={merged}
+                    x={mx}
+                    xFormat={xFormat}
+                    series={lineSeries((p) => (rateMode === "cumulative" ? p.win_pct : p.rolling_win_pct))}
+                    yMin={0}
+                    yMax={100}
+                    yFormat={(v) => `${v}%`}
+                    tooltipFormat={(v) => fmtPct(v, 1)}
+                    tooltipTitle={mTitle}
+                  />
+                </Panel>
+                <Panel title="W/L ratio over time" subtitle="Wins ÷ losses after each game (undefined until the first loss)">
+                  <LineChart
+                    rows={merged}
+                    x={mx}
+                    xFormat={xFormat}
+                    series={lineSeries((p) => p.wl_ratio)}
+                    refLines={[{ value: 1, label: "1.0" }]}
+                    yFormat={(v) => v.toFixed(1)}
+                    tooltipFormat={(v) => v.toFixed(2)}
+                    tooltipTitle={mTitle}
+                  />
+                </Panel>
+                <Panel title="Cumulative wins">
+                  <LineChart
+                    rows={merged}
+                    x={mx}
+                    xFormat={xFormat}
+                    series={lineSeries((p) => p.cum_wins)}
+                    yFormat={(v) => v.toFixed(0)}
+                    tooltipTitle={mTitle}
+                  />
+                </Panel>
+                <Panel title="K/D over time" subtitle="Cumulative enemy armies destroyed ÷ own armies lost (games with combat history)">
+                  <LineChart
+                    rows={merged}
+                    x={mx}
+                    xFormat={xFormat}
+                    series={lineSeries((p) => p.cum_kd ?? null)}
+                    refLines={[{ value: 1, label: "1.0" }]}
+                    yFormat={(v) => v.toFixed(1)}
+                    tooltipFormat={(v) => v.toFixed(2)}
+                    tooltipTitle={mTitle}
+                  />
+                </Panel>
+              </div>
+            </>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="Win rate over time" subtitle="Cumulative and over the last 10 games">
               <LineChart
                 rows={indexed}
@@ -181,6 +462,7 @@ export function AdminPlayerStatsPage() {
               />
             </Panel>
           </div>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="Finishing positions">

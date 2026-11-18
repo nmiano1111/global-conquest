@@ -21,7 +21,7 @@ import {
   RootLayout,
   SignupPage,
 } from "./views";
-import { validateStatsSearch } from "./pages/statsFormat";
+import { validatePlayerStatsSearch, validateStatsSearch } from "./pages/statsFormat";
 
 type RouterContext = {
   auth: AuthContextValue;
@@ -175,7 +175,7 @@ const adminStatsRoute = createRoute({
 const adminPlayerStatsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/admin/stats/$playerKey",
-  validateSearch: validateStatsSearch,
+  validateSearch: validatePlayerStatsSearch,
   beforeLoad: requireAdmin,
   component: AdminPlayerStatsPage,
 });
