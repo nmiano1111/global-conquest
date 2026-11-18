@@ -99,6 +99,9 @@ func NewRouter(h *Handler) *gin.Engine {
 			admin.GET("/maps/:id", h.GetMap)
 			admin.PUT("/maps/:id", h.UpdateMap)
 			admin.DELETE("/maps/:id", h.DeleteMap)
+			admin.GET("/stats/overview", h.GetStatsOverview)
+			admin.GET("/stats/players", h.ListStatsPlayers)
+			admin.GET("/stats/players/:key", h.GetStatsPlayer)
 		}
 
 	}

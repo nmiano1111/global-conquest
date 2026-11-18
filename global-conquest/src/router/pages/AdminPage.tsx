@@ -342,14 +342,19 @@ export function AdminPage() {
           <h2 className="text-xl font-semibold text-gc-text">Admin</h2>
           <p className="mt-0.5 text-sm text-gc-muted">Manage user access and sessions.</p>
         </div>
-        <button
-          className={buttonGhostClass}
-          type="button"
-          onClick={() => void load()}
-          disabled={loading || !!busyUserID}
-        >
-          Refresh
-        </button>
+        <div className="flex gap-2">
+          <Link to="/app/admin/stats" className={buttonPrimaryClass}>
+            Player Statistics
+          </Link>
+          <button
+            className={buttonGhostClass}
+            type="button"
+            onClick={() => void load()}
+            disabled={loading || !!busyUserID}
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {loading ? <p className="text-sm text-gc-muted">Loading users…</p> : null}

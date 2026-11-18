@@ -7,6 +7,8 @@ import {
 import type { AuthContextValue } from "../auth";
 import {
   AdminPage,
+  AdminPlayerStatsPage,
+  AdminStatsPage,
   AppShell,
   GamePage,
   GameReplayPage,
@@ -18,6 +20,7 @@ import {
   RootLayout,
   SignupPage,
 } from "./views";
+import { validateStatsSearch } from "./pages/statsFormat";
 
 type RouterContext = {
   auth: AuthContextValue;
@@ -152,11 +155,29 @@ const editMapRoute = createRoute({
   component: MapEditorPage,
 });
 
+// Admin player statistics. Filters live in the search params so they
+// survive navigating between the overview and a player's page.
+const adminStatsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/admin/stats",
+  validateSearch: validateStatsSearch,
+  beforeLoad: requireAdmin,
+  component: AdminStatsPage,
+});
+
+const adminPlayerStatsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/admin/stats/$playerKey",
+  validateSearch: validateStatsSearch,
+  beforeLoad: requireAdmin,
+  component: AdminPlayerStatsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   signupRoute,
-  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, gameReplayRoute, adminRoute, newMapRoute, editMapRoute]),
+  appRoute.addChildren([appIndexRoute, lobbyRoute, profileRoute, leaderboardRoute, gameRoute, gameReplayRoute, adminRoute, newMapRoute, editMapRoute, adminStatsRoute, adminPlayerStatsRoute]),
 ]);
 
 export const router = createRouter({

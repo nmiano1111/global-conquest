@@ -41,6 +41,10 @@ type playerGameStatsStore interface {
 	GetLeaderboard(ctx context.Context, q db.Querier, limit int) ([]store.LeaderboardEntry, error)
 }
 
+type gameResultsStore interface {
+	Record(ctx context.Context, q db.Querier, gameID string) error
+}
+
 type gameDomainEventStore interface {
 	InsertDomainEvent(ctx context.Context, q db.Querier, gameID string, ev risk.DomainEvent, payload []byte) (store.GameDomainEvent, error)
 }
@@ -72,6 +76,7 @@ type GamesService struct {
 	gameEvent          gameEventStore
 	gamePlayers        gamePlayersStore
 	playerGameStats    playerGameStatsStore
+	gameResults        gameResultsStore
 	gameDomainEvents   gameDomainEventStore
 	gameReplayEvents   gameReplayEventStore
 	discordOutbox      discordOutboxStore
@@ -229,6 +234,14 @@ func (s *GamesService) SetGamePlayersStore(gp gamePlayersStore) {
 // result.
 func (s *GamesService) SetPlayerGameStatsStore(ps playerGameStatsStore) {
 	s.playerGameStats = ps
+}
+
+// SetGameResultsStore wires in the store that records every completed
+// game's durable admin-stats rows (game_results / game_result_players) in
+// the final action's transaction. It is nil-safe: until set, nothing is
+// recorded.
+func (s *GamesService) SetGameResultsStore(gr gameResultsStore) {
+	s.gameResults = gr
 }
 
 // SetGameDomainEventStore wires in the store used to persist typed
@@ -1635,6 +1648,13 @@ func (s *GamesService) ApplyGameAction(ctx context.Context, in GameActionInput) 
 				return err
 			}
 			if _, err := s.gameReplayEvents.InsertReplayEvent(ctx, q, g.ID, in.PlayerUserID, in.Action, replayPayload); err != nil {
+				return err
+			}
+		}
+		// Last, so the final action's replay and combat rows (written
+		// above) are included in the aggregated per-player stats.
+		if engine.Phase == risk.PhaseGameOver && engine.Winner != "" && s.gameResults != nil {
+			if err := s.gameResults.Record(ctx, q, g.ID); err != nil {
 				return err
 			}
 		}

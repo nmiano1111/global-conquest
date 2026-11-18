@@ -8,3 +8,5 @@ export { ProfilePage } from "./pages/ProfilePage";
 export { AdminPage } from "./pages/AdminPage";
 export { MapEditorPage } from "./pages/MapEditorPage";
 export { LeaderboardPage } from "./pages/LeaderboardPage";
+export { AdminStatsPage } from "./pages/AdminStatsPage";
+export { AdminPlayerStatsPage } from "./pages/AdminPlayerStatsPage";

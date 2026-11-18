@@ -14,9 +14,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -110,12 +112,14 @@ func setupTestEnv(t *testing.T) *testEnv {
 }
 
 func withDatabase(dsn, dbName string) string {
-	cfg, err := pgxpool.ParseConfig(dsn)
+	// pgxpool.Config.ConnString() returns the ORIGINAL string, ignoring
+	// edits to ConnConfig.Database, so rewrite the URL path instead.
+	u, err := url.Parse(dsn)
 	if err != nil {
 		return dsn
 	}
-	cfg.ConnConfig.Database = dbName
-	return cfg.ConnString()
+	u.Path = "/" + dbName
+	return u.String()
 }
 
 func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
@@ -131,7 +135,11 @@ func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
 	if len(files) == 0 {
 		return fmt.Errorf("no migration files found")
 	}
-	sort.Strings(files)
+	// Numeric version order (V2 before V10), matching the production
+	// runner -- a plain string sort would apply V10__ before V1__.
+	sort.Slice(files, func(i, j int) bool {
+		return migrationVersion(files[i]) < migrationVersion(files[j])
+	})
 
 	for _, p := range files {
 		sqlBytes, err := os.ReadFile(p)
@@ -143,6 +151,17 @@ func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 	}
 	return nil
+}
+
+// migrationVersion extracts N from a ".../VN__name.sql" path (0 if absent).
+func migrationVersion(path string) int {
+	base := filepath.Base(path)
+	end := strings.Index(base, "__")
+	if !strings.HasPrefix(base, "V") || end < 2 {
+		return 0
+	}
+	n, _ := strconv.Atoi(base[1:end])
+	return n
 }
 
 func postJSON(t *testing.T, baseURL, path string, body any) (*http.Response, map[string]any) {

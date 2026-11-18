@@ -68,6 +68,7 @@ type Handler struct {
 	games      gameService
 	chats      chatService
 	maps       mapService
+	stats      statsService
 }
 
 // NewHandler constructs a Handler backed by the given game server and

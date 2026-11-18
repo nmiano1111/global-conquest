@@ -67,6 +67,16 @@ func main() {
 	gamesSvc.SetGamePlayersStore(gamePlayersStore)
 	playerGameStatsStore := store.NewPostgresPlayerGameStatsStore()
 	gamesSvc.SetPlayerGameStatsStore(playerGameStatsStore)
+	gameResultsStore := store.NewPostgresGameResultsStore()
+	gamesSvc.SetGameResultsStore(gameResultsStore)
+	// Idempotent: records any completed game lacking admin-stats rows
+	// (games finished before V22, or before this store was wired in).
+	if n, err := gameResultsStore.BackfillCompleted(ctx, d.Queryer()); err != nil {
+		log.Printf("game results backfill failed: %v", err)
+	} else if n > 0 {
+		log.Printf("game results backfill: recorded %d completed games", n)
+	}
+	statsSvc := service.NewStatsService(d, gameResultsStore)
 	gameDomainEventStore := store.NewPostgresGameDomainEventStore()
 	gamesSvc.SetGameDomainEventStore(gameDomainEventStore)
 	gameReplayEventStore := store.NewPostgresGameReplayEventStore()
@@ -110,9 +120,16 @@ func main() {
 	// http
 	h := httpapi.NewHandler(s, usersSvc, gamesSvc, chatSvc)
 	h.SetMapsService(mapsSvc)
+	h.SetStatsService(statsSvc)
 	r := httpapi.NewRouter(h)
 
-	log.Fatal(r.Run(":8080"))
+	// PORT overrides the listen port (default 8080), e.g. to run a second
+	// local backend alongside the usual one.
+	port := "8080"
+	if v := os.Getenv("PORT"); v != "" {
+		port = v
+	}
+	log.Fatal(r.Run(":" + port))
 }
 
 // registerGCNStrategy opts a running server into a locally-trained GCN
